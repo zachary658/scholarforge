@@ -1,30 +1,25 @@
 const BASE = '/api';
 
+// access token 仍存 localStorage（短效 15 分钟，用于 Authorization: Bearer 头）
+// refresh token 已改为 HttpOnly Cookie 下发（见后端 auth.js），前端不再持有
 const TOKEN_KEY = 'sf_token';
-const REFRESH_KEY = 'sf_refresh';
 
 function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY);
-}
-
-function setTokens(accessToken, refreshToken) {
+function setToken(accessToken) {
   localStorage.setItem(TOKEN_KEY, accessToken);
-  if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken);
 }
 
 function clearTokens() {
   localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
 }
 
 // 是否处于受保护路径（公开页 401 不强制跳转）
 function isProtectedPath() {
   const p = window.location.pathname;
-  return p.startsWith('/app') || p.startsWith('/admin');
+  return p.startsWith('/app') || p.startsWith('/admin') || p.startsWith('/support');
 }
 
 // 跳转到登录页（带 redirect）
@@ -39,19 +34,17 @@ let refreshingPromise = null;
 async function doRefresh() {
   // 单飞：并发 401 时只刷新一次，其余等待同一 Promise
   if (refreshingPromise) return refreshingPromise;
-  const rt = getRefreshToken();
-  if (!rt) return false;
   refreshingPromise = (async () => {
     try {
+      // refresh token 经 HttpOnly Cookie 自动携带，无需从 localStorage 读取
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: rt }),
+        credentials: 'include',
       });
       if (!res.ok) return false;
       const data = await res.json();
       if (!data.accessToken) return false;
-      setTokens(data.accessToken, data.refreshToken);
+      setToken(data.accessToken);
       return true;
     } catch {
       return false;
@@ -74,6 +67,7 @@ async function request(path, { method = 'GET', body, auth = true, headers = {}, 
       method,
       headers: h,
       body: body ? JSON.stringify(body) : undefined,
+      credentials: 'include',
     });
   } catch (e) {
     throw new Error('网络连接失败，请检查网络后重试');
@@ -114,7 +108,7 @@ async function upload(path, file, fields = {}, _retried = false) {
   if (token) h.Authorization = `Bearer ${token}`;
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, { method: 'POST', headers: h, body: fd });
+    res = await fetch(`${BASE}${path}`, { method: 'POST', headers: h, body: fd, credentials: 'include' });
   } catch (e) {
     throw new Error('网络连接失败，请检查网络后重试');
   }
@@ -141,18 +135,17 @@ export const api = {
   // ===== auth =====
   register: async (payload) => {
     const data = await request('/auth/register', { method: 'POST', body: payload, auth: false });
-    if (data.accessToken) setTokens(data.accessToken, data.refreshToken);
+    if (data.accessToken) setToken(data.accessToken);
     return data;
   },
   login: async (payload) => {
     const data = await request('/auth/login', { method: 'POST', body: payload, auth: false });
-    if (data.accessToken) setTokens(data.accessToken, data.refreshToken);
+    if (data.accessToken) setToken(data.accessToken);
     return data;
   },
   logout: async () => {
-    const rt = getRefreshToken();
     try {
-      await request('/auth/logout', { method: 'POST', body: { refreshToken: rt } });
+      await request('/auth/logout', { method: 'POST' });
     } catch { /* ignore */ }
     clearTokens();
   },
@@ -250,6 +243,11 @@ export const api = {
   // ===== admin: 概览 =====
   adminOverview: () => request('/admin/overview'),
 
+  // ===== admin: 功能定价（每功能积分） =====
+  adminListFeatures: () => request('/admin/features'),
+  adminSaveFeature: (payload) => request('/admin/features', { method: 'POST', body: payload }),
+  adminDeleteFeature: (key) => request(`/admin/features/${key}`, { method: 'DELETE' }),
+
   // ===== admin: 积分套餐 =====
   adminListPointsPackages: () => request('/admin/points-packages'),
   adminSavePointsPackage: (payload) => request('/admin/points-packages', { method: 'POST', body: payload }),
@@ -321,11 +319,17 @@ export const api = {
   adminListGraduationOrders: (params) => request(`/admin/graduation-orders?${new URLSearchParams(params).toString()}`),
   adminUpdateGraduationContact: (id, status) => request(`/admin/graduation-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
   adminQuoteGraduationOrder: (id, quoted_price) => request(`/admin/graduation-orders/${id}/quote`, { method: 'PUT', body: { quoted_price } }),
+  adminApproveGraduationQuote: (id, status) => request(`/admin/graduation-orders/${id}/quote-status`, { method: 'PUT', body: { status } }),
   adminCreateGraduationOrder: (payload) => request('/admin/graduation-orders', { method: 'POST', body: payload }),
 
   // ===== support: 毕业作品订单查看 =====
   supportListGraduationOrders: (params) => request(`/support/graduation-orders?${new URLSearchParams(params).toString()}`),
   supportUpdateGraduationContact: (id, status) => request(`/support/graduation-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
+  supportQuoteGraduationOrder: (id, quoted_price) => request(`/support/graduation-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+
+  // ===== support: 跟进备注 =====
+  supportListNotes: (orderType, orderRefId) => request(`/support/notes?order_type=${orderType}&order_ref_id=${orderRefId}`),
+  supportAddNote: (orderType, orderRefId, content) => request('/support/notes', { method: 'POST', body: { order_type: orderType, order_ref_id: orderRefId, content } }),
 
   // ===== 论文工作区 =====
   listProjects: () => request('/projects'),

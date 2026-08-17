@@ -1,10 +1,11 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
-import { Wechat, BookOpen, Cpu, Logout, Menu, X, ArrowRight } from '../../components/Icons.jsx';
+import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight } from '../../components/Icons.jsx';
 
 const nav = [
-  { to: '/support', label: '课程对接', icon: Wechat, end: true },
+  { to: '/support', label: '工作台', icon: Grid, end: true },
+  { to: '/support/orders', label: '课程对接', icon: Wechat, end: false },
   { to: '/support/courses', label: '课程列表', icon: BookOpen, end: false },
   { to: '/support/graduation', label: '毕业作品', icon: Cpu, end: false },
 ];

@@ -375,6 +375,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_gp_orders_contact ON graduation_project_orders(contact_status);
 `);
 
+// 毕业作品订单：报价审批状态（none=未报价 / pending=待审批 / approved=已生效 / rejected=已驳回）
+// 客服报价进入 pending，管理员审批通过后 approved 才生效（用户方可支付）
+addColumnIfMissing('graduation_project_orders', 'quote_status', "TEXT NOT NULL DEFAULT 'none'");
+
+// ===== 客服跟进备注（沟通时间线）：课程订单与毕业作品订单共用 =====
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_type TEXT NOT NULL,        -- 'course' | 'graduation'
+    order_ref_id INTEGER NOT NULL,   -- user_courses.id 或 graduation_project_orders.id
+    author_id INTEGER NOT NULL,
+    author_name TEXT,
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_notes ON order_notes(order_type, order_ref_id, created_at DESC);
+`);
+
 // ===== 认证安全：token_version 用于主动失效 JWT（修改密码/登出时 +1）=====
 addColumnIfMissing('users', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
 

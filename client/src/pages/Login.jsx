@@ -29,7 +29,9 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login({ email, password });
-      const redirect = params.get('redirect');
+      // 仅允许站内相对路径（以 / 开头且非 //），防开放重定向到外站
+      const rawRedirect = params.get('redirect');
+      const redirect = rawRedirect && /^\/(?!\/)/.test(rawRedirect) ? rawRedirect : null;
       if (redirect) {
         navigate(redirect);
       } else if (user.is_admin) {

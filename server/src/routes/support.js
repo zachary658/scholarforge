@@ -13,12 +13,18 @@ router.get('/course-orders', (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const size = Math.min(100, Math.max(10, parseInt(req.query.size) || 20));
   const status = (req.query.status || '').toString();
+  const q = (req.query.q || '').toString().trim();
   const offset = (page - 1) * size;
   let where = 'WHERE 1=1';
   const params = [];
   if (['pending', 'contacted', 'completed'].includes(status)) {
     where += ' AND uc.contact_status = ?';
     params.push(status);
+  }
+  if (q) {
+    where += ' AND (u.email LIKE ? OR u.name LIKE ? OR c.title LIKE ? OR o.order_no LIKE ?)';
+    const like = `%${q}%`;
+    params.push(like, like, like, like);
   }
   const total = db.prepare(
     `SELECT COUNT(*) as c FROM user_courses uc JOIN users u ON u.id = uc.user_id JOIN courses c ON c.id = uc.course_id ${where}`
@@ -62,6 +68,11 @@ router.get('/courses', (_req, res) => {
 
 // ========== 课程对接统计概览 ==========
 router.get('/overview', (_req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayTs = Math.floor(todayStart.getTime() / 1000);
+  const overdueTs = now - 24 * 3600;
+
   const pending = db.prepare("SELECT COUNT(*) as c FROM user_courses WHERE contact_status = 'pending'").get().c;
   const contacted = db.prepare("SELECT COUNT(*) as c FROM user_courses WHERE contact_status = 'contacted'").get().c;
   const completed = db.prepare("SELECT COUNT(*) as c FROM user_courses WHERE contact_status = 'completed'").get().c;
@@ -71,7 +82,17 @@ router.get('/overview', (_req, res) => {
   const gpContacted = db.prepare("SELECT COUNT(*) as c FROM graduation_project_orders WHERE contact_status = 'contacted'").get().c;
   const gpCompleted = db.prepare("SELECT COUNT(*) as c FROM graduation_project_orders WHERE contact_status = 'completed'").get().c;
   const gpTotal = db.prepare('SELECT COUNT(*) as c FROM graduation_project_orders').get().c;
-  res.json({ pending, contacted, completed, total, gpPending, gpContacted, gpCompleted, gpTotal });
+
+  // 今日新增订单
+  const courseToday = db.prepare('SELECT COUNT(*) as c FROM user_courses WHERE purchased_at >= ?').get(todayTs).c;
+  const gpToday = db.prepare('SELECT COUNT(*) as c FROM graduation_project_orders WHERE purchased_at >= ?').get(todayTs).c;
+  // 待审批报价（客服提交，待管理员审批）
+  const gpQuotePending = db.prepare("SELECT COUNT(*) as c FROM graduation_project_orders WHERE quote_status = 'pending'").get().c;
+  // 超时未处理（待对接超过 24 小时）
+  const courseOverdue = db.prepare("SELECT COUNT(*) as c FROM user_courses WHERE contact_status = 'pending' AND purchased_at < ?").get(overdueTs).c;
+  const gpOverdue = db.prepare("SELECT COUNT(*) as c FROM graduation_project_orders WHERE contact_status = 'pending' AND purchased_at < ?").get(overdueTs).c;
+
+  res.json({ pending, contacted, completed, total, gpPending, gpContacted, gpCompleted, gpTotal, courseToday, gpToday, gpQuotePending, courseOverdue, gpOverdue });
 });
 
 // ========== 毕业作品订单管理（客服只读） ==========
@@ -79,6 +100,7 @@ router.get('/graduation-orders', (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const size = Math.min(100, Math.max(10, parseInt(req.query.size) || 20));
   const status = (req.query.status || '').toString();
+  const q = (req.query.q || '').toString().trim();
   const offset = (page - 1) * size;
   let where = 'WHERE 1=1';
   const params = [];
@@ -86,13 +108,18 @@ router.get('/graduation-orders', (req, res) => {
     where += ' AND gpo.contact_status = ?';
     params.push(status);
   }
+  if (q) {
+    where += ' AND (u.email LIKE ? OR u.name LIKE ? OR gp.title LIKE ? OR o.order_no LIKE ?)';
+    const like = `%${q}%`;
+    params.push(like, like, like, like);
+  }
   const total = db.prepare(
     `SELECT COUNT(*) as c FROM graduation_project_orders gpo
      JOIN users u ON u.id = gpo.user_id
      JOIN graduation_projects gp ON gp.id = gpo.project_id ${where}`
   ).get(...params).c;
   const rows = db.prepare(
-    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.quoted_price, gpo.purchased_at, gpo.expires_at, gpo.requirements,
+    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.quote_status, gpo.quoted_price, gpo.purchased_at, gpo.expires_at, gpo.requirements,
             u.name AS user_name, u.email AS user_email,
             gp.title AS project_title, gp.category,
             o.order_no, o.amount
@@ -118,6 +145,47 @@ router.put('/graduation-orders/:id/contact-status', (req, res) => {
   if (!row) return res.status(404).json({ error: '订单不存在' });
   db.prepare('UPDATE graduation_project_orders SET contact_status = ? WHERE id = ?').run(status, row.id);
   res.json({ ok: true, id: row.id, contact_status: status });
+});
+
+// ========== 跟进备注（沟通时间线）==========
+// 获取某订单的备注列表
+router.get('/notes', (req, res) => {
+  const { order_type, order_ref_id } = req.query;
+  if (!['course', 'graduation'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
+  const refId = parseInt(order_ref_id, 10);
+  if (!refId) return res.status(400).json({ error: '缺少订单 ID' });
+  const notes = db.prepare(
+    'SELECT id, author_name, content, created_at FROM order_notes WHERE order_type = ? AND order_ref_id = ? ORDER BY created_at DESC, id DESC'
+  ).all(order_type, refId);
+  res.json({ notes });
+});
+
+// 添加跟进备注
+router.post('/notes', (req, res) => {
+  const { order_type, order_ref_id, content } = req.body || {};
+  if (!['course', 'graduation'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
+  const refId = parseInt(order_ref_id, 10);
+  if (!refId) return res.status(400).json({ error: '缺少订单 ID' });
+  const text = String(content || '').trim().slice(0, 2000);
+  if (!text) return res.status(400).json({ error: '请填写备注内容' });
+  const info = db.prepare(
+    'INSERT INTO order_notes (order_type, order_ref_id, author_id, author_name, content) VALUES (?, ?, ?, ?, ?)'
+  ).run(order_type, refId, req.user.id, req.user.name || '', text);
+  res.json({ ok: true, id: info.lastInsertRowid, author_name: req.user.name || '', content: text, created_at: Math.floor(Date.now() / 1000) });
+});
+
+// ========== 客服报价（提交后待管理员审批，审批通过后才生效）==========
+router.post('/graduation-orders/:id/quote', (req, res) => {
+  const { quoted_price } = req.body || {};
+  const price = Number(quoted_price);
+  if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: '报价金额无效' });
+  const row = db.prepare('SELECT id, status FROM graduation_project_orders WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  if (row.status !== 'pending') return res.status(400).json({ error: '订单已支付，不能重新报价' });
+  // 客服报价进入待审批状态，需管理员审批后生效
+  db.prepare('UPDATE graduation_project_orders SET quoted_price = ?, quote_status = ? WHERE id = ?')
+    .run(price, 'pending', row.id);
+  res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'pending' });
 });
 
 export default router;

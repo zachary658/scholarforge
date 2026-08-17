@@ -154,6 +154,51 @@ export function estimatePointsForCall(toolType, params = {}) {
   return tokensToPoints(inputTokens, outputTokens);
 }
 
+// ========== 每功能固定积分定价（管理员可调，下限=token成本×5）==========
+
+// feature_key -> { toolType, outputKey } 映射，用于计算各功能的基准 token 用量（进而算出最低积分）
+const FEATURE_TOKEN_MAP = {
+  writing_outline: { toolType: 'writing', outputKey: 'writing_outline' },
+  writing_paragraph: { toolType: 'writing', outputKey: 'writing_paragraph' },
+  writing_abstract: { toolType: 'writing', outputKey: 'writing_abstract' },
+  writing_fulltext: { toolType: 'writing', outputKey: 'writing_fulltext' },
+  proposal: { toolType: 'proposal', outputKey: 'proposal' },
+  polish: { toolType: 'polish', outputKey: 'default' },
+  translate: { toolType: 'translate', outputKey: 'default' },
+  grammar: { toolType: 'grammar', outputKey: 'default' },
+  rewrite: { toolType: 'rewrite', outputKey: 'default' },
+  ai_reduce: { toolType: 'ai_reduce', outputKey: 'ai_reduce' },
+  literature_review: { toolType: 'literature_review', outputKey: 'literature_review' },
+  task_book: { toolType: 'task_book', outputKey: 'task_book' },
+  defense: { toolType: 'defense', outputKey: 'defense' },
+  journal: { toolType: 'journal', outputKey: 'journal' },
+};
+
+// 计算某功能的最低积分下限：基准 token 成本 × 5 倍利润 × 10（1元=10积分）
+// 基准用量 = 该功能输出预算 + system prompt 固定开销（不含用户输入，用户输入超长时由动态计费兜底）
+export function getFeatureMinPoints(featureKey) {
+  const m = FEATURE_TOKEN_MAP[featureKey];
+  if (!m) return 0;
+  const outputTokens = OUTPUT_TOKEN_BUDGET[m.outputKey] || OUTPUT_TOKEN_BUDGET.default;
+  const inputTokens = systemPromptEstimate(m.toolType);
+  return tokensToPoints(inputTokens, outputTokens);
+}
+
+// 获取某功能的固定积分价格（管理员设置；免费/未启用返回 0）
+export function getFeatureFixedPoints(featureKey) {
+  const fp = getFeaturePrice(featureKey);
+  if (!fp || !fp.is_active || fp.is_unlimited) return 0;
+  return Math.max(0, Math.ceil(Number(fp.price) || 0));
+}
+
+// 计算某功能一次调用的有效积分：固定价格 与 动态 token 计费 取较高者
+// 保证管理员定价不亏本，同时用户输入超长时动态计费自动兜底
+export function estimateEffectivePoints(featureKey, toolType, params = {}) {
+  const fixed = getFeatureFixedPoints(featureKey);
+  const dynamic = estimatePointsForCall(toolType, params);
+  return Math.max(fixed, dynamic);
+}
+
 // 判断用户积分是否足够完成一次调用
 export function canConsumeTokens(userId, toolType, params = {}) {
   const points = estimatePointsForCall(toolType, params);
@@ -162,4 +207,28 @@ export function canConsumeTokens(userId, toolType, params = {}) {
     return { ok: false, reason: 'INSUFFICIENT_POINTS', balance, needed: points };
   }
   return { ok: true, source: 'points', balance, points };
+}
+
+// ========== 一次性迁移：把收费功能价格抬到各自最低积分下限 ==========
+// 历史数据中部分功能价格低于「token 成本 × 5」下限，此处一次性抬到下限（只抬低、不降高）。
+// 用 settings 表记录版本，幂等执行（服务启动时调用，见 index.js）。
+export function migrateFeatureMinPrices() {
+  const key = 'migration_feature_min_price_v1';
+  const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  if (done && done.value === 'done') return 0;
+
+  const rows = db.prepare('SELECT feature_key, price FROM feature_prices WHERE is_unlimited = 0').all();
+  let changed = 0;
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const min = getFeatureMinPoints(r.feature_key);
+      if (min > 0 && r.price < min) {
+        db.prepare('UPDATE feature_prices SET price = ? WHERE feature_key = ?').run(min, r.feature_key);
+        changed++;
+      }
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(key);
+  });
+  tx();
+  return changed;
 }

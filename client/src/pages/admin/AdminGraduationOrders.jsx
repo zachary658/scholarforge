@@ -25,6 +25,13 @@ const STATUS_LABEL = {
 const NEXT_STATUS = { pending: 'contacted', contacted: 'completed', completed: 'pending' };
 const NEXT_LABEL = { pending: '标记已对接', contacted: '标记已完成', completed: '重置为待对接' };
 
+const QUOTE_STATUS = {
+  none: { label: '未报价', badge: 'bg-slate-100 text-slate-500' },
+  pending: { label: '待审批', badge: 'bg-amber-50 text-amber-600' },
+  approved: { label: '已生效', badge: 'bg-green-50 text-green-600' },
+  rejected: { label: '已驳回', badge: 'bg-red-50 text-red-600' },
+};
+
 function fmtDateTime(ts) {
   if (!ts) return '—';
   const d = new Date(Number(ts) * 1000);
@@ -164,13 +171,26 @@ export default function AdminGraduationOrders() {
     setQuotingSaving(true);
     try {
       await api.adminQuoteGraduationOrder(item.id, price);
-      toast.success('报价已更新');
+      toast.success('报价已更新（已生效）');
       cancelQuote();
       load(page, status);
     } catch (err) {
       toast.error(err.message);
     } finally {
       setQuotingSaving(false);
+    }
+  };
+
+  const approveQuote = async (item, action) => {
+    setUpdatingId(item.id);
+    try {
+      await api.adminApproveGraduationQuote(item.id, action);
+      toast.success(action === 'approved' ? '报价已通过审批' : '报价已驳回');
+      load(page, status);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setUpdatingId(null);
     }
   };
 
@@ -272,16 +292,42 @@ export default function AdminGraduationOrders() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-700">
-                            {it.quoted_price != null ? `¥${Number(it.quoted_price).toFixed(2)}` : '未报价'}
-                          </span>
-                          <button
-                            onClick={() => openQuote(it)}
-                            className="text-xs text-accent hover:underline"
-                          >
-                            报价
-                          </button>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-700">
+                              {it.quoted_price != null ? `¥${Number(it.quoted_price).toFixed(2)}` : '未报价'}
+                            </span>
+                            <button
+                              onClick={() => openQuote(it)}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              报价
+                            </button>
+                          </div>
+                          {(() => {
+                            const qs = QUOTE_STATUS[it.quote_status] || QUOTE_STATUS.none;
+                            return (
+                              <span className={`inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs ${qs.badge}`}>{qs.label}</span>
+                            );
+                          })()}
+                          {it.quote_status === 'pending' && (
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => approveQuote(it, 'approved')}
+                                disabled={updatingId === it.id}
+                                className="rounded-md bg-green-600 px-2 py-0.5 text-xs font-medium text-white hover:opacity-90"
+                              >
+                                通过
+                              </button>
+                              <button
+                                onClick={() => approveQuote(it, 'rejected')}
+                                disabled={updatingId === it.id}
+                                className="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:opacity-90"
+                              >
+                                驳回
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </td>

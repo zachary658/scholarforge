@@ -60,6 +60,7 @@ const emptyForm = {
   formula: '无',
   urgent: false,
   note: '',
+  contact: '',
 };
 
 function fmt(v) {
@@ -156,6 +157,7 @@ export default function CourseQuote() {
     formula: form.formula,
     urgent: !!form.urgent,
     note: form.note,
+    contact: form.contact,
   }), [form]);
 
   // 实时报价：防抖调用后端权威计算
@@ -429,6 +431,16 @@ export default function CourseQuote() {
                 value={form.note}
                 onChange={(e) => set({ note: e.target.value })}
                 placeholder="其他要求：如开题报告、答辩PPT、特殊格式规范等"
+              />
+            </div>
+
+            <div>
+              <label className="label">联系方式（选填）</label>
+              <input
+                className="input"
+                value={form.contact}
+                onChange={(e) => set({ contact: e.target.value })}
+                placeholder="微信号 / 手机号，便于客服与您对接"
               />
             </div>
           </div>

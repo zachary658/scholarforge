@@ -14,6 +14,9 @@ import {
   generatePasswordResetToken,
   consumePasswordResetToken,
   safeUser,
+  setRefreshCookie,
+  clearRefreshCookie,
+  getRefreshTokenFromCookie,
 } from '../auth.js';
 import { authRequired } from '../middleware.js';
 import { getSetting, getSignupPointsConfig, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
@@ -151,7 +154,8 @@ router.post('/register', registerLimiter, async (req, res) => {
 
   const user = safeUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid));
   const { accessToken, refreshToken } = await issueTokens(user);
-  res.json({ token: accessToken, accessToken, refreshToken, user });
+  setRefreshCookie(res, refreshToken);
+  res.json({ token: accessToken, accessToken, user });
 });
 
 router.post('/login', loginLimiter, async (req, res) => {
@@ -165,28 +169,34 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被禁用' });
   const { accessToken, refreshToken } = await issueTokens(user);
-  res.json({ token: accessToken, accessToken, refreshToken, user: safeUser(user) });
+  setRefreshCookie(res, refreshToken);
+  res.json({ token: accessToken, accessToken, user: safeUser(user) });
 });
 
 // 刷新 access token：用 refresh token 换新 access + 新 refresh（轮换）
 router.post('/refresh', async (req, res) => {
-  const { refreshToken } = req.body || {};
+  const refreshToken = getRefreshTokenFromCookie(req) || (req.body && req.body.refreshToken);
   const user = verifyRefreshToken(refreshToken);
-  if (!user) return res.status(401).json({ error: 'refresh token 无效或已过期' });
+  if (!user) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ error: 'refresh token 无效或已过期' });
+  }
   // 轮换：旧 refresh token 吊销，发新的（防重放）
   const newRefreshToken = await rotateRefreshToken(refreshToken, user);
   const accessToken = await signAccessToken(user);
-  res.json({ accessToken, refreshToken: newRefreshToken });
+  setRefreshCookie(res, newRefreshToken);
+  res.json({ accessToken });
 });
 
 // 登出：仅吊销当前 refresh token（不影响其他设备）
 // access token 短效（15 分钟），自然过期即可；不再全局 token_version++（那会误伤其他已登录设备）
 router.post('/logout', authRequired, (req, res) => {
-  const { refreshToken } = req.body || {};
+  const refreshToken = getRefreshTokenFromCookie(req) || (req.body && req.body.refreshToken);
   if (refreshToken) {
     // 仅吊销当前设备的 refresh token，不吊销其他设备
     revokeRefreshToken(refreshToken);
   }
+  clearRefreshCookie(res);
   res.json({ ok: true });
 });
 

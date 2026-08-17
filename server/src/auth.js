@@ -241,3 +241,47 @@ export async function ensureAdminAccount() {
     }
   }
 }
+
+// ===== refresh token Cookie（HttpOnly，防 XSS 窃取） =====
+// refresh token 通过 HttpOnly Cookie 下发，JS 不可读；SameSite=Lax 阻止跨站 POST 携带，防 CSRF。
+// access token 仍由前端以 Authorization: Bearer 头传递，不经过 Cookie，因此业务请求无 CSRF 风险。
+const REFRESH_COOKIE_NAME = 'sf_refresh';
+
+function refreshCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    // 仅生产（HTTPS）下设置 Secure；开发环境为 HTTP，设置 Secure 会导致 Cookie 无法写入
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: REFRESH_TOKEN_EXPIRES_SECONDS * 1000,
+    path: '/',
+  };
+}
+
+export function setRefreshCookie(res, token) {
+  res.cookie(REFRESH_COOKIE_NAME, token, refreshCookieOptions());
+}
+
+export function clearRefreshCookie(res) {
+  // 不传 maxAge，让 clearCookie 使用默认过期时间（1970），确保浏览器删除 Cookie
+  res.clearCookie(REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+  });
+}
+
+// 从 Cookie 头读取 refresh token（无 cookie-parser 依赖，手动解析）
+export function getRefreshTokenFromCookie(req) {
+  const header = req.headers.cookie || '';
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    const key = part.slice(0, idx).trim();
+    if (key === REFRESH_COOKIE_NAME) {
+      try { return decodeURIComponent(part.slice(idx + 1).trim()); } catch { return null; }
+    }
+  }
+  return null;
+}

@@ -83,9 +83,9 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     }
     targetName = course.title;
   } else if (type === 'graduation') {
-    // 毕业作品定制订单：target = graduation_project_orders.id，金额 = 客服已报价的 quoted_price
+    // 毕业作品定制订单：target = graduation_project_orders.id，金额 = 已审批通过的报价
     const gpOrder = db.prepare(
-      `SELECT gpo.id, gpo.quoted_price, gpo.status, gpo.user_id, gp.title
+      `SELECT gpo.id, gpo.quoted_price, gpo.quote_status, gpo.status, gpo.user_id, gp.title
        FROM graduation_project_orders gpo
        JOIN graduation_projects gp ON gp.id = gpo.project_id
        WHERE gpo.id = ?`
@@ -93,7 +93,12 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     if (!gpOrder) throw new Error('毕业作品订单不存在');
     if (gpOrder.user_id !== userId) throw new Error('无权操作该订单');
     if (gpOrder.status !== 'pending') throw new Error(`订单状态 ${gpOrder.status}，不能支付`);
-    if (gpOrder.quoted_price == null || gpOrder.quoted_price <= 0) throw new Error('订单尚未报价，请联系客服报价后再支付');
+    // 报价必须经管理员审批通过后才可支付
+    if (gpOrder.quote_status === 'pending') throw new Error('报价待管理员审批，请稍后再试');
+    if (gpOrder.quote_status === 'rejected') throw new Error('报价已被驳回，请联系客服重新报价');
+    if (gpOrder.quote_status !== 'approved' || gpOrder.quoted_price == null || gpOrder.quoted_price <= 0) {
+      throw new Error('订单尚未报价，请联系客服报价后再支付');
+    }
     amount = gpOrder.quoted_price;
     targetName = `毕业作品：${gpOrder.title}`;
     metadata = { gp_order_id: gpOrder.id, project_title: gpOrder.title };

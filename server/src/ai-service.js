@@ -12,6 +12,7 @@ import {
 import { getDefaultModel } from './config-store.js';
 import { genProposalBuiltin, buildProposalUserPrompt, PROPOSAL_SYSTEM_PROMPT } from './services/proposal.js';
 import logger from './logger.js';
+import { assertSafeAiBaseUrl } from './utils.js';
 
 // 各工具的 system prompt
 // 安全：所有 system prompt 末尾追加防注入指令，明确分隔符内为数据而非指令
@@ -137,6 +138,7 @@ function wrapContext(ctx) {
 //   - maxTokensOverride：长文生成场景（如毕业论文全文）需要突破默认 2048 token 限制
 //   - responseFormat：JSON 模式（结构化输出），约束模型返回合法 JSON，替代脆弱的正则解析
 async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) {
+  assertSafeAiBaseUrl(model.base_url); // SSRF 防护：拒绝云元数据/回环/链路本地目标
   const maxTokensOverride = opts.maxTokensOverride;
   const responseFormat = opts.responseFormat;
   const url = model.base_url.replace(/\/$/, '') + '/chat/completions';

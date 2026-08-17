@@ -20,7 +20,7 @@ import {
 } from '../config-store.js';
 import { hashPassword } from '../auth.js';
 import { refundOrder } from '../services/payment.js';
-import { grantPoints, getPointsBalance } from '../services/billing.js';
+import { grantPoints, getPointsBalance, getFeatureMinPoints } from '../services/billing.js';
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
 
@@ -74,13 +74,15 @@ const qrcodeUpload = multer({
   }),
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const ok = ['.png', '.jpg', '.jpeg', '.webp'].some((e) => file.originalname.toLowerCase().endsWith(e));
-    if (!ok) return cb(new Error('仅支持 png/jpg/jpeg/webp 图片'));
+    const ext = extname(file.originalname).toLowerCase();
+    if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) {
+      return cb(new Error('仅支持 png/jpg/jpeg/webp 图片'));
+    }
     cb(null, true);
   },
 });
 
-import { now } from '../utils.js';
+import { now, assertSafeAiBaseUrl, checkFileSignature, FILE_SIGNATURES } from '../utils.js';
 
 const today = () => {
   const d = new Date();
@@ -159,12 +161,28 @@ router.get('/overview', (_req, res) => {
 
 // ========== 功能定价管理 ==========
 router.get('/features', (_req, res) => {
-  res.json({ features: getFeaturePrices() });
+  const features = getFeaturePrices().map((f) => ({
+    ...f,
+    min_points: getFeatureMinPoints(f.feature_key),
+  }));
+  res.json({ features });
 });
 
 router.post('/features', (req, res) => {
   const { feature_key, name, price, unit, category, description, is_active, is_unlimited, sort_order } = req.body || {};
   if (!feature_key || !name) return res.status(400).json({ error: '请填写功能 key 和名称' });
+  const unlimited = !!is_unlimited;
+  let finalPrice = Number(price) || 0;
+  if (unlimited) {
+    // 免费功能价格强制为 0
+    finalPrice = 0;
+  } else {
+    // 收费功能校验：积分不得低于最低值（= 该功能 token 成本的 5 倍）
+    const minPoints = getFeatureMinPoints(feature_key);
+    if (finalPrice < minPoints) {
+      return res.status(400).json({ error: `积分不能低于最低值 ${minPoints}（该功能 token 成本的 5 倍）` });
+    }
+  }
   db.prepare(
     `INSERT INTO feature_prices (feature_key, name, price, unit, category, description, is_active, is_unlimited, sort_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -174,10 +192,11 @@ router.post('/features', (req, res) => {
        is_active=excluded.is_active, is_unlimited=excluded.is_unlimited, sort_order=excluded.sort_order,
        updated_at=strftime('%s','now')`
   ).run(
-    feature_key, name, Number(price) || 0, unit || '次', category || 'writing',
-    description || '', is_active === false ? 0 : 1, is_unlimited ? 1 : 0, sort_order ?? 0
+    feature_key, name, finalPrice, unit || '次', category || 'writing',
+    description || '', is_active === false ? 0 : 1, unlimited ? 1 : 0, sort_order ?? 0
   );
-  res.json({ ok: true, feature: getFeaturePrices().find((f) => f.feature_key === feature_key) });
+  const saved = getFeaturePrices().find((f) => f.feature_key === feature_key);
+  res.json({ ok: true, feature: { ...saved, min_points: getFeatureMinPoints(feature_key) } });
 });
 
 router.delete('/features/:key', (req, res) => {
@@ -498,6 +517,12 @@ router.post('/models/:id/test', async (req, res) => {
   if (m.provider === 'builtin' || !m.api_key) {
     return res.json({ ok: true, message: '内置模板引擎，无需测试', usedRealAI: false });
   }
+  // SSRF 防护：校验 base_url 仅允许 http/https 且非云元数据/回环/链路本地
+  try {
+    assertSafeAiBaseUrl(m.base_url);
+  } catch (err) {
+    return res.json({ ok: false, message: err.message });
+  }
   try {
     const url = m.base_url.replace(/\/$/, '') + '/chat/completions';
     const r = await fetch(url, {
@@ -638,6 +663,11 @@ router.post('/settings/wechat-qrcode', (req, res) => {
   qrcodeUpload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: '请选择图片文件' });
+    // magic-byte 校验：文件头必须匹配图片格式，防止伪造扩展名上传 HTML/SVG 等
+    if (!checkFileSignature(req.file.path, [FILE_SIGNATURES.png, FILE_SIGNATURES.jpeg, FILE_SIGNATURES.webp])) {
+      try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+      return res.status(400).json({ error: '图片文件内容无效' });
+    }
     const url = `/uploads/${req.file.filename}`;
     // 删除旧二维码文件，避免残留
     const old = getSetting('service_wechat_qrcode', '');
@@ -1045,7 +1075,7 @@ router.get('/graduation-orders', (req, res) => {
      JOIN graduation_projects gp ON gp.id = gpo.project_id ${where}`
   ).get(...params).c;
   const rows = db.prepare(
-    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.quoted_price, gpo.purchased_at, gpo.expires_at, gpo.requirements,
+    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.quote_status, gpo.quoted_price, gpo.purchased_at, gpo.expires_at, gpo.requirements,
             u.name AS user_name, u.email AS user_email,
             gp.title AS project_title, gp.category,
             o.order_no, o.amount
@@ -1079,8 +1109,23 @@ router.put('/graduation-orders/:id/quote', (req, res) => {
   if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: '报价金额无效' });
   const row = db.prepare('SELECT id FROM graduation_project_orders WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: '订单不存在' });
-  db.prepare('UPDATE graduation_project_orders SET quoted_price = ? WHERE id = ?').run(price, row.id);
-  res.json({ ok: true, id: row.id, quoted_price: price });
+  // 管理员报价直接生效（管理员具备审批权限，无需再走审批）
+  db.prepare('UPDATE graduation_project_orders SET quoted_price = ?, quote_status = ? WHERE id = ?')
+    .run(price, 'approved', row.id);
+  res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'approved' });
+});
+
+// 报价审批：管理员通过/驳回客服提交的报价
+router.put('/graduation-orders/:id/quote-status', (req, res) => {
+  const { status } = req.body || {};
+  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: '无效的审批操作' });
+  const row = db.prepare('SELECT id, quote_status, quoted_price FROM graduation_project_orders WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  if (status === 'approved' && (row.quoted_price == null || row.quoted_price <= 0)) {
+    return res.status(400).json({ error: '无有效报价，无法通过审批' });
+  }
+  db.prepare('UPDATE graduation_project_orders SET quote_status = ? WHERE id = ?').run(status, row.id);
+  res.json({ ok: true, id: row.id, quote_status: status });
 });
 
 export default router;

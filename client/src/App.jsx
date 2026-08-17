@@ -36,6 +36,7 @@ const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview.jsx'));
 const AdminCourses = lazy(() => import('./pages/admin/AdminCourses.jsx'));
 const AdminCoaching = lazy(() => import('./pages/admin/AdminCoaching.jsx'));
+const AdminFeaturePricing = lazy(() => import('./pages/admin/AdminFeaturePricing.jsx'));
 const AdminCourseOrders = lazy(() => import('./pages/admin/AdminCourseOrders.jsx'));
 const AdminOrders = lazy(() => import('./pages/admin/AdminOrders.jsx'));
 const AdminTemplates = lazy(() => import('./pages/admin/AdminTemplates.jsx'));
@@ -48,6 +49,7 @@ const AdminGraduation = lazy(() => import('./pages/admin/AdminGraduation.jsx'));
 const AdminGraduationOrders = lazy(() => import('./pages/admin/AdminGraduationOrders.jsx'));
 
 const SupportLayout = lazy(() => import('./pages/support/SupportLayout.jsx'));
+const SupportDashboard = lazy(() => import('./pages/support/SupportDashboard.jsx'));
 const SupportCourseOrders = lazy(() => import('./pages/support/SupportCourseOrders.jsx'));
 const SupportCourses = lazy(() => import('./pages/support/SupportCourses.jsx'));
 const SupportGraduationOrders = lazy(() => import('./pages/support/SupportGraduationOrders.jsx'));
@@ -133,6 +135,7 @@ export default function App() {
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><AdminCoaching /></Suspense>} />
         <Route path="course-orders" element={<Suspense fallback={<PageFallback />}><AdminCourseOrders /></Suspense>} />
         <Route path="points" element={<Suspense fallback={<PageFallback />}><AdminCourses /></Suspense>} />
+        <Route path="features" element={<Suspense fallback={<PageFallback />}><AdminFeaturePricing /></Suspense>} />
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><AdminOrders /></Suspense>} />
         <Route path="templates" element={<Suspense fallback={<PageFallback />}><AdminTemplates /></Suspense>} />
         <Route path="models" element={<Suspense fallback={<PageFallback />}><AdminModels /></Suspense>} />
@@ -151,7 +154,8 @@ export default function App() {
           </SupportRoute>
         }
       >
-        <Route index element={<Suspense fallback={<PageFallback />}><SupportCourseOrders /></Suspense>} />
+        <Route index element={<Suspense fallback={<PageFallback />}><SupportDashboard /></Suspense>} />
+        <Route path="orders" element={<Suspense fallback={<PageFallback />}><SupportCourseOrders /></Suspense>} />
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><SupportCourses /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><SupportGraduationOrders /></Suspense>} />
       </Route>

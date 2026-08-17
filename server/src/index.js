@@ -25,6 +25,7 @@ import projectsRoutes from './routes/projects.js';
 import tasksRoutes from './routes/tasks.js';
 import graduationRoutes from './routes/graduation.js';
 import { closeExpiredOrders } from './services/payment.js';
+import { migrateFeatureMinPrices } from './services/billing.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import logger from './logger.js';
@@ -33,6 +34,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // 初始化管理员账号（异步：bcrypt hash 不阻塞事件循环）
 await ensureAdminAccount();
+
+// 一次性迁移：把功能定价低于下限的旧价格抬到最低积分（token 成本 × 5），幂等
+try {
+  const migrated = migrateFeatureMinPrices();
+  if (migrated > 0) logger.info('migrate', `功能定价下限迁移：抬价 ${migrated} 个功能`);
+} catch (err) {
+  logger.error('migrate', `功能定价迁移失败：${err.message}`);
+}
 
 const app = express();
 
@@ -76,7 +85,8 @@ app.use(cors({
     // 不使用 cb(new Error(...))，避免落入全局错误处理器返回 500
     return cb(null, false);
   },
-  credentials: false,
+  // 允许携带 Cookie（refresh token 经 HttpOnly Cookie 下发），开发环境跨域时 refresh 请求需带凭据
+  credentials: true,
 }));
 
 // 全局速率限制：每个 IP 每分钟最多 120 次请求（防暴力扫描/DoS）

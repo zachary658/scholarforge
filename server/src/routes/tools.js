@@ -5,7 +5,7 @@ import { formatReference } from '../ai.js';
 import { logUsage } from '../usage.js';
 import logger from '../logger.js';
 import { getFeaturePrice } from '../config-store.js';
-import { isFreeUnlimitedFeature, getPointsBalance, consumePoints, refundPoints, estimatePointsForCall, estimateCallTokens, tokensToPoints } from '../services/billing.js';
+import { isFreeUnlimitedFeature, getPointsBalance, consumePoints, refundPoints, estimatePointsForCall, estimateCallTokens, tokensToPoints, estimateEffectivePoints, getFeatureFixedPoints } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
 import { saveTask, buildProjectContext } from '../services/task-store.js';
 import db from '../db.js';
@@ -31,8 +31,8 @@ function resolveBilling(userId, featureKey, toolType, params) {
   if (isFreeUnlimitedFeature(featureKey)) {
     return { ok: true, mode: 'unlimited' };
   }
-  // 预估本次调用的大模型用量并换算为积分
-  const points = estimatePointsForCall(toolType, params);
+  // 有效积分 = max(管理员固定定价, 按 token 动态估算)，保证不亏本
+  const points = estimateEffectivePoints(featureKey, toolType, params);
   const balance = getPointsBalance(userId);
   if (balance >= points) {
     return { ok: true, mode: 'points', points, balance };
@@ -128,25 +128,27 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   }
 
   // 计费结算：按真实 token 用量多退少补（仅真实 AI 且本次预扣了积分）
+  // 最终应扣 = max(固定定价, 真实用量动态积分)，与预扣的差额多退少补
   let settledPoints = deductedPoints;
   if (deductedPoints > 0 && aiResult.promptTokens != null && aiResult.tokens > 0) {
     const actualCompletionTokens = aiResult.completionTokens || Math.max(0, aiResult.tokens - aiResult.promptTokens);
-    const actualPoints = tokensToPoints(aiResult.promptTokens, actualCompletionTokens);
-    const diff = actualPoints - deductedPoints;
+    const actualDynamic = tokensToPoints(aiResult.promptTokens, actualCompletionTokens);
+    const finalPoints = Math.max(getFeatureFixedPoints(featureKey), actualDynamic);
+    const diff = finalPoints - deductedPoints;
     if (diff > 0) {
       // 实际用量超出预估，补扣差额；余额不足不阻断已成功的调用，仅记录日志
       try {
         consumePoints(userId, diff, `${featureKey}：用量结算补扣`);
-        settledPoints = actualPoints;
+        settledPoints = finalPoints;
       } catch (err) {
         logger.error('tools', `结算补扣失败（忽略）: ${err.message}`);
       }
     } else if (diff < 0) {
       // 预估偏高，退还差额
       refundPoints(userId, -diff, `${featureKey}：用量结算退款`);
-      settledPoints = actualPoints;
+      settledPoints = finalPoints;
     } else {
-      settledPoints = actualPoints;
+      settledPoints = finalPoints;
     }
   }
 
@@ -359,8 +361,9 @@ router.post('/smart-writing', authRequired, async (req, res) => {
 
   // 计费：多源检索免费，但框架提取 + 大纲生成会调用大模型，按预估用量扣积分，防止白嫖
   // 使用 literature_review 的输出预算作为保守估算（框架提取 + 大纲生成的实际输出通常更低）
+  // 有效积分 = max(literature_review 固定定价, 动态 token 估算)
   const billingParams = { topic, field, keywords };
-  const points = estimatePointsForCall('literature_review', billingParams);
+  const points = estimateEffectivePoints('literature_review', 'literature_review', billingParams);
   const balance = getPointsBalance(req.user.id);
   if (balance < points) {
     return res.json({ needPoints: true, balance, needed: points });
@@ -382,20 +385,21 @@ router.post('/smart-writing', authRequired, async (req, res) => {
     let settledPoints = deductedPoints;
     const rt = result.tokens || { promptTokens: 0, completionTokens: 0 };
     if (rt.promptTokens > 0 || rt.completionTokens > 0) {
-      const actualPoints = tokensToPoints(rt.promptTokens, rt.completionTokens);
-      const diff = actualPoints - deductedPoints;
+      const actualDynamic = tokensToPoints(rt.promptTokens, rt.completionTokens);
+      const finalPoints = Math.max(getFeatureFixedPoints('literature_review'), actualDynamic);
+      const diff = finalPoints - deductedPoints;
       if (diff > 0) {
         try {
           consumePoints(req.user.id, diff, 'smart_writing：真实用量结算补扣');
-          settledPoints = actualPoints;
+          settledPoints = finalPoints;
         } catch (e) {
           logger.error('tools', `智能写作结算补扣失败（忽略）: ${e.message}`);
         }
       } else if (diff < 0) {
         refundPoints(req.user.id, -diff, 'smart_writing：真实用量结算退款');
-        settledPoints = actualPoints;
+        settledPoints = finalPoints;
       } else {
-        settledPoints = actualPoints;
+        settledPoints = finalPoints;
       }
     }
 

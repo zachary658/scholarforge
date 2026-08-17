@@ -34,6 +34,7 @@ export function normalizeCourseRequirements(input = {}) {
     formula,
     urgent: !!input.urgent,
     note: String(input.note || '').trim().slice(0, 2000),
+    contact: String(input.contact || '').trim().slice(0, 200),
   };
 }
 
