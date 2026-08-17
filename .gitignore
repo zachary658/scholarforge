@@ -1,0 +1,41 @@
+# 依赖
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# 构建产物
+client/dist/
+
+# 运行时生成的文件
+server/uploads/docs/*.docx
+server/uploads/docs/*.pptx
+server/uploads/test-charts/
+server/src/uploads/mail_log/
+
+# 数据库文件（排除所有数据库文件，避免敏感数据泄露）
+server/data/*.db
+server/data/*.db-*
+
+# 日志
+*.log
+nohup.out
+
+# 环境变量（含密钥，不提交）
+.env
+.env.local
+server/.env
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 操作系统
+Thumbs.db
+
+# 交付包与临时产物（不打进仓库）
+*.tar.gz
+*.zip
+.trae-html-share-packages/
+scholarforge-deliverable/
