@@ -152,6 +152,7 @@ export const api = {
   me: () => request('/auth/me'),
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (payload) => request('/auth/reset-password', { method: 'POST', body: payload, auth: false }),
+  changePassword: (payload) => request('/auth/change-password', { method: 'POST', body: payload }),
 
   // ===== public / 站点信息 =====
   getSite: () => request('/public/site', { auth: false }),

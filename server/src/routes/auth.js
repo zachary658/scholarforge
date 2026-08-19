@@ -53,6 +53,15 @@ const forgotLimiter = rateLimit({
   message: { error: '请求过于频繁，请稍后再试' },
 });
 
+// 修改密码速率限制：每个 IP 15 分钟最多 5 次，防当前密码被暴力破解（尤其管理员账号）
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '操作过于频繁，请稍后再试' },
+});
+
 // 密码强度校验：至少 8 位，必须同时包含字母和数字
 function validatePasswordStrength(password) {
   if (!password || password.length < 8) return '密码至少 8 位';
@@ -208,6 +217,33 @@ router.post('/logout', authRequired, (req, res) => {
   }
   clearRefreshCookie(res);
   res.json({ ok: true });
+});
+
+// 修改密码：需登录并校验当前密码；修改后吊销所有会话（token_version++ + 吊销全部 refresh token）
+router.post('/change-password', authRequired, changePasswordLimiter, async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) return res.status(400).json({ error: '请填写当前密码和新密码' });
+  if (current_password === new_password) return res.status(400).json({ error: '新密码不能与当前密码相同' });
+  const pwdErr = validatePasswordStrength(new_password);
+  if (pwdErr) return res.status(400).json({ error: pwdErr });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  // 校验当前密码：防止攻击者利用短效 access token 窃取会话后直接改密（尤其管理员账号）
+  if (!(await verifyPassword(current_password, user.password_hash))) {
+    return res.status(400).json({ error: '当前密码不正确' });
+  }
+
+  const hash = await hashPassword(new_password);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  // 使所有已签发的 access token 立即失效，并吊销全部 refresh token，强制所有设备重新登录
+  incrementTokenVersion(user.id);
+  revokeAllRefreshTokens(user.id);
+  // 清理当前会话的 refresh Cookie
+  clearRefreshCookie(res);
+  logger.warn('auth', `用户修改密码: ${user.email} (id=${user.id})`);
+
+  res.json({ ok: true, message: '密码修改成功，请重新登录' });
 });
 
 // 忘记密码：生成重置 token 并发送邮件

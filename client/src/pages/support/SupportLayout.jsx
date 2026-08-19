@@ -1,7 +1,8 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
-import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight } from '../../components/Icons.jsx';
+import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock } from '../../components/Icons.jsx';
+import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 
 const nav = [
   { to: '/support', label: '工作台', icon: Grid, end: true },
@@ -14,6 +15,7 @@ export default function SupportLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -86,6 +88,13 @@ export default function SupportLayout() {
             <div className="truncate text-[11px] text-slate-400">{user?.email}</div>
           </div>
           <button
+            onClick={() => setChangePwdOpen(true)}
+            title="修改密码"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
+          >
+            <Lock className="h-[18px] w-[18px]" />
+          </button>
+          <button
             onClick={handleLogout}
             title="退出登录"
             className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
@@ -129,6 +138,8 @@ export default function SupportLayout() {
         </div>
         <Outlet />
       </main>
+
+      {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}
     </div>
   );
 }

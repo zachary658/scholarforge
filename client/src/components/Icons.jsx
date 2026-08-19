@@ -126,6 +126,14 @@ export const Logout = (p) => (
   </svg>
 );
 
+// 锁/密码图标
+export const Lock = (p) => (
+  <svg {...base(p)}>
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+
 export const Refresh = (p) => (
   <svg {...base(p)}>
     <path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5" />

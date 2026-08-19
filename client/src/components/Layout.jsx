@@ -5,8 +5,9 @@ import { api } from '../lib/api.js';
 import {
   Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Cart, Receipt, Layers,
   Logout, Shield, ArrowRight, Gift, Crown, Menu, X, Refresh,
-  FileText, Activity, Cpu,
+  FileText, Activity, Cpu, Lock,
 } from './Icons.jsx';
+import ChangePasswordModal from './ChangePasswordModal.jsx';
 
 // 按场景分组的导航
 const navGroups = [
@@ -62,6 +63,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
 
   const loadStatus = async () => {
     try {
@@ -180,6 +182,13 @@ export default function Layout() {
             <div className="truncate text-sm font-medium text-ink">{user?.name}</div>
             <div className="truncate text-[11px] text-slate-400">{user?.email}</div>
           </div>
+          <button
+            onClick={() => setChangePwdOpen(true)}
+            title="修改密码"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
+          >
+            <Lock className="h-[18px] w-[18px]" />
+          </button>
           <button onClick={handleLogout} title="退出登录" className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink">
             <Logout className="h-[18px] w-[18px]" />
           </button>
@@ -233,6 +242,8 @@ export default function Layout() {
         </div>
         <Outlet context={{ refreshStatus: loadStatus, status }} />
       </main>
+
+      {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}
     </div>
   );
 }

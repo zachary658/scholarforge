@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
 import {
   Shield, ChartBar, Cpu, Users, Activity, Sliders, ArrowRight,
-  Logout, Cart, Receipt, Layers, Menu, X, Wallet, BookOpen, Wechat, Tag,
+  Logout, Cart, Receipt, Layers, Menu, X, Wallet, BookOpen, Wechat, Tag, Lock,
 } from '../../components/Icons.jsx';
+import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 
 const nav = [
   { to: '/admin', label: '概览', icon: ChartBar, end: true },
@@ -27,6 +28,7 @@ export default function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -97,6 +99,13 @@ export default function AdminLayout() {
             <div className="truncate text-[11px] text-slate-400">{user?.email}</div>
           </div>
           <button
+            onClick={() => setChangePwdOpen(true)}
+            title="修改密码"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
+          >
+            <Lock className="h-[18px] w-[18px]" />
+          </button>
+          <button
             onClick={handleLogout}
             title="退出登录"
             className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
@@ -146,6 +155,8 @@ export default function AdminLayout() {
         </div>
         <Outlet />
       </main>
+
+      {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}
     </div>
   );
 }

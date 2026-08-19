@@ -47,12 +47,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // 清除本地会话（不触发网络请求）：用于修改密码后强制重新登录
+  const clearSession = useCallback(() => {
+    localStorage.removeItem('sf_token');
+    setUser(null);
+  }, []);
+
   const updateUser = useCallback((patch) => {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, clearSession, refreshUser, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
