@@ -41,15 +41,15 @@ export default function Rewrite() {
     tool.run(() => api.rewrite({ text: input }));
   };
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     try {
-      navigator.clipboard?.writeText(output);
+      if (navigator.clipboard) await navigator.clipboard.writeText(output);
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
       toast.success('已复制降重结果');
-    } catch (err) {
-      toast.error('复制失败：' + err.message);
+    } catch {
+      toast.error('复制失败，请手动复制');
     }
   };
 

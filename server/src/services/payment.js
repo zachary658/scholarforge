@@ -359,22 +359,26 @@ export async function refundOrder(orderNo, reason = '') {
       const pkgMeta = JSON.parse(order.metadata || '{}');
       const totalPoints = (pkgMeta.points || 0) + (pkgMeta.bonus_points || 0);
       if (totalPoints > 0) {
-        const current = db.prepare('SELECT points FROM users WHERE id = ?').get(order.user_id);
-        if (current && current.points >= totalPoints) {
-          // 积分充足，全额扣回
-          db.prepare('UPDATE users SET points = points - ? WHERE id = ?').run(totalPoints, order.user_id);
+        // 原子条件扣减：仅当余额充足时全额扣回，避免 TOCTOU（先查后改）把余额扣成负数
+        const deducted = db.prepare(
+          'UPDATE users SET points = points - ? WHERE id = ? AND points >= ?'
+        ).run(totalPoints, order.user_id, totalPoints);
+        if (deducted.changes > 0) {
           const newBalance = db.prepare('SELECT points FROM users WHERE id = ?').get(order.user_id).points;
           db.prepare(
             'INSERT INTO points_log (user_id, type, points, balance_after, order_id, description) VALUES (?, ?, ?, ?, ?, ?)'
           ).run(order.user_id, 'refund', -totalPoints, newBalance, order.id, `退款扣回积分：${reason || '退款'}`);
         } else {
-          // 积分不足（已消费部分），扣回剩余
-          const remaining = current ? current.points : 0;
-          if (remaining > 0) {
-            db.prepare('UPDATE users SET points = 0 WHERE id = ?').run(order.user_id);
-            db.prepare(
-              'INSERT INTO points_log (user_id, type, points, balance_after, order_id, description) VALUES (?, ?, ?, ?, ?, ?)'
-            ).run(order.user_id, 'refund', -remaining, 0, order.id, `退款扣回剩余积分：${reason || '退款'}`);
+          // 积分不足（已消费部分），扣回剩余：先读余额，再用「余额未变」作条件原子置 0，防 TOCTOU
+          const beforeRow = db.prepare('SELECT points FROM users WHERE id = ?').get(order.user_id);
+          const before = beforeRow ? beforeRow.points : 0;
+          if (before > 0) {
+            const zeroed = db.prepare('UPDATE users SET points = 0 WHERE id = ? AND points = ?').run(order.user_id, before);
+            if (zeroed.changes > 0) {
+              db.prepare(
+                'INSERT INTO points_log (user_id, type, points, balance_after, order_id, description) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(order.user_id, 'refund', -before, 0, order.id, `退款扣回剩余积分：${reason || '退款'}`);
+            }
           }
         }
       }

@@ -17,8 +17,11 @@ export function AuthProvider({ children }) {
     try {
       const data = await api.me();
       setUser(data.user);
-    } catch {
-      setUser(null);
+    } catch (err) {
+      // 仅 401（token 失效）才清空用户；网络错误等瞬时故障保留原状态，避免误登出
+      if (err && err.status === 401) {
+        setUser(null);
+      }
     }
     setLoading(false);
   }, []);

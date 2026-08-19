@@ -199,7 +199,8 @@ router.post('/wechat/notify', async (req, res) => {
     res.json({ code: 'SUCCESS', message: 'OK' });
   } catch (err) {
     logger.error('payment', `微信回调处理失败: ${err.message}`);
-    res.status(500).json({ code: 'FAIL', message: err.message });
+    // 不向回调方返回内部错误详情（可能含订单号/交易号），统一返回固定消息
+    res.status(500).json({ code: 'FAIL', message: '处理失败' });
   }
 });
 

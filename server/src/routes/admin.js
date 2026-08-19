@@ -18,7 +18,7 @@ import {
   getPaymentConfig,
   invalidatePaymentCache,
 } from '../config-store.js';
-import { hashPassword } from '../auth.js';
+import { hashPassword, revokeAllRefreshTokens } from '../auth.js';
 import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
 import { refundOrder, closePendingGraduationOrders } from '../services/payment.js';
 import { grantPoints, getPointsBalance, getFeatureMinPoints } from '../services/billing.js';
@@ -776,7 +776,12 @@ router.delete('/users/:id', (req, res) => {
   if (!u) return res.status(404).json({ error: '用户不存在' });
   if (u.id === req.user.id) return res.status(400).json({ error: '不可删除自己' });
   if (u.email === 'admin@scholarforge.com') return res.status(400).json({ error: '不可删除超级管理员' });
-  db.prepare('DELETE FROM users WHERE id = ?').run(u.id);
+  // 软删除：仅将状态置为 deleted，保留订单/积分日志等财务记录（原硬删除会级联销毁，破坏对账）
+  db.prepare("UPDATE users SET status = 'deleted' WHERE id = ?").run(u.id);
+  // 吊销其所有 refresh token，防止已登录会话继续使用
+  try {
+    revokeAllRefreshTokens(u.id);
+  } catch { /* 忽略吊销失败 */ }
   res.json({ ok: true });
 });
 
@@ -1056,6 +1061,8 @@ router.put('/graduation-orders/:id/quote', (req, res) => {
   const { quoted_price } = req.body || {};
   const price = Number(quoted_price);
   if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: '报价金额无效' });
+  // 金额上限：防止超大数值进入 orders.amount 破坏财务统计与浮点计算
+  if (price > 1000000) return res.status(400).json({ error: '报价金额超出上限（100万元）' });
   const row = db.prepare('SELECT id FROM graduation_project_orders WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: '订单不存在' });
   // 管理员报价直接生效（管理员具备审批权限，无需再走审批）

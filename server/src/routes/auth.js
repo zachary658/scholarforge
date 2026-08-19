@@ -141,9 +141,18 @@ router.post('/register', registerLimiter, async (req, res) => {
   if (!guard.ok) return res.status(429).json({ error: guard.error });
 
   const hash = await hashPassword(password);
-  const info = db.prepare(
-    'INSERT INTO users (email, password_hash, name, register_ip, device_fingerprint) VALUES (?, ?, ?, ?, ?)'
-  ).run(normalizedEmail, hash, name, ip || null, deviceFingerprint);
+  let info;
+  try {
+    info = db.prepare(
+      'INSERT INTO users (email, password_hash, name, register_ip, device_fingerprint) VALUES (?, ?, ?, ?, ?)'
+    ).run(normalizedEmail, hash, name, ip || null, deviceFingerprint);
+  } catch (err) {
+    // 并发注册同一邮箱会命中 UNIQUE 约束（前置 SELECT 判重无法完全消除竞态），返回 409 而非 500
+    if (err && (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/i.test(err.message || ''))) {
+      return res.status(409).json({ error: '该邮箱已注册' });
+    }
+    throw err;
+  }
 
   // 注册赠送积分
   const { points } = getSignupPointsConfig();
@@ -168,6 +177,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     return res.status(401).json({ error: '邮箱或密码错误' });
   }
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被禁用' });
+  if (user.status === 'deleted') return res.status(403).json({ error: '账号不存在' });
   const { accessToken, refreshToken } = await issueTokens(user);
   setRefreshCookie(res, refreshToken);
   res.json({ token: accessToken, accessToken, user: safeUser(user) });
@@ -214,9 +224,9 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     const resetToken = generatePasswordResetToken(user.id);
     const { subject, text, html } = buildPasswordResetEmail(normalizedEmail, resetToken);
     const mailResult = await sendMail({ to: normalizedEmail, subject, text, html });
-    // mock 模式下返回 preview 路径，便于演示查看
-    if (mailResult.mock) {
-      logger.info('auth', `密码重置邮件已发送（mock），重置链接预览：${mailResult.preview}`);
+    // 安全：不记录/输出重置链接（token 落入日志可被用于接管账号）
+    if (!mailResult.ok) {
+      logger.error('auth', `密码重置邮件发送失败: ${mailResult.error || 'unknown'}`);
     }
   }
   // 统一响应，防邮箱枚举

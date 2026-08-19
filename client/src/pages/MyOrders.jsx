@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Refresh } from '../components/Icons.jsx';
+import { toast } from '../components/Toast.jsx';
+import PayModal from '../components/PayModal.jsx';
 
 const STATUS_LABEL = { pending: '待支付', paid: '已支付', closed: '已关闭', refunded: '已退款' };
 const STATUS_CLASS = {
@@ -28,6 +30,7 @@ export default function MyOrders() {
   const [type, setType] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [payOrder, setPayOrder] = useState(null);
   const SIZE = 20;
 
   const load = async (p = page, st = status, ty = type) => {
@@ -150,7 +153,16 @@ export default function MyOrders() {
                       <td className="px-4 py-3 text-slate-600">{CHANNEL_LABEL[o.payment_channel] || o.payment_channel || '—'}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(o.paid_at || o.created_at)}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className="text-xs text-slate-400">—</span>
+                        {o.status === 'pending' ? (
+                          <button
+                            onClick={() => setPayOrder(o)}
+                            className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                          >
+                            去支付
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
                       </td>
                     </tr>
                 ))
@@ -180,6 +192,15 @@ export default function MyOrders() {
             </button>
           </div>
         </div>
+      )}
+
+      {payOrder && (
+        <PayModal
+          order={payOrder}
+          payParams={null}
+          onClose={() => setPayOrder(null)}
+          onPaid={() => { setPayOrder(null); load(page); toast.success('支付成功'); }}
+        />
       )}
     </div>
   );

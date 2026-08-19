@@ -24,7 +24,7 @@ function safeFilePath(storedPath) {
 // 我的文档列表
 router.get('/', authRequired, (req, res) => {
   const items = db.prepare(
-    `SELECT id, title, feature, file_path, order_id, created_at
+    `SELECT id, title, feature, order_id, created_at
      FROM generated_docs
      WHERE user_id = ?
      ORDER BY id DESC LIMIT 200`

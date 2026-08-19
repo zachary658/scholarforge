@@ -70,6 +70,15 @@ export default function AdminUsers() {
   };
 
   const toggleStatus = async (u) => {
+    const banning = u.status !== 'banned';
+    if (!await confirm({
+      title: banning ? '禁用确认' : '启用确认',
+      message: banning
+        ? `确认禁用「${u.name || u.email}」？禁用后该用户将无法登录。`
+        : `确认启用「${u.name || u.email}」？`,
+      danger: banning,
+      confirmText: banning ? '禁用' : '启用',
+    })) return;
     setError('');
     try {
       await api.adminUpdateUser(u.id, { status: u.status === 'banned' ? 'active' : 'banned' });
@@ -81,6 +90,14 @@ export default function AdminUsers() {
   };
 
   const toggleAdmin = async (u) => {
+    if (!await confirm({
+      title: u.is_admin ? '取消管理员确认' : '设为管理员确认',
+      message: u.is_admin
+        ? `确认取消「${u.name || u.email}」的管理员权限？`
+        : `确认将「${u.name || u.email}」设为管理员？管理员拥有全部后台权限。`,
+      danger: true,
+      confirmText: u.is_admin ? '取消管理员' : '设为管理员',
+    })) return;
     setError('');
     try {
       await api.adminUpdateUser(u.id, { is_admin: !u.is_admin });

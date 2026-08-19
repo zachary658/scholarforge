@@ -63,6 +63,12 @@ router.post('/orders', authRequired, (req, res) => {
   const project = db.prepare('SELECT * FROM graduation_projects WHERE id = ? AND is_active = 1').get(projectId);
   if (!project) return res.status(404).json({ error: '项目不存在或已下架' });
 
+  // 去重：同一用户同一项目已有未完成（pending/contacted）订单时，拒绝重复提交，防止刷客服队列
+  const existing = db.prepare(
+    "SELECT id FROM graduation_project_orders WHERE user_id = ? AND project_id = ? AND status IN ('pending', 'contacted')"
+  ).get(req.user.id, projectId);
+  if (existing) return res.status(409).json({ error: '该项目已有待处理的定制订单，请勿重复提交' });
+
   // 规范化需求备注与联系方式
   const reqObj = {};
   if (requirements && typeof requirements === 'object') {

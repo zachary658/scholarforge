@@ -4,16 +4,13 @@ import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import RechargeBanner from '../components/RechargeBanner.jsx';
 import { Sparkle, Copy, Download, Refresh, ArrowRight, Check, Crown, Gift } from '../components/Icons.jsx';
+import { toast } from '../components/Toast.jsx';
 
 const modes = [
   { value: 'polish', label: '学术润色' },
   { value: 'translate', label: '中英互译' },
   { value: 'grammar', label: '语法纠错' },
 ];
-
-function copyText(text) {
-  navigator.clipboard?.writeText(text);
-}
 
 const SAMPLE = '我觉得深度学习很重要，所以本文做研究来看一下这个方法。但是数据比较少，还有就是模型很复杂，所以结果不太稳定。';
 
@@ -60,11 +57,15 @@ export default function Polish() {
     tool.reset();
   };
 
-  const handleCopy = () => {
-    copyText(output);
-    setCopied(true);
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(output);
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('复制失败，请手动复制');
+    }
   };
 
   const downloadText = () => {

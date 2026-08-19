@@ -19,6 +19,11 @@ export default function Register() {
       setError('请先阅读并勾选同意《用户需知》');
       return;
     }
+    // 密码强度校验：与后端/重置密码页一致（至少 8 位且含字母和数字）
+    if (form.password.length < 8 || !/[a-zA-Z]/.test(form.password) || !/\d/.test(form.password)) {
+      setError('密码至少 8 位，且必须同时包含字母和数字');
+      return;
+    }
     setLoading(true);
     try {
       await register({ ...form, device_fingerprint: getDeviceFingerprint(), agree_terms: true });

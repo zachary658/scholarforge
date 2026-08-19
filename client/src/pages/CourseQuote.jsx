@@ -113,6 +113,7 @@ export default function CourseQuote() {
   const [payState, setPayState] = useState(null);
   const [success, setSuccess] = useState(null); // { order, requirements, quote }
   const debounceRef = useRef(null);
+  const quoteSeqRef = useRef(0);
 
   // 公式复杂度弹窗状态
   const [formulaModal, setFormulaModal] = useState(null); // 待确认的 formula value
@@ -161,18 +162,20 @@ export default function CourseQuote() {
   }), [form]);
 
   // 实时报价：防抖调用后端权威计算
+  // 用请求序号防竞态：旧响应（慢请求）不覆盖新报价
   useEffect(() => {
     if (!course) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
+      const seq = ++quoteSeqRef.current;
       try {
         setQuoting(true);
         const data = await api.courseQuote({ course_id: course.id, requirements });
-        setQuote(data);
+        if (seq === quoteSeqRef.current) setQuote(data);
       } catch {
-        setQuote(null);
+        if (seq === quoteSeqRef.current) setQuote(null);
       } finally {
-        setQuoting(false);
+        if (seq === quoteSeqRef.current) setQuoting(false);
       }
     }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };

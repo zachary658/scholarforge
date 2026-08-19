@@ -24,6 +24,8 @@ router.get('/', authRequired, (req, res) => {
     orders: orders.map((o) => ({
       ...o,
       metadata: undefined,
+      transaction_id: undefined,
+      refund_reason: undefined,
     })),
     total, page, size, pages: Math.ceil(total / size),
   });
@@ -38,6 +40,8 @@ router.get('/:orderNo', authRequired, (req, res) => {
   res.json({
     ...order,
     metadata: undefined,
+    transaction_id: undefined,
+    refund_reason: undefined,
     executed: !!meta.executed,
     doc_id: meta.doc_id || null,
     result_preview: meta.result_preview || null,

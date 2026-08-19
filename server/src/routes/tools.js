@@ -141,12 +141,13 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     const finalPoints = Math.max(getFeatureFixedPoints(featureKey), actualDynamic);
     const diff = finalPoints - deductedPoints;
     if (diff > 0) {
-      // 实际用量超出预估，补扣差额；余额不足不阻断已成功的调用，仅记录日志
+      // 实际用量超出预估，补扣差额；余额不足不阻断已成功的调用，但清零余额防止继续白嫖
       try {
         consumePoints(userId, diff, `${featureKey}：用量结算补扣`);
         settledPoints = finalPoints;
       } catch (err) {
-        logger.error('tools', `结算补扣失败（忽略）: ${err.message}`);
+        logger.error('tools', `结算补扣失败，欠费 ${diff} 积分，清零余额: ${err.message}`);
+        db.prepare('UPDATE users SET points = 0 WHERE id = ?').run(userId);
       }
     } else if (diff < 0) {
       // 预估偏高，退还差额
@@ -403,7 +404,8 @@ router.post('/smart-writing', authRequired, async (req, res) => {
           consumePoints(req.user.id, diff, 'smart_writing：真实用量结算补扣');
           settledPoints = finalPoints;
         } catch (e) {
-          logger.error('tools', `智能写作结算补扣失败（忽略）: ${e.message}`);
+          logger.error('tools', `智能写作结算补扣失败，欠费 ${diff} 积分，清零余额: ${e.message}`);
+          db.prepare('UPDATE users SET points = 0 WHERE id = ?').run(req.user.id);
         }
       } else if (diff < 0) {
         refundPoints(req.user.id, -diff, 'smart_writing：真实用量结算退款');

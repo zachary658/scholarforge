@@ -180,6 +180,8 @@ router.post('/graduation-orders/:id/quote', (req, res) => {
   const { quoted_price } = req.body || {};
   const price = Number(quoted_price);
   if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: '报价金额无效' });
+  // 金额上限：防止超大数值进入 orders.amount 破坏财务统计与浮点计算
+  if (price > 1000000) return res.status(400).json({ error: '报价金额超出上限（100万元）' });
   const row = db.prepare('SELECT id, status FROM graduation_project_orders WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: '订单不存在' });
   if (row.status !== 'pending') return res.status(400).json({ error: '订单已支付，不能重新报价' });

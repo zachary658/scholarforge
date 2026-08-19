@@ -19,11 +19,12 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 // 确保 mail_log 目录存在（mock 模式用）
 try { fs.mkdirSync(mailLogDir, { recursive: true }); } catch {}
 
-// 发送邮件：返回 { ok, mock, preview? }
+// 发送邮件：返回 { ok, mock, preview?, error? }
 // to: 收件人邮箱
 // subject: 主题
 // text: 纯文本内容
 // html: HTML 内容（可选）
+// 安全：生产环境必须走 SMTP，禁止 mock 回退（防止密码重置 token 落入日志/磁盘文件）
 export async function sendMail({ to, subject, text, html }) {
   // SMTP 模式：使用 nodemailer 真实发送
   if (SMTP_URL) {
@@ -39,12 +40,20 @@ export async function sendMail({ to, subject, text, html }) {
       });
       return { ok: true, mock: false, messageId: info.messageId };
     } catch (err) {
-      logger.error('mailer', `SMTP 发送失败，回退到 mock: ${err.message}`);
-      // 失败回退到 mock
+      logger.error('mailer', `SMTP 发送失败: ${err.message}`);
+      // 生产环境不回退 mock，直接返回失败（敏感邮件如密码重置必须真实送达）
+      if (process.env.NODE_ENV === 'production') {
+        return { ok: false, mock: false, error: '邮件发送失败，请稍后重试' };
+      }
+      // 非生产环境才允许回退 mock
     }
+  } else if (process.env.NODE_ENV === 'production') {
+    // 生产环境未配置 SMTP：拒绝发送（尤其密码重置），避免 mock 落盘泄露 token
+    logger.error('mailer', '生产环境未配置 SMTP_URL，邮件发送被拒绝');
+    return { ok: false, mock: false, error: '邮件服务未配置' };
   }
 
-  // mock 模式：打印到控制台 + 写文件
+  // mock 模式（仅非生产环境）：打印到控制台 + 写文件
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const logFile = join(mailLogDir, `${ts}_${to.replace(/[@.]/g, '_')}.txt`);
   const logContent = `To: ${to}\nFrom: ${MAIL_FROM}\nSubject: ${subject}\nDate: ${new Date().toISOString()}\n\n${text}\n`;

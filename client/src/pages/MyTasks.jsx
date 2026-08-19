@@ -87,11 +87,14 @@ export default function MyTasks() {
     }
   };
 
-  const handleCopyOutput = (text) => {
-    navigator.clipboard.writeText(text).then(
-      () => toast.success('已复制到剪贴板'),
-      () => toast.error('复制失败')
-    );
+  const handleCopyOutput = async (text) => {
+    try {
+      if (!navigator.clipboard) { toast.error('复制失败，请手动复制'); return; }
+      await navigator.clipboard.writeText(text);
+      toast.success('已复制到剪贴板');
+    } catch {
+      toast.error('复制失败，请手动复制');
+    }
   };
 
   return (

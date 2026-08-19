@@ -3,6 +3,7 @@ import db from '../db.js';
 import { authRequired } from '../middleware.js';
 import { formatReference } from '../ai.js';
 import { getSetting } from '../config-store.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -122,9 +123,9 @@ router.get('/search', authRequired, async (req, res) => {
       note: '所有检索结果均来自 OpenAlex 真实学术数据库，可溯源至原文链接',
     });
   } catch (err) {
+    logger.error('references', `OpenAlex 检索失败: ${err && err.message ? err.message : String(err)}`);
     return res.status(502).json({
       error: '无法连接 OpenAlex 文献检索服务，请检查网络后重试',
-      detail: err && err.message ? err.message : String(err),
       results: [],
       total: 0,
     });

@@ -4,6 +4,7 @@ import {
   Search, Plus, Trash, Book, Copy, Check, Refresh,
   ExternalLink, BadgeCheck,
 } from '../components/Icons.jsx';
+import { toast } from '../components/Toast.jsx';
 
 const styles = [
   { value: 'gbt7714', label: 'GB/T 7714' },
@@ -71,25 +72,34 @@ export default function References() {
       // 检索失败时给用户明确提示，而不是静默显示空结果
       setResults([]);
       setSearched(true);
-      alert(err && err.message ? `文献检索失败：${err.message}` : '文献检索失败，请稍后重试');
+      toast.error(err && err.message ? `文献检索失败：${err.message}` : '文献检索失败，请稍后重试');
     } finally {
       setLoading(false);
     }
   };
 
   const collect = async (r) => {
-    await api.addRef(r);
-    loadRefs();
+    try {
+      await api.addRef(r);
+      toast.success('已收藏到文献库');
+      loadRefs();
+    } catch (err) {
+      toast.error(err.message || '收藏失败');
+    }
   };
 
   const removeRef = async (id) => {
-    await api.deleteRef(id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    loadRefs();
+    try {
+      await api.deleteRef(id);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      loadRefs();
+    } catch (err) {
+      toast.error(err.message || '删除失败');
+    }
   };
 
   const toggle = (id) => {
@@ -102,23 +112,35 @@ export default function References() {
 
   const format = async () => {
     if (selected.size === 0) return;
-    const data = await api.formatRefs({ ids: [...selected], style });
-    setFormatted(data.formatted || []);
+    try {
+      const data = await api.formatRefs({ ids: [...selected], style });
+      setFormatted(data.formatted || []);
+    } catch (err) {
+      toast.error(err.message || '生成引用失败');
+    }
   };
 
   const addManual = async () => {
     if (!newRef.title.trim()) return;
-    await api.addRef({ ...newRef, source: 'manual' });
-    setNewRef({ title: '', authors: '', year: '', journal: '', ref_type: 'journal' });
-    setShowAdd(false);
-    loadRefs();
+    try {
+      await api.addRef({ ...newRef, source: 'manual' });
+      setNewRef({ title: '', authors: '', year: '', journal: '', ref_type: 'journal' });
+      setShowAdd(false);
+      loadRefs();
+    } catch (err) {
+      toast.error(err.message || '添加失败');
+    }
   };
 
-  const copyFmt = (text, id) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedId(id);
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopiedId(null), 1500);
+  const copyFmt = async (text, id) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      toast.error('复制失败，请手动复制');
+    }
   };
 
   const inCollection = (r) => refs.some((x) => x.title === r.title && x.authors === r.authors);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useOutletContext, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import { downloadDocFile } from '../lib/api.js';
@@ -8,6 +8,7 @@ import RechargeBanner from '../components/RechargeBanner.jsx';
 import {
   Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, Crown, Gift, BadgeCheck,
 } from '../components/Icons.jsx';
+import { toast } from '../components/Toast.jsx';
 
 // 借鉴千笔写作：大纲生成免费且不限次（引流策略）
 const writeTypes = [
@@ -17,23 +18,31 @@ const writeTypes = [
   { value: 'fulltext', label: '全文生成' },
 ];
 
-function copyText(text) {
-  navigator.clipboard?.writeText(text);
-}
-
 export default function Writing() {
   const { refreshStatus, status } = useOutletContext();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const tool = useTool(refreshStatus);
 
   const [form, setForm] = useState({ type: 'outline', topic: '', field: '计算机科学', template_id: '' });
   const [templates, setTemplates] = useState([]);
   const [copied, setCopied] = useState(false);
+  const [projectId, setProjectId] = useState(null);
   const copyTimerRef = useRef(null);
 
   useEffect(() => {
     api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
   }, []);
+
+  // 从工作区「全流程」跳转进来时，读取 projectId 与 type，预选写作类型并关联工作区上下文
+  useEffect(() => {
+    const pid = searchParams.get('projectId');
+    const tp = searchParams.get('type');
+    if (pid) setProjectId(pid);
+    if (tp && writeTypes.some((t) => t.value === tp)) {
+      setForm((f) => ({ ...f, type: tp }));
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     return () => {
@@ -54,14 +63,18 @@ export default function Writing() {
       tool.setError('请填写论文题目');
       return;
     }
-    tool.run(() => api.writing({ ...form, template_id: form.template_id || undefined }));
+    tool.run(() => api.writing({ ...form, template_id: form.template_id || undefined, projectId: projectId || undefined }));
   };
 
-  const handleCopy = () => {
-    copyText(content);
-    setCopied(true);
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(content);
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('复制失败，请手动复制');
+    }
   };
 
   const handleDownload = () => {
