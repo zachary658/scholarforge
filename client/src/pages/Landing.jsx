@@ -7,14 +7,14 @@ import {
   Shield, FileText, Layers, Refresh, BookOpen, Wechat, Grid, Cpu, Settings, Sliders, Info,
 } from '../components/Icons.jsx';
 
-// 借鉴千笔写作：全流程闭环步骤
+// 借鉴千笔写作：全流程闭环步骤（每步可跳转对应功能页，未登录跳登录页）
 const pipeline = [
-  { step: 1, title: '选题立意', desc: '工作区记录题目、学科、写作要求', icon: Pen },
-  { step: 2, title: '大纲生成', desc: '免费不限次，3 级结构化大纲', icon: Layers, free: true },
-  { step: 3, title: '正文撰写', desc: '段落续写 / 全文生成 / 文献综述', icon: FileWord },
-  { step: 4, title: '降重', desc: '同义改写降低重复率', icon: Refresh },
-  { step: 5, title: '降AI率', desc: '智能改写消除 AI 痕迹', icon: Shield },
-  { step: 6, title: '格式导出', desc: '按高校模板一键导出 Word', icon: FileText },
+  { step: 1, title: '选题立意', desc: '工作区记录题目、学科、写作要求', icon: Pen, to: '/app/projects' },
+  { step: 2, title: '大纲生成', desc: '免费不限次，3 级结构化大纲', icon: Layers, free: true, to: '/app/writing?type=outline' },
+  { step: 3, title: '正文撰写', desc: '段落续写 / 全文生成 / 文献综述', icon: FileWord, to: '/app/writing' },
+  { step: 4, title: '论文降重', desc: '同义改写降低重复率', icon: Refresh, to: '/app/rewrite' },
+  { step: 5, title: '降AI率', desc: '智能改写消除 AI 痕迹', icon: Shield, to: '/app/ai-reduce' },
+  { step: 6, title: '格式导出', desc: '按高校模板一键导出 Word', icon: FileText, to: '/app/templates' },
 ];
 
 export default function Landing() {
@@ -54,10 +54,12 @@ export default function Landing() {
             <Logo className="h-8 w-8" />
             <span className="text-[17px] font-bold tracking-tight text-white">{siteName}</span>
           </div>
-          <nav className="hidden items-center gap-8 md:flex">
+          <nav className="hidden items-center gap-6 md:flex lg:gap-8">
             <a href="#courses" className="text-sm font-medium text-slate-300 transition hover:text-white">论文辅导</a>
             <a href="#graduation" className="text-sm font-medium text-slate-300 transition hover:text-white">作品设计辅导</a>
-            <a href="#pipeline" className="text-sm font-medium text-slate-300 transition hover:text-white">全流程</a>
+            <a href="#pipeline" className="text-sm font-medium text-slate-300 transition hover:text-white">AI写作</a>
+            <Link to={user ? '/app/rewrite' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">论文降重</Link>
+            <Link to={user ? '/app/ai-reduce' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">降AI率</Link>
             {user?.is_admin && <Link to="/admin" className="text-sm font-medium text-indigo-300 transition hover:text-white">管理后台</Link>}
             {user && !user?.is_admin && <Link to="/app" className="text-sm font-medium text-slate-300 transition hover:text-white">工作台</Link>}
             {!user && <Link to="/login" className="text-sm font-medium text-slate-300 transition hover:text-white">登录</Link>}
@@ -161,17 +163,17 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* 全流程闭环 */}
+      {/* AI 写作全流程闭环（每步卡片可点击跳转对应功能） */}
       <section id="pipeline" className="bg-[#F7F5F0]">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <div className="mx-auto max-w-2xl text-center">
             <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Workflow</div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">写作全流程闭环</h2>
-            <p className="mt-3 text-slate-500">从选题立意到格式导出，6 步搞定一篇论文，无需切换工具</p>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">AI 写作全流程闭环</h2>
+            <p className="mt-3 text-slate-500">从选题立意到格式导出，6 步搞定一篇论文，点击任意步骤直达对应功能</p>
           </div>
           <div className="mt-12 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
             {pipeline.map((p, i) => (
-              <div key={p.step} className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition duration-300 hover:-translate-y-1 hover:shadow-card">
+              <Link key={p.step} to={user ? p.to : '/login'} className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition duration-300 hover:-translate-y-1 hover:shadow-card">
                 <div className="flex items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-50 text-xs font-bold text-indigo-600">{p.step}</span>
                   {p.free && (
@@ -186,7 +188,7 @@ export default function Landing() {
                 {i < pipeline.length - 1 && (
                   <ArrowRight className="absolute -right-3 top-1/2 hidden h-4 w-4 -translate-y-1/2 text-slate-300 lg:block" />
                 )}
-              </div>
+              </Link>
             ))}
           </div>
           <div className="mt-10 text-center">
