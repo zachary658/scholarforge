@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { Users, Activity, Refresh, Cart, Receipt, Wallet, Gift, Check, Crown } from '../../components/Icons.jsx';
+import { Users, Activity, Refresh, Receipt, Wallet, Check, Crown } from '../../components/Icons.jsx';
 
 export default function AdminOverview() {
   const [data, setData] = useState(null);
@@ -74,10 +74,10 @@ export default function AdminOverview() {
 
   const stats2 = [
     {
-      label: '积分套餐销量',
-      value: fmt(data.packages?.sold ?? 0),
-      hint: `套餐收入 ¥${fmt(data.packages?.revenue ?? 0)}`,
-      icon: Cart,
+      label: '待报价订单',
+      value: fmt(data.orders?.awaiting_quote),
+      hint: `已报价待支付 ${fmt(data.orders?.quoted ?? 0)}`,
+      icon: Receipt,
     },
     {
       label: '活跃用户',
@@ -147,16 +147,30 @@ export default function AdminOverview() {
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        {/* 积分套餐销量摘要 */}
+        {/* 订单状态概览 */}
         <div className="card p-6">
           <div className="flex items-center gap-2">
-            <Gift className="h-5 w-5 text-accent" />
-            <h3 className="text-sm font-semibold text-ink">积分套餐销售</h3>
+            <Receipt className="h-5 w-5 text-accent" />
+            <h3 className="text-sm font-semibold text-ink">订单状态概览</h3>
           </div>
-          <div className="mt-4 text-3xl font-bold text-ink">
-            ¥{fmt(data.packages?.revenue ?? 0)}
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-lg bg-slate-50 px-3 py-2.5">
+              <div className="text-xs text-slate-500">待支付</div>
+              <div className="mt-1 text-xl font-bold text-ink">{fmt(data.orders?.pending)}</div>
+            </div>
+            <div className="rounded-lg bg-purple-50 px-3 py-2.5">
+              <div className="text-xs text-purple-600">待报价</div>
+              <div className="mt-1 text-xl font-bold text-purple-700">{fmt(data.orders?.awaiting_quote)}</div>
+            </div>
+            <div className="rounded-lg bg-amber-50 px-3 py-2.5">
+              <div className="text-xs text-amber-600">已报价待支付</div>
+              <div className="mt-1 text-xl font-bold text-amber-700">{fmt(data.orders?.quoted)}</div>
+            </div>
+            <div className="rounded-lg bg-green-50 px-3 py-2.5">
+              <div className="text-xs text-green-600">今日订单</div>
+              <div className="mt-1 text-xl font-bold text-green-700">{fmt(data.orders?.today)}</div>
+            </div>
           </div>
-          <p className="mt-2 text-xs text-slate-400">累计售出套餐 {fmt(data.packages?.sold ?? 0)} 份</p>
         </div>
 
         {/* 工具调用分布 */}

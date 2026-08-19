@@ -30,7 +30,44 @@ export const TOOL_COLOR = {
   defense: 'bg-pink-50 text-pink-600', journal: 'bg-lime-50 text-lime-600',
 };
 
+// 订单状态（现金直付功能订单）
+export const ORDER_STATUS_LABEL = {
+  pending: '待支付',
+  awaiting_quote: '待报价',
+  quoted: '待支付',
+  paid: '已支付',
+  processing: '服务中',
+  completed: '已完成',
+  cancelled: '已取消',
+};
+
+export const ORDER_STATUS_CLASS = {
+  pending: 'bg-amber-50 text-amber-600',
+  awaiting_quote: 'bg-purple-50 text-purple-600',
+  quoted: 'bg-amber-50 text-amber-600',
+  paid: 'bg-green-50 text-green-600',
+  processing: 'bg-blue-50 text-blue-600',
+  completed: 'bg-emerald-50 text-emerald-600',
+  cancelled: 'bg-slate-100 text-slate-500',
+};
+
+// 服务执行状态
+export const SERVICE_STATUS_LABEL = {
+  pending: '待处理',
+  processing: '处理中',
+  completed: '已完成',
+  failed: '失败',
+};
+
+// 支付方式
+export const PAYMENT_METHOD_LABEL = {
+  mock: '模拟',
+  alipay: '支付宝',
+  wechat: '微信支付',
+  manual: '手动标记',
+};
+
 export const CHARGE_LABEL = {
-  free_signup: '注册赠送', free_course: '课程额度', paid: '已付费',
-  none: '免费', unlimited: '免费不限次', points: '积分消耗',
+  free_course: '课程额度', paid: '已付费',
+  none: '免费', unlimited: '免费不限次',
 };

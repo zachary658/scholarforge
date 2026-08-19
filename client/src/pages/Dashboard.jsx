@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { PageSkeleton } from '../components/Skeleton.jsx';
 import {
-  Pen, Globe, Book, FileWord, ArrowRight, Plus, Gift, Crown,
-  Receipt, FileText, Shield, Refresh, Layers, Activity,
+  Pen, Globe, Book, FileWord, ArrowRight, Plus, Receipt,
+  FileText, Shield, Refresh, Layers, Activity,
 } from '../components/Icons.jsx';
 
 const tools = [
@@ -25,7 +25,6 @@ const tools = [
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { status, refreshStatus } = useOutletContext();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,8 +32,6 @@ export default function Dashboard() {
     api.listDocs().then((d) => setDocs(d.docs || [])).catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  const balance = status?.balance ?? 0;
 
   const fmtTime = (ts) => {
     if (!ts) return '—';
@@ -51,14 +48,12 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-ink">你好，{user?.name}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {balance > 0
-              ? `当前积分余额 ${balance} 分，可直接使用各功能`
-              : '当前无可用积分，使用功能将消耗积分，请先充值'}
+            按需付费的学术论文辅助平台，先下单支付再使用各项功能
           </p>
         </div>
-        <button onClick={() => navigate('/app/points')} className="btn-primary">
-          <Crown className="h-4 w-4" />
-          积分充值
+        <button onClick={() => navigate('/app/orders')} className="btn-primary">
+          <Receipt className="h-4 w-4" />
+          我的订单
         </button>
       </div>
 
@@ -82,26 +77,27 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* 积分状态 + 最近文档 */}
+      {/* 计费说明 + 最近文档 */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        {/* 积分卡片 */}
+        {/* 计费方式卡片 */}
         <div className="card p-6">
           <div className="flex items-center gap-2">
-            <Gift className="h-5 w-5 text-accent" />
-            <h3 className="text-sm font-semibold text-ink">积分余额</h3>
+            <Receipt className="h-5 w-5 text-accent" />
+            <h3 className="text-sm font-semibold text-ink">计费方式</h3>
           </div>
-          <div className="mt-4">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm text-slate-500">可用积分</span>
-              <span className="text-2xl font-bold text-accent">{balance}</span>
-            </div>
-            <div className="mt-3 rounded-md bg-accent-50 px-3 py-2.5 text-xs text-accent-700">
+          <div className="mt-4 space-y-3 text-sm text-slate-600">
+            <div className="rounded-md bg-accent-50 px-3 py-2.5 text-xs text-accent-700">
               <span className="flex items-center gap-1.5">
-                <Gift className="h-3.5 w-3.5" />新用户注册即送 30 积分
+                <Receipt className="h-3.5 w-3.5" />固定价格功能：先下单支付，再生成
               </span>
             </div>
-            <button onClick={() => navigate('/app/points')} className="btn-primary mt-4 w-full">
-              积分充值
+            <div className="rounded-md bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+              <span className="flex items-center gap-1.5">
+                <Receipt className="h-3.5 w-3.5" />复杂需求支持人工报价，确认后再支付
+              </span>
+            </div>
+            <button onClick={() => navigate('/app/orders')} className="btn-primary mt-2 w-full">
+              查看我的订单
             </button>
           </div>
         </div>
@@ -144,25 +140,6 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* 计费说明 */}
-      <div className="card mt-6 p-6">
-        <div className="flex items-center gap-2">
-          <Receipt className="h-5 w-5 text-accent" />
-          <h3 className="text-sm font-semibold text-ink">计费说明</h3>
-        </div>
-        <ul className="mt-4 space-y-2 text-sm text-slate-600">
-          <li className="flex items-center gap-2">
-            <Gift className="h-4 w-4 text-accent" /> 每次使用前按预估的大模型用量（token）换算积分后扣除
-          </li>
-          <li className="flex items-center gap-2">
-            <Gift className="h-4 w-4 text-accent" /> 1 元 = 10 积分，用多少扣多少，公平透明
-          </li>
-          <li className="flex items-center gap-2">
-            <Gift className="h-4 w-4 text-emerald-500" /> 大纲生成、文献检索、文献格式化免费不限次
-          </li>
-        </ul>
       </div>
       </>)}
     </div>

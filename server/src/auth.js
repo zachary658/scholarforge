@@ -199,10 +199,8 @@ export function safeUser(user) {
     is_admin: !!user.is_admin,
     is_support: !!user.is_support,
     status: user.status,
-    free_quota: user.free_quota || 0,
-    free_quota_expires_at: user.free_quota_expires_at || null,
-    points: user.points || 0,
     created_at: user.created_at,
+    academic_integrity_agreed: !!user.academic_integrity_agreed_at,
   };
 }
 

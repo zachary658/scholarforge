@@ -88,8 +88,8 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
         // 超时检查
         if (Date.now() - pollStartRef.current > POLL_MAX_DURATION) {
           stopPolling();
-          setError('支付超时，订单已关闭，请重新发起');
-          setStatus('closed');
+          setError('支付超时，订单已取消，请重新发起');
+          setStatus('cancelled');
           return;
         }
         try {
@@ -99,9 +99,9 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
           if (s.status === 'paid') {
             stopPolling();
             await finishReal(s);
-          } else if (s.status === 'closed' || s.status === 'refunded') {
+          } else if (s.status === 'cancelled') {
             stopPolling();
-            setError(`订单已${s.status === 'closed' ? '关闭' : '退款'}`);
+            setError('订单已取消');
           }
         } catch { /* ignore poll errors */ }
       }, POLL_INTERVAL);

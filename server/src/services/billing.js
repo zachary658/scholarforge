@@ -1,11 +1,6 @@
-// 积分服务（按大模型 token 用量计费）
-// 积分制：用户充值获得积分，每次 AI 调用按「预估 token 用量」扣除对应积分
-// 计费公式：
-//   成本(元) = 输入token/1e6 × 输入单价 + 输出token/1e6 × 输出单价
-//   售价(元) = 成本 / (1 - 利润率)          —— 利润率 0.8 时售价 = 成本 × 5
-//   积分     = 售价(元) × 10                —— 1 元 = 10 积分
-// 免费功能（feature_prices.is_unlimited=1，如大纲生成）：不消耗积分
-import db from '../db.js';
+// 现金定价服务（现金直付，非积分）
+// 功能定价：固定价格（feature_prices.price，单位元）或人工报价（pricing_mode='quote'）
+// 同时保留 token 估算，用于成本监控（不直接扣费）
 import { encode } from 'gpt-tokenizer';
 import { getFeaturePrice, getAiPricingConfig } from '../config-store.js';
 
@@ -17,65 +12,18 @@ export function isFreeUnlimitedFeature(featureKey) {
   return !!(fp && fp.is_active && fp.is_unlimited);
 }
 
-// ========== 积分余额 ==========
-
-// 获取用户积分余额
-export function getPointsBalance(userId) {
-  const u = db.prepare('SELECT points FROM users WHERE id = ?').get(userId);
-  return u ? u.points : 0;
+// 获取某功能的固定现金价格（元；免费/未启用/报价模式返回 0）
+export function getFeatureCashPrice(featureKey) {
+  const fp = getFeaturePrice(featureKey);
+  if (!fp || !fp.is_active || fp.is_unlimited) return 0;
+  if (fp.pricing_mode === 'quote') return 0; // 报价模式无固定价，需走人工报价
+  return Math.max(0, Number(fp.price) || 0);
 }
 
-// 获取用户积分状态
-export function getPointsStatus(userId) {
-  const balance = getPointsBalance(userId);
-  return { balance };
-}
-
-// ========== 积分变动 ==========
-
-// 扣减积分（事务保证原子性）
-// 返回 { ok, balance_after }；余额不足或并发冲突则抛错
-export function consumePoints(userId, points, description = '') {
-  const tx = db.transaction(() => {
-    const r = db.prepare(
-      'UPDATE users SET points = points - ? WHERE id = ? AND points >= ?'
-    ).run(points, userId, points);
-    if (r.changes === 0) {
-      const current = getPointsBalance(userId);
-      throw new Error(`积分不足（当前 ${current}，需要 ${points}）`);
-    }
-    const newBalance = getPointsBalance(userId);
-    // 记录积分日志
-    db.prepare(
-      'INSERT INTO points_log (user_id, type, points, balance_after, description) VALUES (?, ?, ?, ?, ?)'
-    ).run(userId, 'consume', -points, newBalance, description);
-    return newBalance;
-  }, { immediate: true });
-  return tx();
-}
-
-// 增加积分（充值/赠送/退款）
-export function grantPoints(userId, points, type = 'topup', description = '', orderId = null) {
-  return db.transaction(() => {
-    db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(points, userId);
-    const newBalance = getPointsBalance(userId);
-    db.prepare(
-      'INSERT INTO points_log (user_id, type, points, balance_after, order_id, description) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(userId, type, points, newBalance, orderId, description);
-    return newBalance;
-  }, { immediate: true })();
-}
-
-// 退款：退回积分
-export function refundPoints(userId, points, description = '') {
-  return grantPoints(userId, points, 'refund', description);
-}
-
-// ========== token 预估与积分换算 ==========
+// ========== token 估算与成本监控（非扣费） ==========
 
 // 按字符类型估算一段文本的 token 数
-// 使用 OpenAI 官方 BPE 分词器（cl100k_base，gpt-tokenizer）精确计数，替代原「中文×2 + 其他×0.5」启发式，
-// 使预扣积分更贴近真实用量（结算阶段仍按 API 返回的真实 token 多退少补）。
+// 使用 OpenAI 官方 BPE 分词器（cl100k_base，gpt-tokenizer）精确计数
 export function estimateTextTokens(text) {
   if (!text) return 0;
   try {
@@ -108,8 +56,6 @@ const OUTPUT_TOKEN_BUDGET = {
 };
 
 // system prompt 固定开销估算
-// 含图表生成规范（CHART_GUIDE）的写作类工具 system prompt 较长（约 3500 token），
-// 其他工具（polish/translate/grammar/rewrite/ai_reduce）较短（约 1200 token）
 const CHART_TOOL_TYPES = new Set(['writing', 'proposal', 'literature_review', 'journal', 'task_book', 'defense']);
 
 function systemPromptEstimate(toolType) {
@@ -117,9 +63,7 @@ function systemPromptEstimate(toolType) {
 }
 
 // 预估一次 AI 调用的 token 用量（输入 + 输出）
-// toolType: 'writing' | 'proposal' | ... ；params: 调用参数
 export function estimateCallTokens(toolType, params = {}) {
-  // 输出 token
   let outputTokens = OUTPUT_TOKEN_BUDGET.default;
   if (toolType === 'writing') {
     outputTokens = OUTPUT_TOKEN_BUDGET[`writing_${params?.type}`] || OUTPUT_TOKEN_BUDGET.default;
@@ -127,108 +71,15 @@ export function estimateCallTokens(toolType, params = {}) {
     outputTokens = OUTPUT_TOKEN_BUDGET[toolType] || OUTPUT_TOKEN_BUDGET.default;
   }
 
-  // 输入 token：用户数据（含上下文） + system prompt 固定开销
   const userText = typeof params === 'string' ? params : JSON.stringify(params || {});
   const inputTokens = estimateTextTokens(userText) + systemPromptEstimate(toolType);
 
   return { inputTokens, outputTokens };
 }
 
-// 将 token 用量换算为应扣积分（保证利润率不低于配置值）
-export function tokensToPoints(inputTokens, outputTokens) {
+// 将 token 用量换算为成本金额（元），用于成本监控
+export function tokensToCostYuan(inputTokens, outputTokens) {
   const cfg = getAiPricingConfig();
-  // 大模型 API 成本（元）
-  const costYuan =
-    (inputTokens / 1_000_000) * cfg.inputCostPerMillion +
-    (outputTokens / 1_000_000) * cfg.outputCostPerMillion;
-  // 售价 = 成本 / (1 - 利润率)，保证利润率
-  const priceYuan = costYuan / (1 - cfg.profitMargin);
-  // 积分 = 售价 × 10，向上取整，至少 1 积分
-  const points = Math.max(1, Math.ceil(priceYuan * cfg.pointsPerYuan));
-  return points;
-}
-
-// 预估一次调用应扣积分（综合估算）
-export function estimatePointsForCall(toolType, params = {}) {
-  const { inputTokens, outputTokens } = estimateCallTokens(toolType, params);
-  return tokensToPoints(inputTokens, outputTokens);
-}
-
-// ========== 每功能固定积分定价（管理员可调，下限=token成本×5）==========
-
-// feature_key -> { toolType, outputKey } 映射，用于计算各功能的基准 token 用量（进而算出最低积分）
-const FEATURE_TOKEN_MAP = {
-  writing_outline: { toolType: 'writing', outputKey: 'writing_outline' },
-  writing_paragraph: { toolType: 'writing', outputKey: 'writing_paragraph' },
-  writing_abstract: { toolType: 'writing', outputKey: 'writing_abstract' },
-  writing_fulltext: { toolType: 'writing', outputKey: 'writing_fulltext' },
-  proposal: { toolType: 'proposal', outputKey: 'proposal' },
-  polish: { toolType: 'polish', outputKey: 'default' },
-  translate: { toolType: 'translate', outputKey: 'default' },
-  grammar: { toolType: 'grammar', outputKey: 'default' },
-  rewrite: { toolType: 'rewrite', outputKey: 'default' },
-  ai_reduce: { toolType: 'ai_reduce', outputKey: 'ai_reduce' },
-  literature_review: { toolType: 'literature_review', outputKey: 'literature_review' },
-  task_book: { toolType: 'task_book', outputKey: 'task_book' },
-  defense: { toolType: 'defense', outputKey: 'defense' },
-  journal: { toolType: 'journal', outputKey: 'journal' },
-};
-
-// 计算某功能的最低积分下限：基准 token 成本 × 5 倍利润 × 10（1元=10积分）
-// 基准用量 = 该功能输出预算 + system prompt 固定开销（不含用户输入，用户输入超长时由动态计费兜底）
-export function getFeatureMinPoints(featureKey) {
-  const m = FEATURE_TOKEN_MAP[featureKey];
-  if (!m) return 0;
-  const outputTokens = OUTPUT_TOKEN_BUDGET[m.outputKey] || OUTPUT_TOKEN_BUDGET.default;
-  const inputTokens = systemPromptEstimate(m.toolType);
-  return tokensToPoints(inputTokens, outputTokens);
-}
-
-// 获取某功能的固定积分价格（管理员设置；免费/未启用返回 0）
-export function getFeatureFixedPoints(featureKey) {
-  const fp = getFeaturePrice(featureKey);
-  if (!fp || !fp.is_active || fp.is_unlimited) return 0;
-  return Math.max(0, Math.ceil(Number(fp.price) || 0));
-}
-
-// 计算某功能一次调用的有效积分：固定价格 与 动态 token 计费 取较高者
-// 保证管理员定价不亏本，同时用户输入超长时动态计费自动兜底
-export function estimateEffectivePoints(featureKey, toolType, params = {}) {
-  const fixed = getFeatureFixedPoints(featureKey);
-  const dynamic = estimatePointsForCall(toolType, params);
-  return Math.max(fixed, dynamic);
-}
-
-// 判断用户积分是否足够完成一次调用
-export function canConsumeTokens(userId, toolType, params = {}) {
-  const points = estimatePointsForCall(toolType, params);
-  const balance = getPointsBalance(userId);
-  if (balance < points) {
-    return { ok: false, reason: 'INSUFFICIENT_POINTS', balance, needed: points };
-  }
-  return { ok: true, source: 'points', balance, points };
-}
-
-// ========== 一次性迁移：把收费功能价格抬到各自最低积分下限 ==========
-// 历史数据中部分功能价格低于「token 成本 × 5」下限，此处一次性抬到下限（只抬低、不降高）。
-// 用 settings 表记录版本，幂等执行（服务启动时调用，见 index.js）。
-export function migrateFeatureMinPrices() {
-  const key = 'migration_feature_min_price_v1';
-  const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  if (done && done.value === 'done') return 0;
-
-  const rows = db.prepare('SELECT feature_key, price FROM feature_prices WHERE is_unlimited = 0').all();
-  let changed = 0;
-  const tx = db.transaction(() => {
-    for (const r of rows) {
-      const min = getFeatureMinPoints(r.feature_key);
-      if (min > 0 && r.price < min) {
-        db.prepare('UPDATE feature_prices SET price = ? WHERE feature_key = ?').run(min, r.feature_key);
-        changed++;
-      }
-    }
-    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(key);
-  });
-  tx();
-  return changed;
+  return (inputTokens / 1_000_000) * cfg.inputCostPerMillion
+    + (outputTokens / 1_000_000) * cfg.outputCostPerMillion;
 }

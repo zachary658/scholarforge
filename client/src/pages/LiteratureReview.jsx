@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
-import RechargeBanner from '../components/RechargeBanner.jsx';
+import FeaturePay from '../components/FeaturePay.jsx';
 import {
-  FileWord, Download, Refresh, Layers, Crown, Gift, Sparkle, ChevronDown,
+  FileWord, Download, Refresh, Layers, Sparkle, ChevronDown,
 } from '../components/Icons.jsx';
 
 const fields = ['计算机科学', '经济学', '管理学', '教育学', '医学', '法学', '文学', '心理学', '社会学', '工程学', '其他'];
 
 export default function LiteratureReview() {
-  const { refreshStatus, status } = useOutletContext();
   const navigate = useNavigate();
-  const tool = useTool(refreshStatus);
+  const tool = useTool();
 
   const [form, setForm] = useState({
     topic: '',
@@ -28,19 +27,16 @@ export default function LiteratureReview() {
     api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
   }, []);
 
-  const total = status?.total ?? 0;
-  const balance = status?.balance ?? 0;
-  const signup = status?.signup ?? 0;
   const result = tool.result;
   const docInfo = result?.doc || null;
   const content = result?.content || '';
 
-  const run = () => {
+  const run = (orderNo) => {
     if (!form.topic.trim()) {
       tool.setError('请填写研究主题');
       return;
     }
-    tool.run(() => api.literatureReview({ ...form, template_id: form.template_id || undefined }));
+    tool.run(() => api.literatureReview({ ...form, template_id: form.template_id || undefined, orderNo: orderNo || undefined }));
   };
 
   const handleDownload = () => {
@@ -57,13 +53,6 @@ export default function LiteratureReview() {
         <div>
           <h1 className="text-xl font-bold text-ink">文献综述生成</h1>
           <p className="mt-1 text-sm text-slate-500">按主题分类梳理，生成结构化文献综述并导出 Word</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="flex items-center gap-1"><Gift className="h-3.5 w-3.5 text-accent" />可用 {total}</span>
-          <span className="text-slate-300">|</span>
-          <span className="flex items-center gap-1"><Crown className="h-3 w-3 text-amber-500" />积分 {balance}</span>
-          <span className="text-slate-300">|</span>
-          <span>赠送 {signup}</span>
         </div>
       </div>
 
@@ -147,9 +136,9 @@ export default function LiteratureReview() {
 
           <div className="mt-5 flex-1" />
           <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-            {total > 0 ? `本次将消耗 1 次额度，剩余 ${total} 次` : '当前无额度，本次按功能价格付费'}
+            本功能为付费功能，先下单支付后再生成
           </div>
-          <button onClick={run} disabled={tool.loading} className="btn-primary w-full py-3">
+          <button onClick={() => run()} disabled={tool.loading} className="btn-primary w-full py-3">
             {tool.loading ? (
               <><Refresh className="h-4 w-4 animate-spin" /> 生成中…</>
             ) : (
@@ -174,7 +163,7 @@ export default function LiteratureReview() {
                     <Download className="h-4 w-4" /> 下载 Word
                   </button>
                 )}
-                <button onClick={run} disabled={tool.loading} className="btn-ghost text-xs">
+                <button onClick={() => run()} disabled={tool.loading} className="btn-ghost text-xs">
                   <Refresh className="h-4 w-4" /> 重新生成
                 </button>
               </div>
@@ -188,10 +177,6 @@ export default function LiteratureReview() {
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
                     {result.chargeType === 'paid' ? (
                       <span className="rounded bg-accent-50 px-1.5 py-0.5 font-medium text-accent">已付费 ¥{Number(result.amount || 0).toFixed(2)}</span>
-                    ) : result.chargeType === 'points' ? (
-                      <><Crown className="h-3.5 w-3.5 text-amber-500" /><span>已消耗积分</span></>
-                    ) : result.chargeType === 'free_signup' ? (
-                      <><Gift className="h-3.5 w-3.5 text-accent" /><span>已消耗 1 次赠送额度</span></>
                     ) : null}
                     {docInfo && (
                       <span className="ml-auto flex items-center gap-1 text-slate-400">
@@ -230,8 +215,8 @@ export default function LiteratureReview() {
         </div>
       </div>
 
-      {tool.needRecharge && (
-        <RechargeBanner balance={tool.needRecharge.balance} needed={tool.needRecharge.needed} />
+      {tool.needOrder && (
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
       )}
     </div>
   );

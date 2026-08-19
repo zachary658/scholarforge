@@ -24,14 +24,7 @@ export function setSetting(key, value) {
   invalidateSiteCache();
 }
 
-// 注册赠送积分配置
-export function getSignupPointsConfig() {
-  return {
-    points: parseInt(getSetting('signup_points', '30'), 10) || 30,
-  };
-}
-
-// 注册风控配置（防批量注册白嫖赠送积分）
+// 注册风控配置（防批量注册白嫖）
 export function getSignupGuardConfig() {
   return {
     // 同一 IP 在 24 小时内最多注册的账号数（0 = 不限制）
@@ -63,8 +56,8 @@ export function isDisposableEmail(email) {
   return DISPOSABLE_EMAIL_DOMAINS.has(domain);
 }
 
-// AI 计费配置（按大模型 token 用量计费，保证利润率）
-// 返回成本单价（元/百万 token）、目标利润率、积分换算比例
+// AI 计费配置（用于 token 成本监控，非直接扣费）
+// 返回成本单价（元/百万 token）、目标利润率
 export function getAiPricingConfig() {
   return {
     // 大模型 API 成本：输入/输出单价（元/百万 token）
@@ -72,16 +65,6 @@ export function getAiPricingConfig() {
     outputCostPerMillion: parseFloat(getSetting('ai_output_cost_per_million', '16')) || 16,
     // 目标利润率（0.8 = 80%）：售价 = 成本 / (1 - 利润率)
     profitMargin: Math.min(parseFloat(getSetting('ai_profit_margin', '0.8')) || 0.8, 0.99),
-    // 积分换算：1 元 = 10 积分
-    pointsPerYuan: 10,
-  };
-}
-
-// 兼容旧接口
-export function getSignupQuotaConfig() {
-  return {
-    quota: parseInt(getSetting('signup_free_quota', '3'), 10) || 0,
-    validityDays: parseInt(getSetting('signup_free_quota_validity_days', '30'), 10) || 30,
   };
 }
 
@@ -102,7 +85,9 @@ export function getPaymentConfig() {
     alipay: {
       appid: getSetting('alipay_appid', ''),
       privateKey: getSetting('alipay_private_key', ''),
+      privateKeyPath: getSetting('alipay_private_key_path', ''),
       publicKey: getSetting('alipay_public_key', ''),
+      publicKeyPath: getSetting('alipay_public_key_path', ''),
       gateway: getSetting('alipay_gateway', 'https://openapi.alipay.com/gateway.do'),
       sandbox: getSetting('alipay_sandbox', 'false') === 'true',
     },
@@ -112,8 +97,10 @@ export function getPaymentConfig() {
       apiV3Key: getSetting('wechat_api_v3_key', ''),
       serialNo: getSetting('wechat_serial_no', ''),
       privateKey: getSetting('wechat_private_key', ''),
+      privateKeyPath: getSetting('wechat_private_key_path', ''),
       notifyUrl: getSetting('wechat_notify_url', ''),
       platformPublicKey: getSetting('wechat_platform_public_key', ''),
+      platformPublicKeyPath: getSetting('wechat_platform_public_key_path', ''),
       platformSerialNo: getSetting('wechat_platform_serial_no', ''),
     },
   };
@@ -125,6 +112,23 @@ export function getPaymentConfig() {
 export function invalidatePaymentCache() {
   _paymentCache = null;
   _paymentCacheAt = 0;
+}
+
+// 内容安全审核配置（阶段四 4.2）
+// provider: local（本地敏感词过滤）/ aliyun（阿里云内容安全）/ yidun（网易易盾）
+export function getContentSafetyConfig() {
+  return {
+    provider: getSetting('content_safety_provider', 'local'),
+    aliyun: {
+      accessKeyId: getSetting('aliyun_access_key_id', ''),
+      accessKeySecret: getSetting('aliyun_access_key_secret', ''),
+    },
+    yidun: {
+      secretId: getSetting('yidun_secret_id', ''),
+      secretKey: getSetting('yidun_secret_key', ''),
+      businessId: getSetting('yidun_business_id', ''),
+    },
+  };
 }
 
 // 判断某通道是否已配置（用于前端展示「可用通道」）
@@ -155,20 +159,6 @@ export function getFeaturePrice(featureKey) {
   const row = db.prepare('SELECT * FROM feature_prices WHERE feature_key = ?').get(featureKey);
   if (!row) return null;
   return { ...row, is_active: !!row.is_active, is_unlimited: !!row.is_unlimited };
-}
-
-// 积分充值套餐
-export function getPointsPackages({ onlyActive = false } = {}) {
-  const sql = onlyActive
-    ? 'SELECT * FROM points_packages WHERE is_active = 1 ORDER BY sort_order ASC'
-    : 'SELECT * FROM points_packages ORDER BY sort_order ASC';
-  return db.prepare(sql).all().map((p) => ({ ...p, is_active: !!p.is_active }));
-}
-
-export function getPointsPackage(id) {
-  const row = db.prepare('SELECT * FROM points_packages WHERE id = ?').get(id);
-  if (!row) return null;
-  return { ...row, is_active: !!row.is_active };
 }
 
 // 课程（论文 1 对 1 指导等服务型商品）
@@ -268,11 +258,9 @@ let _siteCacheAt = 0;
 export function getPublicSiteInfo() {
   const now = Date.now();
   if (_siteCache && (now - _siteCacheAt) < SITE_CACHE_TTL) return _siteCache;
-  const packages = getPointsPackages({ onlyActive: true });
   const channels = getAvailableChannels();
   // getDefaultModel 只查一次（原先调用两次，多一次 DB 查询）
   const defaultModel = getDefaultModel();
-  const aiPricing = getAiPricingConfig();
   _siteCache = {
     site_name: getSetting('site_name', 'ScholarForge'),
     site_description: getSetting('site_description', ''),
@@ -281,18 +269,15 @@ export function getPublicSiteInfo() {
     service_wechat_qrcode: getSetting('service_wechat_qrcode', ''),
     registration_open: getSetting('registration_open', 'true') === 'true',
     footer_text: getSetting('footer_text', ''),
-    signup_points: getSignupPointsConfig().points,
-    points_packages: packages,
+    icp_number: getSetting('icp_number', ''),
+    icp_link: getSetting('icp_link', ''),
     payment_channels: channels,
+    // 功能定价（现金直付）
+    features: getFeaturePrices({ onlyActive: true }),
     // 课程（论文 1 对 1 指导）：公开展示，用户添加客服微信详聊购买
     courses: getCourses({ onlyActive: true }),
     has_real_ai: !!(defaultModel && defaultModel.provider !== 'builtin'),
     preset_templates_count: db.prepare('SELECT COUNT(*) as c FROM templates WHERE is_preset = 1').get().c,
-    // 计费说明：按大模型用量计费，1元=10积分
-    ai_pricing: {
-      points_per_yuan: aiPricing.pointsPerYuan,
-      profit_margin: aiPricing.profitMargin,
-    },
   };
   _siteCacheAt = now;
   return _siteCache;

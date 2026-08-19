@@ -1,8 +1,7 @@
-// 课程路由：论文 1 对 1 指导等服务型商品 + 积分日志（兼容旧路径）
+// 课程路由：论文 1 对 1 指导等服务型商品
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import db from '../db.js';
-import { getPointsBalance } from '../services/billing.js';
 import { getCourses, getCourse } from '../config-store.js';
 import { computeCourseQuote } from '../services/course-quote.js';
 
@@ -52,24 +51,6 @@ router.get('/my', authRequired, (req, res) => {
     };
   });
   res.json({ courses });
-});
-
-// 积分变动日志（供积分充值页面使用）
-router.get('/log', authRequired, (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const size = Math.min(100, Math.max(10, parseInt(req.query.size) || 20));
-  const offset = (page - 1) * size;
-  const total = db.prepare('SELECT COUNT(*) as c FROM points_log WHERE user_id = ?').get(req.user.id).c;
-  const logs = db.prepare(
-    'SELECT * FROM points_log WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?'
-  ).all(req.user.id, size, offset);
-  res.json({ logs, total, page, size, pages: Math.ceil(total / size) });
-});
-
-// 积分余额汇总（兼容旧 /courses/quota 路径）
-router.get('/quota', authRequired, (req, res) => {
-  const balance = getPointsBalance(req.user.id);
-  res.json({ balance, points: balance, deprecated: true });
 });
 
 export default router;

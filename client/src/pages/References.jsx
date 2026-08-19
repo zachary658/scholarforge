@@ -41,6 +41,7 @@ export default function References() {
   const [searched, setSearched] = useState(false);
   const [refs, setRefs] = useState([]);
   const [selected, setSelected] = useState(new Set());
+  const [searchSelected, setSearchSelected] = useState(new Set());
   const [style, setStyle] = useState('gbt7714');
   const [formatted, setFormatted] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -85,6 +86,37 @@ export default function References() {
       loadRefs();
     } catch (err) {
       toast.error(err.message || '收藏失败');
+    }
+  };
+
+  const toggleSearch = (i) => {
+    setSearchSelected((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  };
+
+  // 勾选多条检索结果 → 批量收藏并生成参考文献列表
+  const batchCollectAndFormat = async () => {
+    const selectedItems = results.filter((_, i) => searchSelected.has(i));
+    if (selectedItems.length === 0) {
+      toast.warning('请先勾选需要引用的文献');
+      return;
+    }
+    try {
+      const ids = [];
+      for (const r of selectedItems) {
+        const d = await api.addRef(r);
+        if (d.reference?.id) ids.push(d.reference.id);
+      }
+      const data = await api.formatRefs({ ids, style });
+      setFormatted(data.formatted || []);
+      toast.success('已生成参考文献列表');
+      loadRefs();
+      setSearchSelected(new Set());
+    } catch (err) {
+      toast.error(err.message || '生成引用失败');
     }
   };
 
@@ -213,6 +245,11 @@ export default function References() {
               {loading ? <Refresh className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 检索
             </button>
           </div>
+          {searchSelected.size > 0 && (
+            <button onClick={batchCollectAndFormat} className="btn-primary mt-2 w-full py-2 text-xs">
+              收藏选中并生成引用 ({searchSelected.size})
+            </button>
+          )}
           <div className="mt-3 space-y-2">
             {results.length === 0 && searched && (
               <p className="py-6 text-center text-sm text-slate-400">未找到相关文献</p>
@@ -220,7 +257,13 @@ export default function References() {
             {results.map((r, i) => {
               const tag = sourceTag(r);
               return (
-                <div key={i} className="card flex items-start gap-3 p-4">
+                <div key={i} className={`card flex items-start gap-3 p-4 ${searchSelected.has(i) ? 'ring-1 ring-accent' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={searchSelected.has(i)}
+                    onChange={() => toggleSearch(i)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
+                  />
                   <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
                     <Book className="h-[18px] w-[18px]" />
                   </div>

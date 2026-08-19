@@ -45,9 +45,9 @@ export default function Register() {
             <span className="text-lg font-bold">ScholarForge</span>
           </Link>
           <div>
-            <h2 className="text-2xl font-bold leading-snug">注册即送<br />30 积分</h2>
+            <h2 className="text-2xl font-bold leading-snug">按需付费<br />学术辅助</h2>
             <ul className="mt-6 space-y-3 text-sm text-slate-300">
-              {['AI 论文大纲与全文生成', '学术润色与中英翻译', '文献检索与格式化导出', '按大模型用量计费，用多少扣多少'].map((t) => (
+              {['AI 论文大纲与全文生成', '学术润色与中英翻译', '文献检索与格式化导出', '固定价格与人工报价，灵活透明'].map((t) => (
                 <li key={t} className="flex items-center gap-2.5">
                   <Check className="h-4 w-4 text-accent" />
                   {t}
@@ -61,7 +61,7 @@ export default function Register() {
         {/* 右侧表单 */}
         <div className="p-8 md:p-10">
           <h1 className="text-xl font-bold text-ink">创建账号</h1>
-          <p className="mt-1 text-sm text-slate-500">填写信息，注册即送 30 积分</p>
+          <p className="mt-1 text-sm text-slate-500">填写信息，创建账号</p>
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
               <label className="label">昵称</label>
@@ -104,7 +104,11 @@ export default function Register() {
                 className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
               />
               <span>
-                我已阅读并同意《用户需知》：本平台由 AI 生成的文字、文档、图表等所有内容
+                我已阅读并同意
+                <Link to="/terms" className="font-medium text-accent hover:underline">《用户协议》</Link>
+                与
+                <Link to="/privacy" className="font-medium text-accent hover:underline">《隐私政策》</Link>
+                ：本平台由 AI 生成的文字、文档、图表等所有内容
                 <strong className="font-semibold text-ink">仅供学习参考</strong>，不构成学术成果或建议，
                 <strong className="font-semibold text-ink">不得直接用于</strong>论文写作、作业提交、考试、投稿、查重等
                 <strong className="font-semibold text-ink">任何学术场景</strong>；因违规使用产生的一切后果由本人自行承担。
@@ -112,7 +116,7 @@ export default function Register() {
             </label>
             {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
             <button type="submit" disabled={loading} className="btn-primary w-full py-3">
-              {loading ? '注册中…' : '注册并领取积分'}
+              {loading ? '注册中…' : '注册'}
               {!loading && <ArrowRight className="h-4 w-4" />}
             </button>
           </form>

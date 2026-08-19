@@ -3,39 +3,32 @@ import { api } from '../../lib/api.js';
 import { Search, X, Refresh } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import { useConfirm } from '../../components/ConfirmModal.jsx';
+import {
+  ORDER_STATUS_LABEL, ORDER_STATUS_CLASS, SERVICE_STATUS_LABEL, PAYMENT_METHOD_LABEL,
+} from '../../lib/constants.js';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
   { value: 'pending', label: '待支付' },
+  { value: 'awaiting_quote', label: '待报价' },
+  { value: 'quoted', label: '待支付（已报价）' },
   { value: 'paid', label: '已支付' },
-  { value: 'closed', label: '已关闭' },
-  { value: 'refunded', label: '已退款' },
+  { value: 'processing', label: '服务中' },
+  { value: 'completed', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
 ];
 
 const TYPE_OPTIONS = [
   { value: '', label: '全部类型' },
-  { value: 'points_package', label: '积分套餐' },
+  { value: 'feature', label: '功能订单' },
   { value: 'course', label: '课程' },
+  { value: 'graduation', label: '毕业作品' },
 ];
 
-const STATUS_BADGE = {
-  pending: 'bg-amber-50 text-amber-600',
-  paid: 'bg-green-50 text-green-600',
-  closed: 'bg-slate-100 text-slate-600',
-  refunded: 'bg-red-50 text-red-600',
-};
-
-const STATUS_LABEL = {
-  pending: '待支付',
-  paid: '已支付',
-  closed: '已关闭',
-  refunded: '已退款',
-};
-
-const CHANNEL_LABEL = {
-  mock: '模拟',
-  alipay: '支付宝',
-  wechat: '微信',
+const TYPE_LABEL = {
+  feature: '功能订单',
+  course: '课程',
+  graduation: '毕业作品',
 };
 
 function fmtDateTime(ts) {
@@ -56,8 +49,8 @@ export default function AdminOrders() {
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [refundModal, setRefundModal] = useState(null); // order
-  const [refundReason, setRefundReason] = useState('');
+  const [quoteModal, setQuoteModal] = useState(null); // order
+  const [quoteForm, setQuoteForm] = useState({ quoted_price: '', quote_note: '' });
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef(null);
 
@@ -99,7 +92,6 @@ export default function AdminOrders() {
 
   const onFilterChange = (setter) => (e) => {
     setter(e.target.value);
-    // 状态/类型变化立即重新加载
     const nextStatus = setter === setStatus ? e.target.value : status;
     const nextType = setter === setType ? e.target.value : type;
     const params = { page: 1, size: SIZE };
@@ -141,29 +133,44 @@ export default function AdminOrders() {
     }, 350);
   };
 
-  const openRefund = (o) => {
-    setRefundReason('');
-    setRefundModal(o);
+  const openQuote = (o) => {
+    setQuoteForm({ quoted_price: o.quoted_price != null ? String(o.quoted_price) : '', quote_note: o.quote_note || '' });
+    setQuoteModal(o);
   };
 
-  const submitRefund = async () => {
-    if (!refundModal) return;
-    if (!refundReason.trim()) {
-      toast.warning('请填写退款原因');
+  const submitQuote = async () => {
+    if (!quoteModal) return;
+    const price = Number(quoteForm.quoted_price);
+    if (!Number.isFinite(price) || price <= 0) {
+      toast.warning('请填写有效的报价金额（大于 0）');
       return;
     }
+    setSaving(true);
+    setError('');
+    try {
+      await api.adminQuoteOrder(quoteModal.id, { quoted_price: price, quote_note: quoteForm.quote_note });
+      toast.success('报价已提交，订单状态已更新为待支付');
+      setQuoteModal(null);
+      load(page);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const markPaid = async (o) => {
     if (!await confirm({
-      title: '退款确认',
-      message: `确认退款订单「${refundModal.order_no}」共 ¥${Number(refundModal.amount ?? 0).toFixed(2)}？此操作不可撤销。`,
+      title: '标记支付确认',
+      message: `确认将订单「${o.order_no}」手动标记为已支付？仅用于测试/线下收款补录。`,
       danger: true,
-      confirmText: '确认退款',
+      confirmText: '标记已支付',
     })) return;
     setSaving(true);
     setError('');
     try {
-      await api.adminRefundOrder(refundModal.order_no, refundReason.trim());
-      toast.success('订单已退款');
-      setRefundModal(null);
+      await api.adminMarkPaid(o.id);
+      toast.success('订单已标记为已支付');
       load(page);
     } catch (err) {
       toast.error(err.message);
@@ -190,20 +197,12 @@ export default function AdminOrders() {
 
       {/* 筛选栏 */}
       <div className="mt-6 flex flex-wrap items-center gap-3">
-        <select
-          className="input w-auto"
-          value={status}
-          onChange={onFilterChange(setStatus)}
-        >
+        <select className="input w-auto" value={status} onChange={onFilterChange(setStatus)}>
           {STATUS_OPTIONS.map((s) => (
             <option key={s.value} value={s.value}>{s.label}</option>
           ))}
         </select>
-        <select
-          className="input w-auto"
-          value={type}
-          onChange={onFilterChange(setType)}
-        >
+        <select className="input w-auto" value={type} onChange={onFilterChange(setType)}>
           {TYPE_OPTIONS.map((t) => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
@@ -230,6 +229,7 @@ export default function AdminOrders() {
                 <th className="px-4 py-3">类型</th>
                 <th className="px-4 py-3">金额</th>
                 <th className="px-4 py-3">状态</th>
+                <th className="px-4 py-3">服务进度</th>
                 <th className="px-4 py-3">支付方式</th>
                 <th className="px-4 py-3">支付时间</th>
                 <th className="px-4 py-3 text-right">操作</th>
@@ -238,19 +238,17 @@ export default function AdminOrders() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">加载中…</td>
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">加载中…</td>
                 </tr>
               ) : list.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">暂无订单</td>
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">暂无订单</td>
                 </tr>
               ) : (
                 list.map((o) => {
                   const st = o.status || 'pending';
-                  const isPackage = o.type === 'points_package';
-                  const isCourse = o.type === 'course';
                   return (
-                    <tr key={o.order_no} className="border-b border-slate-100 text-sm last:border-0">
+                    <tr key={o.order_no} className="border-b border-slate-100 text-sm align-top last:border-0">
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs text-slate-600">{o.order_no}</span>
                       </td>
@@ -258,30 +256,47 @@ export default function AdminOrders() {
                         <div className="font-medium text-ink">{o.user_name || '—'}</div>
                         <div className="text-xs text-slate-400">{o.user_email || ''}</div>
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{o.target_name || '—'}</td>
                       <td className="px-4 py-3">
-                        <span className={`rounded-md px-2 py-0.5 text-xs ${isPackage ? 'bg-accent-50 text-accent-700' : isCourse ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-600'}`}>
-                          {isPackage ? '积分套餐' : isCourse ? '课程' : '功能'}
-                        </span>
+                        <div className="text-slate-700">{o.item_name || o.target_name || '—'}</div>
+                        {o.quantity > 1 && <div className="text-xs text-slate-400">×{o.quantity}</div>}
+                        {o.custom_requirements && (
+                          <div className="mt-0.5 max-w-[240px] truncate text-xs text-slate-400" title={o.custom_requirements}>
+                            需求：{o.custom_requirements}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{TYPE_LABEL[o.type] || o.type}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-700">¥{Number(o.amount ?? 0).toFixed(2)}</td>
                       <td className="px-4 py-3">
-                        <span className={`rounded-md px-2 py-0.5 text-xs ${STATUS_BADGE[st] || 'bg-slate-100 text-slate-600'}`}>
-                          {STATUS_LABEL[st] || st}
+                        <span className={`rounded-md px-2 py-0.5 text-xs ${ORDER_STATUS_CLASS[st] || 'bg-slate-100 text-slate-600'}`}>
+                          {ORDER_STATUS_LABEL[st] || st}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-600">
-                        {CHANNEL_LABEL[o.payment_channel] || o.payment_channel || '—'}
+                        {SERVICE_STATUS_LABEL[o.service_status] || o.service_status || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {PAYMENT_METHOD_LABEL[o.payment_method || o.payment_channel] || o.payment_method || o.payment_channel || '—'}
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(o.paid_at)}</td>
-                      <td className="px-4 py-3 text-right">
-                        {st === 'paid' ? (
-                          <button onClick={() => openRefund(o)} className="btn-ghost text-xs text-red-500 hover:bg-red-50">
-                            退款
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-300">—</span>
-                        )}
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap justify-end gap-1">
+                          {(st === 'awaiting_quote' || st === 'quoted') && (
+                            <button onClick={() => openQuote(o)} className="btn-ghost text-xs text-accent">
+                              报价
+                            </button>
+                          )}
+                          {(st === 'pending' || st === 'quoted') && (
+                            <button onClick={() => markPaid(o)} className="btn-ghost text-xs">
+                              标记支付
+                            </button>
+                          )}
+                          {(st !== 'awaiting_quote' && st !== 'quoted' && st !== 'pending') && (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -297,58 +312,61 @@ export default function AdminOrders() {
         <div className="mt-4 flex items-center justify-between text-sm">
           <span className="text-slate-500">第 {page} / {pages} 页</span>
           <div className="flex gap-2">
-            <button
-              onClick={() => load(page - 1)}
-              disabled={page <= 1}
-              className="btn-secondary text-xs disabled:opacity-40"
-            >
-              上一页
-            </button>
-            <button
-              onClick={() => load(page + 1)}
-              disabled={page >= pages}
-              className="btn-secondary text-xs disabled:opacity-40"
-            >
-              下一页
-            </button>
+            <button onClick={() => load(page - 1)} disabled={page <= 1} className="btn-secondary text-xs disabled:opacity-40">上一页</button>
+            <button onClick={() => load(page + 1)} disabled={page >= pages} className="btn-secondary text-xs disabled:opacity-40">下一页</button>
           </div>
         </div>
       )}
 
-      {/* 退款 Modal */}
-      {refundModal && (
+      {/* 报价 Modal */}
+      {quoteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-[440px] max-w-full rounded-xl bg-white shadow-card">
+          <div className="w-[460px] max-w-full rounded-xl bg-white shadow-card">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <h3 className="text-base font-semibold text-ink">订单退款</h3>
-              <button onClick={() => setRefundModal(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink">
+              <h3 className="text-base font-semibold text-ink">订单报价</h3>
+              <button onClick={() => setQuoteModal(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="space-y-4 px-6 py-5">
               <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm">
                 <div className="text-slate-500">订单号</div>
-                <div className="mt-0.5 font-mono text-xs text-slate-700">{refundModal.order_no}</div>
-                <div className="mt-2 text-slate-500">商品</div>
-                <div className="mt-0.5 text-slate-700">{refundModal.target_name}</div>
-                <div className="mt-2 text-slate-500">金额</div>
-                <div className="mt-0.5 text-slate-700">¥{Number(refundModal.amount ?? 0).toFixed(2)}</div>
+                <div className="mt-0.5 font-mono text-xs text-slate-700">{quoteModal.order_no}</div>
+                <div className="mt-2 text-slate-500">功能</div>
+                <div className="mt-0.5 text-slate-700">{quoteModal.item_name || quoteModal.target_name || '—'}</div>
+                {quoteModal.custom_requirements && (
+                  <>
+                    <div className="mt-2 text-slate-500">用户需求</div>
+                    <div className="mt-0.5 whitespace-pre-wrap text-xs text-slate-700">{quoteModal.custom_requirements}</div>
+                  </>
+                )}
               </div>
               <div>
-                <label className="label">退款原因</label>
-                <textarea
-                  className="input min-h-[80px] resize-none"
-                  value={refundReason}
-                  onChange={(e) => setRefundReason(e.target.value)}
-                  placeholder="请填写退款原因"
+                <label className="label">报价金额（元）</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  className="input"
+                  value={quoteForm.quoted_price}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, quoted_price: e.target.value })}
+                  placeholder="例如：88.00"
                 />
-                <p className="mt-1.5 text-xs text-slate-400">退款后订单状态将变为已退款，请谨慎操作</p>
+              </div>
+              <div>
+                <label className="label">报价说明（可选）</label>
+                <textarea
+                  className="input min-h-[70px] resize-none"
+                  value={quoteForm.quote_note}
+                  onChange={(e) => setQuoteForm({ ...quoteForm, quote_note: e.target.value })}
+                  placeholder="说明报价依据、服务范围等"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
-              <button onClick={() => setRefundModal(null)} className="btn-secondary">取消</button>
-              <button onClick={submitRefund} disabled={saving} className="btn-primary text-red-600 bg-red-50 hover:bg-red-100">
-                {saving ? '处理中…' : '确认退款'}
+              <button onClick={() => setQuoteModal(null)} className="btn-secondary">取消</button>
+              <button onClick={submitQuote} disabled={saving} className="btn-primary">
+                {saving ? '保存中…' : '提交报价'}
               </button>
             </div>
           </div>

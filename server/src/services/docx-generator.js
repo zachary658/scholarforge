@@ -447,6 +447,34 @@ function makeTable(block, styles) {
   });
 }
 
+// ===== 图表引用校验（阶段三 3.3）=====
+// 扫描正文中的「图N/表N」引用，与实际插入的图题/表题编号比对，缺失则给出提示
+function validateChartReferences(content) {
+  if (!content) return [];
+  const warnings = [];
+  const figureNos = new Set();
+  const tableNos = new Set();
+  // 图题/表题编号：图 1-1 / 表 2-1 / 图1 / 表2
+  const capRe = /^(图|表)\s*(\d+(?:[.\-]\d+)?)/gm;
+  let m;
+  while ((m = capRe.exec(content)) !== null) {
+    (m[1] === '图' ? figureNos : tableNos).add(m[2]);
+  }
+  const has = (set, num) => set.has(num) || set.has(String(num).split(/[.\-]/)[0]);
+
+  // 图引用：如图1-1 / 见图2
+  const figRefRe = /(?:如图|见图)\s*(\d+(?:[.\-]\d+)?)/g;
+  while ((m = figRefRe.exec(content)) !== null) {
+    if (!has(figureNos, m[1])) warnings.push(`正文引用了「${m[0]}」，但未找到对应图题（图 ${m[1]}），请核对图表编号`);
+  }
+  // 表引用：如表2-1 / 见表3
+  const tabRefRe = /(?:如表|见表)\s*(\d+(?:[.\-]\d+)?)/g;
+  while ((m = tabRefRe.exec(content)) !== null) {
+    if (!has(tableNos, m[1])) warnings.push(`正文引用了「${m[0]}」，但未找到对应表题（表 ${m[1]}），请核对图表编号`);
+  }
+  return warnings;
+}
+
 // 生成 Word 文档并落盘，返回 { filePath, fileName }
 export async function generateDocx({
   title,
@@ -459,6 +487,8 @@ export async function generateDocx({
 }) {
   const styles = resolveStyles(template);
   const blocks = parseMarkdownToBlocks(content);
+  // 图表引用校验（输出前）
+  const warnings = validateChartReferences(content);
 
   // 异步渲染所有图表/公式块
   const { rendered, mathPlaceholders } = await renderBlocks(blocks);
@@ -481,7 +511,7 @@ export async function generateDocx({
               alignment: AlignmentType.CENTER,
               children: [
                 new TextRun({
-                  text: '由 ScholarForge AI 辅助生成 · 仅供学习参考，不得直接用于学术提交 · 第 ',
+                  text: '本内容由 AI 辅助生成，仅供学习参考，请遵守学术规范 · 第 ',
                   font: styles.bodyFont,
                   size: 18,
                   color: '888888',
@@ -533,5 +563,6 @@ export async function generateDocx({
     filePath,
     fileName,
     downloadUrl: `/api/docs/download/${info.lastInsertRowid}`,
+    warnings,
   };
 }

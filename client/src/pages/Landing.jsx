@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
 import { api } from '../lib/api.js';
 import {
-  Logo, Pen, Book, FileWord, Check, ArrowRight, Sparkle, Cart, Crown,
+  Logo, Pen, Book, FileWord, Check, ArrowRight, Sparkle,
   Shield, FileText, Layers, Refresh, BookOpen, Wechat, Grid, Cpu, Settings, Sliders, Info,
 } from '../components/Icons.jsx';
 
@@ -28,8 +28,6 @@ export default function Landing() {
   }, []);
 
   const ctaLink = user ? '/app' : '/register';
-  const points_packages = site?.points_packages || [];
-  const signupPoints = site?.signup_points ?? 30;
   const siteName = site?.site_name || 'ScholarForge';
   const siteDesc = site?.site_description || 'AI 驱动的学术写作辅助平台';
   const courses = site?.courses || [];
@@ -59,7 +57,6 @@ export default function Landing() {
           <nav className="hidden items-center gap-8 md:flex">
             <a href="#courses" className="text-sm font-medium text-slate-300 transition hover:text-white">论文辅导</a>
             <a href="#graduation" className="text-sm font-medium text-slate-300 transition hover:text-white">作品设计辅导</a>
-            <a href="#points" className="text-sm font-medium text-slate-300 transition hover:text-white">积分充值</a>
             <a href="#pipeline" className="text-sm font-medium text-slate-300 transition hover:text-white">全流程</a>
             {user?.is_admin && <Link to="/admin" className="text-sm font-medium text-indigo-300 transition hover:text-white">管理后台</Link>}
             {user && !user?.is_admin && <Link to="/app" className="text-sm font-medium text-slate-300 transition hover:text-white">工作台</Link>}
@@ -69,7 +66,7 @@ export default function Landing() {
             to={ctaLink}
             className="group inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-400 hover:to-violet-400"
           >
-            {user ? '进入工作台' : '注册送积分'}
+            {user ? '进入工作台' : '免费注册'}
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
         </div>
@@ -101,7 +98,7 @@ export default function Landing() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-sky-300 bg-clip-text text-transparent">真实文献可溯源</span>
               </h1>
               <p className="animate-fade-up mt-6 max-w-md text-lg leading-relaxed text-slate-400" style={{ animationDelay: '0.16s' }}>
-                集成 AI 论文写作、开题报告、文献综述、答辩PPT、降重、降AI率于一体。注册即送 {signupPoints} 积分，真实参考文献可溯源，写作内容一键导出 Word。
+                集成 AI 论文写作、开题报告、文献综述、答辩PPT、降重、降AI率于一体。真实参考文献可溯源，写作内容一键导出 Word。
               </p>
 
               {/* 核心卖点标签 */}
@@ -127,12 +124,9 @@ export default function Landing() {
                   to={ctaLink}
                   className="group inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-3.5 text-base font-semibold text-white shadow-xl shadow-indigo-900/40 transition hover:from-indigo-400 hover:to-violet-400"
                 >
-                  {user ? '进入工作台' : `注册送 ${signupPoints} 积分`}
+                  {user ? '进入工作台' : '免费注册'}
                   <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                 </Link>
-                <a href="#points" className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-6 py-3.5 text-base font-medium text-white transition hover:bg-white/10">
-                  积分充值
-                </a>
               </div>
             </div>
 
@@ -362,46 +356,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* 积分充值 */}
-      <section id="points" className="bg-white">
-        <div className="mx-auto max-w-6xl px-6 py-20">
-          <div className="mx-auto max-w-2xl text-center">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-amber-500">Credits</div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">积分充值</h2>
-            <p className="mt-3 text-slate-500">充值积分，跨功能通用，按需使用</p>
-          </div>
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {points_packages.length === 0 && (
-              <div className="col-span-full rounded-2xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400">
-                暂未上架积分包
-              </div>
-            )}
-            {points_packages.map((p) => (
-              <div key={p.id} className="group relative flex flex-col rounded-2xl border border-slate-200 bg-white p-7 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-amber-200 hover:shadow-card">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg shadow-amber-500/20">
-                  <Cart className="h-[22px] w-[22px]" />
-                </div>
-                <h3 className="mt-5 text-lg font-semibold text-ink">{p.title}</h3>
-                {p.description && <p className="mt-2 text-sm leading-relaxed text-slate-500">{p.description}</p>}
-                <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-3xl font-extrabold text-ink">¥{Number(p.price).toFixed(2)}</span>
-                </div>
-                <ul className="mt-5 space-y-2 text-sm text-slate-600">
-                  <li className="flex items-center gap-2"><Crown className="h-4 w-4 text-amber-500" />赠送 {p.points_granted} 积分</li>
-                  {p.validity_days && (
-                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-indigo-600" />有效期 {p.validity_days} 天</li>
-                  )}
-                  <li className="flex items-center gap-2"><Check className="h-4 w-4 text-indigo-600" />积分跨功能通用</li>
-                </ul>
-                <Link to={ctaLink} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800">
-                  {user ? '去购买' : '登录购买'}
-                </Link>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* 高校模板 */}
       {presetCount > 0 && (
         <section className="border-t border-slate-200 bg-[#F7F5F0]">
@@ -430,6 +384,20 @@ export default function Landing() {
           <div className="flex items-center gap-2 text-sm">
             <Logo className="h-5 w-5" />
             <span>{site?.footer_text || `© 2026 ${siteName}`}</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
+            <Link to="/terms" className="transition hover:text-slate-200">用户协议</Link>
+            <Link to="/privacy" className="transition hover:text-slate-200">隐私政策</Link>
+            {site?.icp_number && (
+              <a
+                href={site?.icp_link || 'https://beian.miit.gov.cn/'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition hover:text-slate-200"
+              >
+                {site.icp_number}
+              </a>
+            )}
           </div>
         </div>
         <div className="mx-auto max-w-6xl px-6 pb-8 text-center text-xs leading-relaxed text-slate-500">

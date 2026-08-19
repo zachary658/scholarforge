@@ -5,6 +5,8 @@ import Landing from './pages/Landing.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
+import Terms from './pages/Terms.jsx';
+import Privacy from './pages/Privacy.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import Layout from './components/Layout.jsx';
@@ -17,7 +19,6 @@ const Polish = lazy(() => import('./pages/Polish.jsx'));
 const Rewrite = lazy(() => import('./pages/Rewrite.jsx'));
 const References = lazy(() => import('./pages/References.jsx'));
 const MyTemplates = lazy(() => import('./pages/MyTemplates.jsx'));
-const MyCourses = lazy(() => import('./pages/MyCourses.jsx'));
 const Courses = lazy(() => import('./pages/Courses.jsx'));
 const CourseQuote = lazy(() => import('./pages/CourseQuote.jsx'));
 const MyDocs = lazy(() => import('./pages/MyDocs.jsx'));
@@ -29,16 +30,17 @@ const Defense = lazy(() => import('./pages/Defense.jsx'));
 const LiteratureReview = lazy(() => import('./pages/LiteratureReview.jsx'));
 const TaskBook = lazy(() => import('./pages/TaskBook.jsx'));
 const Journal = lazy(() => import('./pages/Journal.jsx'));
+const Charts = lazy(() => import('./pages/Charts.jsx'));
 const GraduationProjects = lazy(() => import('./pages/GraduationProjects.jsx'));
 const MyGraduationOrders = lazy(() => import('./pages/MyGraduationOrders.jsx'));
 
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview.jsx'));
-const AdminCourses = lazy(() => import('./pages/admin/AdminCourses.jsx'));
 const AdminCoaching = lazy(() => import('./pages/admin/AdminCoaching.jsx'));
 const AdminFeaturePricing = lazy(() => import('./pages/admin/AdminFeaturePricing.jsx'));
 const AdminCourseOrders = lazy(() => import('./pages/admin/AdminCourseOrders.jsx'));
 const AdminOrders = lazy(() => import('./pages/admin/AdminOrders.jsx'));
+const AdminQuotes = lazy(() => import('./pages/admin/AdminQuotes.jsx'));
 const AdminTemplates = lazy(() => import('./pages/admin/AdminTemplates.jsx'));
 const AdminModels = lazy(() => import('./pages/admin/AdminModels.jsx'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers.jsx'));
@@ -91,6 +93,8 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route
@@ -112,12 +116,12 @@ export default function App() {
         <Route path="rewrite" element={<Suspense fallback={<PageFallback />}><Rewrite /></Suspense>} />
         <Route path="ai-reduce" element={<Suspense fallback={<PageFallback />}><AiReduce /></Suspense>} />
         <Route path="references" element={<Suspense fallback={<PageFallback />}><References /></Suspense>} />
+        <Route path="charts" element={<Suspense fallback={<PageFallback />}><Charts /></Suspense>} />
         <Route path="templates" element={<Suspense fallback={<PageFallback />}><MyTemplates /></Suspense>} />
         <Route path="projects" element={<Suspense fallback={<PageFallback />}><Projects /></Suspense>} />
         <Route path="tasks" element={<Suspense fallback={<PageFallback />}><MyTasks /></Suspense>} />
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><Courses /></Suspense>} />
         <Route path="courses/quote" element={<Suspense fallback={<PageFallback />}><CourseQuote /></Suspense>} />
-        <Route path="points" element={<Suspense fallback={<PageFallback />}><MyCourses /></Suspense>} />
         <Route path="docs" element={<Suspense fallback={<PageFallback />}><MyDocs /></Suspense>} />
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><MyOrders /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><GraduationProjects /></Suspense>} />
@@ -134,8 +138,8 @@ export default function App() {
         <Route index element={<Suspense fallback={<PageFallback />}><AdminOverview /></Suspense>} />
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><AdminCoaching /></Suspense>} />
         <Route path="course-orders" element={<Suspense fallback={<PageFallback />}><AdminCourseOrders /></Suspense>} />
-        <Route path="points" element={<Suspense fallback={<PageFallback />}><AdminCourses /></Suspense>} />
         <Route path="features" element={<Suspense fallback={<PageFallback />}><AdminFeaturePricing /></Suspense>} />
+        <Route path="quotes" element={<Suspense fallback={<PageFallback />}><AdminQuotes /></Suspense>} />
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><AdminOrders /></Suspense>} />
         <Route path="templates" element={<Suspense fallback={<PageFallback />}><AdminTemplates /></Suspense>} />
         <Route path="models" element={<Suspense fallback={<PageFallback />}><AdminModels /></Suspense>} />

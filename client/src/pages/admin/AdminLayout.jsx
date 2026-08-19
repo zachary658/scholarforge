@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
 import {
   Shield, ChartBar, Cpu, Users, Activity, Sliders, ArrowRight,
-  Logout, Cart, Receipt, Layers, Menu, X, Wallet, BookOpen, Wechat, Tag, Lock,
+  Logout, Receipt, Layers, Menu, X, Wallet, BookOpen, Wechat, Tag, Lock,
 } from '../../components/Icons.jsx';
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 
@@ -14,8 +14,8 @@ const nav = [
   { to: '/admin/course-orders', label: '课程对接', icon: Wechat, end: false },
   { to: '/admin/graduation', label: '毕业作品', icon: Cpu, end: false },
   { to: '/admin/graduation-orders', label: '作品对接', icon: Wechat, end: false },
-  { to: '/admin/points', label: '积分套餐', icon: Cart, end: false },
   { to: '/admin/features', label: '功能定价', icon: Tag, end: false },
+  { to: '/admin/quotes', label: '报价管理', icon: Receipt, end: false },
   { to: '/admin/orders', label: '订单管理', icon: Receipt, end: false },
   { to: '/admin/templates', label: '模板管理', icon: Layers, end: false },
   { to: '/admin/models', label: '模型配置', icon: Cpu, end: false },

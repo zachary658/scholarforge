@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
+import FeaturePay from '../components/FeaturePay.jsx';
+import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
+import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
   Refresh, Plus, Trash, Edit, Layers, BookOpen, Eye, X,
-  Save, ChevronRight, Brain, FileText, Pen, ArrowRight, FileWord,
+  Save, ChevronRight, Brain, FileText, Pen, ArrowRight, FileWord, Check,
 } from '../components/Icons.jsx';
 
 const FIELDS = [
@@ -297,6 +300,12 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [contextPreview, setContextPreview] = useState(null);
   const [outline, setOutline] = useState(project.outline || []);
   const [savingOutline, setSavingOutline] = useState(false);
+  const [confirmedAt, setConfirmedAt] = useState(project.outline_confirmed_at || null);
+  const [chapters, setChapters] = useState([]);
+  const [generating, setGenerating] = useState(false);
+  const [needPay, setNeedPay] = useState(null);
+  const [merging, setMerging] = useState(false);
+  const integrity = useAcademicIntegrity();
 
   // 借鉴千笔写作：全流程步骤导航（点击跳转到对应工具，并自动带上 projectId）
   const pipelineSteps = [
@@ -340,10 +349,22 @@ function ProjectDetail({ project, onClose, onEdit }) {
     }
   }, [project.id]);
 
+  const loadChapters = useCallback(async () => {
+    try {
+      const d = await api.getChapters(project.id);
+      setChapters(d.chapters || []);
+      setGenerating(!!d.generating);
+      if (d.outline_confirmed_at) setConfirmedAt(d.outline_confirmed_at);
+    } catch (err) {
+      toast.error('加载章节失败：' + err.message);
+    }
+  }, [project.id]);
+
   useEffect(() => {
     if (tab === 'tasks') loadTasks();
     if (tab === 'context') loadContext();
-  }, [tab, loadTasks, loadContext]);
+    if (tab === 'chapters') loadChapters();
+  }, [tab, loadTasks, loadContext, loadChapters]);
 
   const handleSaveOutline = async () => {
     setSavingOutline(true);
@@ -354,6 +375,75 @@ function ProjectDetail({ project, onClose, onEdit }) {
       toast.error('保存失败：' + err.message);
     } finally {
       setSavingOutline(false);
+    }
+  };
+
+  const handleConfirmOutline = async () => {
+    try {
+      await api.confirmOutline(project.id);
+      setConfirmedAt(Math.floor(Date.now() / 1000));
+      toast.success('大纲已确认，可开始生成正文');
+    } catch (err) {
+      toast.error('确认失败：' + err.message);
+    }
+  };
+
+  const doGenerate = async (orderNo) => {
+    setGenerating(true);
+    try {
+      await api.generateChapters(project.id, orderNo ? { orderNo } : {});
+      await loadChapters();
+      const timer = setInterval(async () => {
+        try {
+          const d = await api.getChapters(project.id);
+          setChapters(d.chapters || []);
+          setGenerating(!!d.generating);
+          if (!d.generating) { clearInterval(timer); toast.success('章节生成完成'); }
+        } catch { clearInterval(timer); }
+      }, 3000);
+    } catch (err) {
+      if (err.needOrder) {
+        setNeedPay({ itemType: err.itemType || 'writing_fulltext', amount: 0 });
+      } else {
+        toast.error(err.message);
+      }
+      setGenerating(false);
+    }
+  };
+
+  const doRegenerate = async (chapterId) => {
+    try {
+      await api.regenerateChapter(project.id, chapterId, {});
+      await loadChapters();
+      toast.success('已提交重新生成');
+    } catch (err) {
+      if (err.needOrder) setNeedPay({ itemType: 'writing_fulltext', amount: 0 });
+      else toast.error(err.message);
+    }
+  };
+
+  const saveChapter = async (chapterId, content) => {
+    try {
+      await api.editChapter(project.id, chapterId, content);
+      toast.success('章节已保存');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const doMerge = async () => {
+    setMerging(true);
+    try {
+      const data = await api.mergeChapters(project.id);
+      if (data.doc?.id) {
+        const { downloadDocFile } = await import('../lib/api.js');
+        downloadDocFile(data.doc.id, project.title);
+      }
+      toast.success('已生成 Word');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -410,6 +500,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
             { key: 'overview', label: '概览' },
             { key: 'pipeline', label: '全流程' },
             { key: 'outline', label: '大纲管理' },
+            { key: 'chapters', label: '分章节生成' },
             { key: 'tasks', label: `任务历史 (${tasks.length})` },
             { key: 'context', label: '上下文预览' },
           ].map((t) => (
@@ -528,11 +619,19 @@ function ProjectDetail({ project, onClose, onEdit }) {
                   <button onClick={addChapter} className="btn-ghost text-xs">
                     <Plus className="h-3.5 w-3.5" /> 添加章节
                   </button>
-                  <button onClick={handleSaveOutline} disabled={savingOutline} className="btn-primary text-xs">
+                  <button onClick={handleSaveOutline} disabled={savingOutline} className="btn-secondary text-xs">
                     <Save className="h-3.5 w-3.5" /> {savingOutline ? '保存中…' : '保存大纲'}
+                  </button>
+                  <button onClick={handleConfirmOutline} className="btn-primary text-xs">
+                    <Check className="h-3.5 w-3.5" /> {confirmedAt ? '重新确认' : '确认大纲'}
                   </button>
                 </div>
               </div>
+              {confirmedAt && (
+                <div className="mb-2 rounded-md bg-green-50 px-3 py-2 text-xs text-green-600">
+                  大纲已确认，可开始「分章节生成」或「全文生成」
+                </div>
+              )}
               {outline.length === 0 && (
                 <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center">
                   <FileText className="mx-auto h-8 w-8 text-slate-300" />
@@ -582,6 +681,71 @@ function ProjectDetail({ project, onClose, onEdit }) {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {tab === 'chapters' && (
+            <div>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-500">按已确认大纲逐章生成论文，可局部重写或编辑后继续</p>
+                <div className="flex gap-2">
+                  <button onClick={loadChapters} className="btn-ghost text-xs">
+                    <Refresh className="h-3.5 w-3.5" /> 刷新
+                  </button>
+                  <button
+                    onClick={() => { if (!integrity.ensure(() => doGenerate())) return; doGenerate(); }}
+                    disabled={generating}
+                    className="btn-primary text-xs"
+                  >
+                    <Refresh className={`h-3.5 w-3.5 ${generating ? 'animate-spin' : ''}`} />
+                    {generating ? '生成中…' : '生成全部章节'}
+                  </button>
+                  {chapters.length > 0 && (
+                    <button onClick={doMerge} disabled={merging} className="btn-secondary text-xs">
+                      <FileWord className="h-3.5 w-3.5" /> {merging ? '导出中…' : '合并导出 Word'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {chapters.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center">
+                  <FileText className="mx-auto h-8 w-8 text-slate-300" />
+                  <p className="mt-2 text-sm text-slate-400">确认大纲后，点击「生成全部章节」开始</p>
+                </div>
+              )}
+              <div className="space-y-3">
+                {chapters.map((ch) => (
+                  <div key={ch.id} className="rounded-lg border border-slate-200 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-ink">{ch.chapter}</span>
+                      <span className={`rounded px-2 py-0.5 text-xs ${
+                        ch.status === 'done' ? 'bg-green-50 text-green-600' :
+                        ch.status === 'processing' ? 'bg-blue-50 text-blue-600' :
+                        ch.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {ch.status === 'done' ? '已完成' : ch.status === 'processing' ? '生成中' : ch.status === 'failed' ? '失败' : '待生成'}
+                      </span>
+                      {ch.status === 'done' && (
+                        <button onClick={() => { if (!integrity.ensure(() => doRegenerate(ch.id))) return; doRegenerate(ch.id); }} className="ml-auto text-xs text-accent hover:underline">重新生成</button>
+                      )}
+                    </div>
+                    <textarea
+                      className="input mt-2 min-h-[120px] resize-y text-sm"
+                      value={ch.content || ''}
+                      onChange={(e) => setChapters((prev) => prev.map((c) => c.id === ch.id ? { ...c, content: e.target.value } : c))}
+                      placeholder="本章内容…"
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <button onClick={() => saveChapter(ch.id, ch.content)} className="btn-ghost text-xs">
+                        <Save className="h-3.5 w-3.5" /> 保存
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {needPay && (
+                <FeaturePay needOrder={needPay} onPaid={(orderNo) => { setNeedPay(null); doGenerate(orderNo); }} />
+              )}
             </div>
           )}
 
@@ -646,6 +810,9 @@ function ProjectDetail({ project, onClose, onEdit }) {
           )}
         </div>
       </div>
+      {integrity.show && (
+        <AcademicIntegrityModal onAgreed={integrity.handleAgreed} onCancel={integrity.close} />
+      )}
     </div>
   );
 }

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { useOutletContext, useNavigate, useSearchParams } from 'react-router-dom';
-import { api } from '../lib/api.js';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
-import { downloadDocFile } from '../lib/api.js';
 import { FIELDS } from '../lib/constants.js';
-import RechargeBanner from '../components/RechargeBanner.jsx';
+import FeaturePay from '../components/FeaturePay.jsx';
+import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
+import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
-  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, Crown, Gift, BadgeCheck,
+  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck,
 } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 
@@ -19,10 +20,9 @@ const writeTypes = [
 ];
 
 export default function Writing() {
-  const { refreshStatus, status } = useOutletContext();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const tool = useTool(refreshStatus);
+  const tool = useTool();
 
   const [form, setForm] = useState({ type: 'outline', topic: '', field: '计算机科学', template_id: '' });
   const [templates, setTemplates] = useState([]);
@@ -50,20 +50,22 @@ export default function Writing() {
     };
   }, []);
 
-  const total = status?.total ?? 0;
-  const balance = status?.balance ?? 0;
-  const signup = status?.signup ?? 0;
   const result = tool.result;
   const docInfo = result?.doc || null;
   // 写作类内容在真实支付通道下 result.content 可能为 null（只存 Word），靠 doc 下载
   const content = result?.content || '';
 
-  const run = () => {
+  const run = (orderNo) => {
     if (!form.topic.trim()) {
       tool.setError('请填写论文题目');
       return;
     }
-    tool.run(() => api.writing({ ...form, template_id: form.template_id || undefined, projectId: projectId || undefined }));
+    tool.run(() => api.writing({
+      ...form,
+      template_id: form.template_id || undefined,
+      projectId: projectId || undefined,
+      orderNo: orderNo || undefined,
+    }));
   };
 
   const handleCopy = async () => {
@@ -89,13 +91,6 @@ export default function Writing() {
         <div>
           <h1 className="text-xl font-bold text-ink">AI 论文写作</h1>
           <p className="mt-1 text-sm text-slate-500">选择写作类型，输入题目与学科领域，一键生成学术内容并导出 Word</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="flex items-center gap-1"><Gift className="h-3.5 w-3.5 text-accent" />可用 {total}</span>
-          <span className="text-slate-300">|</span>
-          <span className="flex items-center gap-1"><Crown className="h-3 w-3 text-amber-500" />积分 {balance}</span>
-          <span className="text-slate-300">|</span>
-          <span>赠送 {signup}</span>
         </div>
       </div>
 
@@ -177,16 +172,13 @@ export default function Writing() {
           <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
             {form.type === 'outline' ? (
               <span className="flex items-center gap-1 text-emerald-600">
-                <BadgeCheck className="h-3.5 w-3.5" />
-                大纲生成免费且不限次，无需消耗额度
+                <BadgeCheck className="h-3.5 w-3.5" /> 大纲生成免费且不限次
               </span>
-            ) : total > 0 ? (
-              `本次将消耗 1 次额度，剩余 ${total} 次`
             ) : (
-              '当前无额度，本次按功能价格付费'
+              '本功能为付费功能，先下单支付后再生成'
             )}
           </div>
-          <button onClick={run} disabled={tool.loading} className="btn-primary w-full py-3">
+          <button onClick={() => run()} disabled={tool.loading} className="btn-primary w-full py-3">
             {tool.loading ? (
               <><Refresh className="h-4 w-4 animate-spin" /> 生成中…</>
             ) : (
@@ -194,12 +186,7 @@ export default function Writing() {
             )}
           </button>
           {tool.error && (
-            <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-              {tool.error}
-              {tool.error.includes('功能已下架') && (
-                <button onClick={() => navigate('/app/points')} className="ml-2 font-semibold underline">去购买</button>
-              )}
-            </div>
+            <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tool.error}</div>
           )}
         </div>
 
@@ -222,7 +209,7 @@ export default function Writing() {
                     <Download className="h-4 w-4" /> 下载 Word
                   </button>
                 )}
-                <button onClick={run} disabled={tool.loading} className="btn-ghost text-xs">
+                <button onClick={() => run()} disabled={tool.loading} className="btn-ghost text-xs">
                   <Refresh className="h-4 w-4" /> 重写
                 </button>
               </div>
@@ -236,10 +223,6 @@ export default function Writing() {
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
                     {result.chargeType === 'paid' ? (
                       <><span className="rounded bg-accent-50 px-1.5 py-0.5 font-medium text-accent">已付费 ¥{Number(result.amount || 0).toFixed(2)}</span></>
-                    ) : result.chargeType === 'points' ? (
-                      <><Crown className="h-3.5 w-3.5 text-amber-500" /><span>已消耗积分</span></>
-                    ) : result.chargeType === 'free_signup' ? (
-                      <><Gift className="h-3.5 w-3.5 text-accent" /><span>已消耗 1 次赠送额度</span></>
                     ) : result.chargeType === 'unlimited' ? (
                       <><BadgeCheck className="h-3.5 w-3.5 text-emerald-500" /><span className="text-emerald-600">免费功能·不消耗额度</span></>
                     ) : null}
@@ -280,8 +263,8 @@ export default function Writing() {
         </div>
       </div>
 
-      {tool.needRecharge && (
-        <RechargeBanner balance={tool.needRecharge.balance} needed={tool.needRecharge.needed} />
+      {tool.needOrder && (
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
       )}
     </div>
   );

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import {
-  Wallet, Refresh, TrendingUp, TrendingDown, Coins, Receipt,
-  Cart, Gift, Users,
+  Wallet, Refresh, TrendingUp, TrendingDown, Coins, Receipt, Users,
 } from '../../components/Icons.jsx';
 
 const RANGES = [
@@ -20,9 +19,9 @@ const CHANNEL_LABEL = {
 };
 
 const TYPE_LABEL = {
-  feature: '功能调用',
-  points_package: '积分套餐',
+  feature: '功能订单',
   course: '课程购买',
+  graduation: '毕业作品',
 };
 
 function fmtMoney(n) {
@@ -85,10 +84,8 @@ export default function AdminFinance() {
   const s = data.summary || {};
   const inc = data.income || {};
   const byType = data.byType || [];
-  const byPackage = data.byPackage || [];
   const byChannel = data.byChannel || [];
   const trend = data.trend || [];
-  const refunds = data.refunds || [];
   const recent = data.recentOrders || [];
 
   // 日同比
@@ -235,8 +232,8 @@ export default function AdminFinance() {
           <div className="mt-4 space-y-3">
             {byType.length === 0 && <p className="text-sm text-slate-400">暂无数据</p>}
             {byType.map((t) => {
-              const label = t.biz_type === 'points_package' ? '积分套餐' : t.biz_type === 'course' ? '课程购买' : '功能调用';
-              const Icon = t.biz_type === 'points_package' ? Cart : Receipt;
+              const label = t.biz_type === 'course' ? '课程购买' : t.biz_type === 'graduation' ? '毕业作品' : '功能订单';
+              const Icon = Receipt;
               const pct = maxTypeAmt ? (Number(t.amount) / maxTypeAmt) * 100 : 0;
               return (
                 <div key={t.biz_type}>
@@ -282,43 +279,6 @@ export default function AdminFinance() {
         </div>
       </div>
 
-      {/* 积分套餐销量 */}
-      <div className="mt-4">
-        <div className="card p-6">
-          <h3 className="text-sm font-semibold text-ink">积分套餐销量排行 TOP 10</h3>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                  <th className="pb-2 pr-3 font-medium">套餐</th>
-                  <th className="pb-2 pr-3 text-right font-medium">销量</th>
-                  <th className="pb-2 text-right font-medium">收入</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byPackage.length === 0 && (
-                  <tr><td colSpan={3} className="py-6 text-center text-sm text-slate-400">暂无数据</td></tr>
-                )}
-                {byPackage.map((c, i) => (
-                  <tr key={c.package_id} className="border-b border-slate-50 text-sm last:border-0">
-                    <td className="py-2.5 pr-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${i < 3 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                          {i + 1}
-                        </span>
-                        <span className="font-medium text-ink">{c.target_name || `#${c.package_id}`}</span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{fmtNum(c.count)}</td>
-                    <td className="py-2.5 text-right font-semibold text-ink">¥{fmtMoney(c.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
       {/* 近期订单 */}
       <div className="card mt-4 p-6">
         <h3 className="text-sm font-semibold text-ink">近期已支付订单</h3>
@@ -344,7 +304,7 @@ export default function AdminFinance() {
                   <td className="py-2.5 pr-3 font-mono text-xs text-slate-500">{o.order_no}</td>
                   <td className="py-2.5 pr-3 text-slate-600">{o.user_name || o.user_email || '—'}</td>
                   <td className="py-2.5 pr-3">
-                    <span className={`rounded-md px-1.5 py-0.5 text-xs ${o.type === 'points_package' ? 'bg-purple-50 text-purple-600' : o.type === 'course' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>
+                    <span className={`rounded-md px-1.5 py-0.5 text-xs ${o.type === 'course' ? 'bg-indigo-50 text-indigo-600' : o.type === 'graduation' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'}`}>
                       {TYPE_LABEL[o.type] || o.type}
                     </span>
                   </td>
@@ -352,45 +312,6 @@ export default function AdminFinance() {
                   <td className="py-2.5 pr-3 text-slate-500">{CHANNEL_LABEL[o.payment_channel] || o.payment_channel}</td>
                   <td className="py-2.5 pr-3 text-right font-semibold text-ink">¥{fmtMoney(o.amount)}</td>
                   <td className="py-2.5 text-right text-xs text-slate-400">{fmtDate(o.paid_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 退款记录 */}
-      <div className="card mt-4 p-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-ink">退款记录</h3>
-          <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs text-red-600">
-            共 {fmtNum(s.refunded_count)} 笔 · ¥{fmtMoney(s.refunded_amount)}
-          </span>
-        </div>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                <th className="pb-2 pr-3 font-medium">订单号</th>
-                <th className="pb-2 pr-3 font-medium">用户</th>
-                <th className="pb-2 pr-3 font-medium">商品</th>
-                <th className="pb-2 pr-3 text-right font-medium">退款金额</th>
-                <th className="pb-2 pr-3 font-medium">原因</th>
-                <th className="pb-2 text-right font-medium">退款时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {refunds.length === 0 && (
-                <tr><td colSpan={6} className="py-6 text-center text-sm text-slate-400">暂无退款记录</td></tr>
-              )}
-              {refunds.map((r) => (
-                <tr key={r.order_no} className="border-b border-slate-50 text-sm last:border-0">
-                  <td className="py-2.5 pr-3 font-mono text-xs text-slate-500">{r.order_no}</td>
-                  <td className="py-2.5 pr-3 text-slate-600">{r.user_name || r.user_email || '—'}</td>
-                  <td className="py-2.5 pr-3 text-slate-700">{r.target_name}</td>
-                  <td className="py-2.5 pr-3 text-right font-semibold text-red-600">-¥{fmtMoney(r.amount)}</td>
-                  <td className="py-2.5 pr-3 text-xs text-slate-500">{r.refund_reason || '—'}</td>
-                  <td className="py-2.5 text-right text-xs text-slate-400">{fmtDate(r.refunded_at)}</td>
                 </tr>
               ))}
             </tbody>

@@ -11,17 +11,15 @@ import {
   setSetting,
   getModels,
   getFeaturePrices,
-  getPointsPackages,
-  getPointsPackage,
   getCourses,
   getCourse,
   getPaymentConfig,
   invalidatePaymentCache,
+  invalidateSiteCache,
 } from '../config-store.js';
 import { hashPassword, revokeAllRefreshTokens } from '../auth.js';
 import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
-import { refundOrder, closePendingGraduationOrders } from '../services/payment.js';
-import { grantPoints, getPointsBalance, getFeatureMinPoints } from '../services/billing.js';
+import { closePendingGraduationOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
 
@@ -130,18 +128,11 @@ router.get('/overview', (_req, res) => {
   ).get(todayTs - 30 * 86400).s;
   const revenueTotal = db.prepare(`SELECT ${AMOUNT_SUM} as s FROM orders WHERE status = 'paid'`).get().s;
 
-  // 订单数
+  // 订单数（现金直付订单模型）
   const ordersToday = db.prepare("SELECT COUNT(*) as c FROM orders WHERE paid_at >= ?").get(todayTs).c;
   const pendingOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'pending'").get().c;
-  const refundedOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'refunded'").get().c;
-
-  // 积分套餐销量与收入
-  const packagesSold = db.prepare(
-    "SELECT COUNT(*) as c FROM orders WHERE type = 'points_package' AND status = 'paid'"
-  ).get().c;
-  const packageRevenue = db.prepare(
-    `SELECT ${AMOUNT_SUM} as s FROM orders WHERE type = 'points_package' AND status = 'paid'`
-  ).get().s;
+  const awaitingQuoteOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'awaiting_quote'").get().c;
+  const quotedOrders = db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'quoted'").get().c;
 
   // 活跃用户（近 7 天有调用）
   const activeUsers = db.prepare(
@@ -153,51 +144,44 @@ router.get('/overview', (_req, res) => {
     calls: { total: totalCalls, today: callsToday, success: successCalls, failed: failedCalls },
     tokens: totalTokens,
     revenue: { today: revenueToday, week: revenueWeek, month: revenueMonth, total: revenueTotal },
-    orders: { today: ordersToday, pending: pendingOrders, refunded: refundedOrders },
-    packages: { sold: packagesSold, revenue: packageRevenue },
+    orders: { today: ordersToday, pending: pendingOrders, awaiting_quote: awaitingQuoteOrders, quoted: quotedOrders },
     byTool,
     trend,
   });
 });
 
-// ========== 功能定价管理 ==========
+// ========== 功能定价管理（现金直付：fixed 固定价 / quote 人工报价） ==========
 router.get('/features', (_req, res) => {
-  const features = getFeaturePrices().map((f) => ({
-    ...f,
-    min_points: getFeatureMinPoints(f.feature_key),
-  }));
+  const features = getFeaturePrices();
   res.json({ features });
 });
 
 router.post('/features', (req, res) => {
-  const { feature_key, name, price, unit, category, description, is_active, is_unlimited, sort_order } = req.body || {};
+  const { feature_key, name, price, unit, category, description, is_active, is_unlimited, pricing_mode, sort_order } = req.body || {};
   if (!feature_key || !name) return res.status(400).json({ error: '请填写功能 key 和名称' });
   const unlimited = !!is_unlimited;
   let finalPrice = Number(price) || 0;
   if (unlimited) {
     // 免费功能价格强制为 0
     finalPrice = 0;
-  } else {
-    // 收费功能校验：积分不得低于最低值（= 该功能 token 成本的 5 倍）
-    const minPoints = getFeatureMinPoints(feature_key);
-    if (finalPrice < minPoints) {
-      return res.status(400).json({ error: `积分不能低于最低值 ${minPoints}（该功能 token 成本的 5 倍）` });
-    }
+  } else if (finalPrice <= 0) {
+    return res.status(400).json({ error: '收费功能价格必须大于 0 元' });
   }
+  const mode = pricing_mode === 'quote' ? 'quote' : 'fixed';
   db.prepare(
-    `INSERT INTO feature_prices (feature_key, name, price, unit, category, description, is_active, is_unlimited, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO feature_prices (feature_key, name, price, unit, category, description, is_active, is_unlimited, pricing_mode, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(feature_key) DO UPDATE SET
        name=excluded.name, price=excluded.price, unit=excluded.unit,
        category=excluded.category, description=excluded.description,
-       is_active=excluded.is_active, is_unlimited=excluded.is_unlimited, sort_order=excluded.sort_order,
+       is_active=excluded.is_active, is_unlimited=excluded.is_unlimited, pricing_mode=excluded.pricing_mode, sort_order=excluded.sort_order,
        updated_at=strftime('%s','now')`
   ).run(
     feature_key, name, finalPrice, unit || '次', category || 'writing',
-    description || '', is_active === false ? 0 : 1, unlimited ? 1 : 0, sort_order ?? 0
+    description || '', is_active === false ? 0 : 1, unlimited ? 1 : 0, mode, sort_order ?? 0
   );
   const saved = getFeaturePrices().find((f) => f.feature_key === feature_key);
-  res.json({ ok: true, feature: { ...saved, min_points: getFeatureMinPoints(feature_key) } });
+  res.json({ ok: true, feature: saved });
 });
 
 router.delete('/features/:key', (req, res) => {
@@ -207,49 +191,6 @@ router.delete('/features/:key', (req, res) => {
     return res.status(400).json({ error: '内置功能不可删除，可停用' });
   }
   db.prepare('DELETE FROM feature_prices WHERE feature_key = ?').run(req.params.key);
-  res.json({ ok: true });
-});
-
-// ========== 积分套餐管理 ==========
-router.get('/points-packages', (_req, res) => {
-  res.json({ packages: getPointsPackages() });
-});
-
-router.post('/points-packages', (req, res) => {
-  const { id, name, price, points, bonus_points, is_active, sort_order } = req.body || {};
-  if (!name) return res.status(400).json({ error: '请填写套餐名称' });
-  if (id) {
-    db.prepare(
-      `UPDATE points_packages SET
-         name = COALESCE(?, name),
-         price = COALESCE(?, price),
-         points = COALESCE(?, points),
-         bonus_points = COALESCE(?, bonus_points),
-         is_active = COALESCE(?, is_active),
-         sort_order = COALESCE(?, sort_order),
-         updated_at = strftime('%s','now')
-       WHERE id = ?`
-    ).run(
-      name, price === undefined ? null : Number(price),
-      points === undefined ? null : Number(points),
-      bonus_points === undefined ? null : Number(bonus_points),
-      is_active === undefined ? null : (is_active ? 1 : 0),
-      sort_order ?? null, id
-    );
-    return res.json({ ok: true, package: getPointsPackage(id) });
-  }
-  const info = db.prepare(
-    `INSERT INTO points_packages (name, price, points, bonus_points, is_active, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(
-    name, Number(price) || 0, Number(points) || 0, Number(bonus_points) || 0,
-    is_active === false ? 0 : 1, sort_order ?? 0
-  );
-  res.json({ ok: true, package: getPointsPackage(info.lastInsertRowid) });
-});
-
-router.delete('/points-packages/:id', (req, res) => {
-  db.prepare('DELETE FROM points_packages WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -386,10 +327,27 @@ router.get('/orders', (req, res) => {
   });
 });
 
-router.post('/orders/:orderNo/refund', async (req, res) => {
-  const { reason } = req.body || {};
+// 管理员报价：更新 quoted_price / quote_note，状态变为 quoted
+router.post('/orders/:id/quote', (req, res) => {
+  const { quoted_price, quote_note } = req.body || {};
   try {
-    const result = await refundOrder(req.params.orderNo, reason || '管理员手动退款');
+    const order = adminQuoteOrder(Number(req.params.id), quoted_price, quote_note || '');
+    res.json({ ok: true, order });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 手动标记支付（测试备用）：逻辑与真实回调一致但不验证签名
+router.post('/orders/:id/mark-paid', async (req, res) => {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+  if (!order) return res.status(404).json({ error: '订单不存在' });
+  try {
+    const result = await markOrderPaid({
+      orderNo: order.order_no,
+      transactionId: `manual_${Date.now()}`,
+      channel: 'manual',
+    });
     res.json({ ok: true, order: result.order });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -505,19 +463,20 @@ router.post('/models/:key/test', async (req, res) => {
 const SETTINGS_WHITELIST = new Set([
   'site_name', 'site_description', 'announcement', 'registration_open', 'footer_text',
   'service_wechat', 'service_wechat_qrcode',
-  'signup_points',
-  'signup_free_quota', 'signup_free_quota_validity_days', // 兼容旧设置
+  'icp_number', 'icp_link',
   'signup_ip_limit', 'signup_device_limit',
   'ai_input_cost_per_million', 'ai_output_cost_per_million', 'ai_profit_margin',
   'payment_mode', 'order_expire_seconds', 'doc_retention_days',
   'course_quote_base_word_count', 'course_quote_word_price', 'course_quote_chart_price', 'course_quote_drawing_price',
   'course_quote_formula_low', 'course_quote_formula_mid', 'course_quote_formula_high', 'course_quote_urgent_multiplier',
-  'alipay_appid', 'alipay_private_key', 'alipay_public_key', 'alipay_gateway', 'alipay_sandbox',
-  'wechat_appid', 'wechat_mch_id', 'wechat_api_v3_key', 'wechat_serial_no', 'wechat_private_key', 'wechat_notify_url', 'wechat_platform_public_key', 'wechat_platform_serial_no',
+  'alipay_appid', 'alipay_private_key', 'alipay_private_key_path', 'alipay_public_key', 'alipay_public_key_path', 'alipay_gateway', 'alipay_sandbox',
+  'wechat_appid', 'wechat_mch_id', 'wechat_api_v3_key', 'wechat_serial_no', 'wechat_private_key', 'wechat_private_key_path', 'wechat_notify_url', 'wechat_platform_public_key', 'wechat_platform_public_key_path', 'wechat_platform_serial_no',
+  'content_safety_provider', 'aliyun_access_key_id', 'aliyun_access_key_secret', 'yidun_secret_id', 'yidun_secret_key', 'yidun_business_id',
 ]);
 
 const SENSITIVE_KEYS = new Set([
-  'alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key',
+  'alipay_private_key', 'alipay_private_key_path', 'alipay_public_key', 'alipay_public_key_path', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_private_key_path', 'wechat_platform_public_key', 'wechat_platform_public_key_path',
+  'aliyun_access_key_secret', 'yidun_secret_key',
 ]);
 
 router.get('/settings', (_req, res) => {
@@ -532,9 +491,6 @@ router.get('/settings', (_req, res) => {
 
 // 数值型设置项的合法范围（min/max/是否整数）
 const NUMERIC_SETTINGS = {
-  signup_points: { min: 0, max: 10000, integer: true },
-  signup_free_quota: { min: 0, max: 1000, integer: true },
-  signup_free_quota_validity_days: { min: 1, max: 3650, integer: true },
   signup_ip_limit: { min: 0, max: 100, integer: true },
   signup_device_limit: { min: 0, max: 10, integer: true },
   ai_input_cost_per_million: { min: 0, max: 1000 },
@@ -554,6 +510,7 @@ const NUMERIC_SETTINGS = {
 const BOOL_SETTINGS = new Set(['registration_open', 'alipay_sandbox']);
 const ENUM_SETTINGS = {
   payment_mode: ['mock', 'alipay', 'wechat', 'mixed'],
+  content_safety_provider: ['local', 'aliyun', 'yidun'],
 };
 
 // 校验单个设置项的值合法性，返回错误信息或 null
@@ -603,6 +560,10 @@ router.put('/settings', (req, res) => {
   // 支付配置变更时使缓存失效
   const hasPaymentChange = Object.keys(accepted).some((k) => k.startsWith('payment_') || k.startsWith('alipay_') || k.startsWith('wechat_') || k.startsWith('order_') || k.startsWith('doc_'));
   if (hasPaymentChange) invalidatePaymentCache();
+  // 站点信息变更时使公开站点缓存失效（含 ICP 备案、页脚、注册开关等）
+  const SITE_KEYS = ['site_name', 'site_description', 'announcement', 'footer_text', 'service_wechat', 'service_wechat_qrcode', 'icp_number', 'icp_link', 'registration_open'];
+  const hasSiteChange = Object.keys(accepted).some((k) => SITE_KEYS.includes(k));
+  if (hasSiteChange) invalidateSiteCache();
   res.json({ ok: true });
 });
 
@@ -653,7 +614,7 @@ router.get('/users', (req, res) => {
   const total = db.prepare(`SELECT COUNT(*) as c FROM users ${where}`).get(...params).c;
   // 单条 JOIN 聚合查询，避免 N+1（原实现每个用户 3 次子查询）
   const users = db.prepare(
-    `SELECT u.id, u.email, u.name, u.points, u.free_quota, u.free_quota_expires_at, u.is_admin, u.is_support, u.status, u.created_at,
+    `SELECT u.id, u.email, u.name, u.is_admin, u.is_support, u.status, u.created_at,
             COALESCE(o.paid_orders, 0) as paid_orders,
             COALESCE(o.total_spent, 0) as total_spent,
             COALESCE(l.total_calls, 0) as total_calls
@@ -673,57 +634,6 @@ router.get('/users', (req, res) => {
     users: enriched,
     total, page, size, pages: Math.ceil(total / size),
   });
-});
-
-// 调整用户积分
-router.put('/users/:id/points', (req, res) => {
-  const { delta, description } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!u) return res.status(404).json({ error: '用户不存在' });
-  const d = parseInt(delta, 10) || 0;
-  if (d === 0) return res.status(400).json({ error: '变动量不能为0' });
-  if (d > 0) {
-    grantPoints(u.id, d, 'admin_adjust', description || '管理员增加积分');
-  } else {
-    const balance = getPointsBalance(u.id);
-    if (balance < Math.abs(d)) return res.status(400).json({ error: '积分不足，无法扣减' });
-    // consumePoints 在事务中做了余额检查，这里直接操作
-    const newBalance = db.transaction(() => {
-      db.prepare('UPDATE users SET points = points + ? WHERE id = ? AND points >= ?')
-        .run(d, u.id, Math.abs(d));
-      const nb = getPointsBalance(u.id);
-      db.prepare(
-        'INSERT INTO points_log (user_id, type, points, balance_after, description) VALUES (?, ?, ?, ?, ?)'
-      ).run(u.id, 'admin_adjust', d, nb, description || '管理员扣减积分');
-      return nb;
-    }, { immediate: true })();
-    return res.json({ ok: true, balance: newBalance });
-  }
-  const newBalance = getPointsBalance(u.id);
-  res.json({ ok: true, balance: newBalance });
-});
-
-// 赠送积分（直接发放，无需支付）
-router.post('/users/:id/grant-points', (req, res) => {
-  const { points, description } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!u) return res.status(404).json({ error: '用户不存在' });
-  const pts = parseInt(points, 10) || 0;
-  if (pts <= 0) return res.status(400).json({ error: '积分数量必须大于0' });
-  const newBalance = grantPoints(u.id, pts, 'admin_adjust', description || '管理员赠送积分');
-  res.json({ ok: true, granted: pts, balance: newBalance });
-});
-
-// 兼容旧接口
-router.put('/users/:id/quota', (req, res) => {
-  // 旧接口废弃，重定向到积分调整
-  const { delta, reset_value } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!u) return res.status(404).json({ error: '用户不存在' });
-  const pts = reset_value !== undefined ? parseInt(reset_value, 10) : parseInt(delta, 10) || 0;
-  if (pts <= 0) return res.status(400).json({ error: '积分数量必须大于0' });
-  const newBalance = grantPoints(u.id, pts, 'admin_adjust', '管理员调整积分（旧接口兼容）');
-  res.json({ ok: true, balance: newBalance, deprecated: true });
 });
 
 // 管理员手动开通课程（无需支付，用于赠课/补发）
@@ -837,9 +747,11 @@ router.get('/finance', (req, res) => {
       COUNT(CASE WHEN status='paid' THEN 1 END) AS paid_count,
       COALESCE(SUM(CASE WHEN status='pending' THEN ROUND(amount*100) ELSE 0 END), 0)/100.0 AS pending_amount,
       COUNT(CASE WHEN status='pending' THEN 1 END) AS pending_count,
-      COALESCE(SUM(CASE WHEN status='refunded' THEN ROUND(amount*100) ELSE 0 END), 0)/100.0 AS refunded_amount,
-      COUNT(CASE WHEN status='refunded' THEN 1 END) AS refunded_count,
-      COUNT(CASE WHEN status='closed' THEN 1 END) AS closed_count
+      COUNT(CASE WHEN status='awaiting_quote' THEN 1 END) AS awaiting_quote_count,
+      COUNT(CASE WHEN status='quoted' THEN 1 END) AS quoted_count,
+      COUNT(CASE WHEN status='processing' THEN 1 END) AS processing_count,
+      COUNT(CASE WHEN status='completed' THEN 1 END) AS completed_count,
+      COUNT(CASE WHEN status='cancelled' THEN 1 END) AS cancelled_count
     FROM orders`
   ).get();
 
@@ -853,12 +765,12 @@ router.get('/finance', (req, res) => {
     total: db.prepare(`SELECT ${AMOUNT_SUM} AS s, COUNT(*) AS c FROM orders WHERE status='paid'`).get(),
   };
 
-  // ---- 3. 按业务类型拆分（功能 / 积分套餐 / 课程购买） ----
+  // ---- 3. 按业务类型拆分（功能 / 课程 / 毕业作品） ----
   const byType = db.prepare(
     `SELECT
       CASE
-        WHEN type='points_package' THEN 'points_package'
         WHEN type='course' THEN 'course'
+        WHEN type='graduation' THEN 'graduation'
         ELSE 'feature'
       END AS biz_type,
       COUNT(*) AS count,
@@ -867,21 +779,7 @@ router.get('/finance', (req, res) => {
     GROUP BY biz_type ORDER BY amount DESC`
   ).all(rangeStart);
 
-  // ---- 4. 积分套餐销售排行 ----
-  const byPackage = db.prepare(
-    `SELECT
-      target AS package_id,
-      target_name,
-      COUNT(*) AS count,
-      COALESCE(SUM(ROUND(amount*100)), 0)/100.0 AS amount
-    FROM orders
-    WHERE status='paid' AND type='points_package' AND paid_at >= ?
-    GROUP BY package_id
-    ORDER BY amount DESC
-    LIMIT 10`
-  ).all(rangeStart);
-
-  // ---- 6. 按支付通道拆分 ----
+  // ---- 4. 按支付通道拆分 ----
   const byChannel = db.prepare(
     `SELECT
       COALESCE(payment_channel, 'unknown') AS channel,
@@ -891,7 +789,7 @@ router.get('/finance', (req, res) => {
     GROUP BY channel ORDER BY amount DESC`
   ).all(rangeStart);
 
-  // ---- 7. 每日收入趋势（指定天数） ----
+  // ---- 5. 每日收入趋势（指定天数） ----
   const trend = db.prepare(
     `SELECT
       strftime('%Y-%m-%d', paid_at, 'unixepoch', 'localtime') AS day,
@@ -902,16 +800,7 @@ router.get('/finance', (req, res) => {
     GROUP BY day ORDER BY day ASC`
   ).all(rangeStart);
 
-  // ---- 8. 退款记录列表 ----
-  const refunds = db.prepare(
-    `SELECT o.order_no, o.amount, o.type, o.target_name, o.refunded_at, o.refund_reason,
-            u.email AS user_email, u.name AS user_name
-     FROM orders o LEFT JOIN users u ON u.id = o.user_id
-     WHERE o.status = 'refunded'
-     ORDER BY o.refunded_at DESC LIMIT 50`
-  ).all();
-
-  // ---- 9. 近期已支付订单 ----
+  // ---- 6. 近期已支付订单 ----
   const recentOrders = db.prepare(
     `SELECT o.order_no, o.type, o.target_name, o.amount, o.payment_channel, o.paid_at,
             u.email AS user_email, u.name AS user_name
@@ -920,7 +809,7 @@ router.get('/finance', (req, res) => {
      ORDER BY o.paid_at DESC LIMIT 20`
   ).all();
 
-  // ---- 10. ARPPU（每付费用户平均收入） ----
+  // ---- 7. ARPPU（每付费用户平均收入） ----
   const payingUsers = db.prepare(
     "SELECT COUNT(DISTINCT user_id) AS c FROM orders WHERE status='paid' AND paid_at >= ?"
   ).get(rangeStart).c;
@@ -938,10 +827,8 @@ router.get('/finance', (req, res) => {
       total: { amount: income.total.s, count: income.total.c },
     },
     byType,
-    byPackage,
     byChannel,
     trend,
-    refunds,
     recentOrders,
     arppu: Math.round(arppu * 100) / 100,
     payingUsers,

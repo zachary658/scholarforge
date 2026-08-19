@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
-import RechargeBanner from '../components/RechargeBanner.jsx';
+import FeaturePay from '../components/FeaturePay.jsx';
+import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
+import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { toast } from '../components/Toast.jsx';
 import {
-  Refresh, Copy, Check, Sparkle, Crown, Download,
+  Refresh, Copy, Check, Sparkle, Download,
 } from '../components/Icons.jsx';
 
 const SAMPLE =
@@ -14,12 +15,12 @@ const SAMPLE =
   '通过实验分析，我们发现该方法有效。';
 
 export default function Rewrite() {
-  const { refreshStatus, status } = useOutletContext();
-  const tool = useTool(refreshStatus);
+  const tool = useTool();
 
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef(null);
+  const integrity = useAcademicIntegrity();
 
   useEffect(() => {
     return () => {
@@ -27,18 +28,17 @@ export default function Rewrite() {
     };
   }, []);
 
-  const balance = status?.balance ?? 0;
-
   const r = tool.result;
   const output = r?.result || r?.content || '';
   const changes = r?.changes || [];
 
-  const run = () => {
+  const run = (orderNo) => {
     if (!input.trim()) {
       toast.warning('请输入需要降重的文本');
       return;
     }
-    tool.run(() => api.rewrite({ text: input }));
+    if (!integrity.ensure(() => run(orderNo))) return;
+    tool.run(() => api.rewrite({ text: input, orderNo: orderNo || undefined }));
   };
 
   const handleCopy = async () => {
@@ -74,9 +74,6 @@ export default function Rewrite() {
         <div>
           <h1 className="text-xl font-bold text-ink">论文降重</h1>
           <p className="mt-1 text-sm text-slate-500">通过同义词替换、句式变换与表达调整降低文本重复率，保持原意与学术性</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="flex items-center gap-1"><Crown className="h-3 w-3 text-amber-500" />积分 {balance}</span>
         </div>
       </div>
 
@@ -122,8 +119,6 @@ export default function Rewrite() {
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
                     {r.chargeType === 'paid' ? (
                       <span className="rounded bg-accent-50 px-1.5 py-0.5 font-medium text-accent">已付费 ¥{Number(r.amount || 0).toFixed(2)}</span>
-                    ) : r.chargeType === 'points' ? (
-                      <><Crown className="h-3.5 w-3.5 text-amber-500" /><span>已消耗 {r.deductedPoints || '相应'} 积分</span></>
                     ) : null}
                   </div>
                 )}
@@ -149,6 +144,16 @@ export default function Rewrite() {
                     </div>
                   </div>
                 )}
+
+                {/* 连贯性提示 */}
+                {r.coherence && !r.coherence.ok && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <div className="text-xs font-semibold text-amber-700">连贯性提示（请核对）</div>
+                    <ul className="mt-1 space-y-1">
+                      {r.coherence.issues.map((iss, i) => <li key={i} className="text-xs text-amber-600">· {iss}</li>)}
+                    </ul>
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center">
@@ -163,8 +168,8 @@ export default function Rewrite() {
 
       {/* 操作栏 */}
       <div className="mt-5 flex items-center justify-between">
-        <span className="text-xs text-slate-500">按大模型用量计费，用多少扣多少</span>
-        <button onClick={run} disabled={tool.loading} className="btn-primary px-6 py-2.5">
+        <span className="text-xs text-slate-500">本功能为付费功能，先下单支付后再生成</span>
+        <button onClick={() => run()} disabled={tool.loading} className="btn-primary px-6 py-2.5">
           {tool.loading ? (
             <><Refresh className="h-4 w-4 animate-spin" /> 降重中…</>
           ) : (
@@ -176,8 +181,12 @@ export default function Rewrite() {
         <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tool.error}</div>
       )}
 
-      {tool.needRecharge && (
-        <RechargeBanner balance={tool.needRecharge.balance} needed={tool.needRecharge.needed} />
+      {tool.needOrder && (
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
+      )}
+
+      {integrity.show && (
+        <AcademicIntegrityModal onAgreed={integrity.handleAgreed} onCancel={integrity.close} />
       )}
     </div>
   );

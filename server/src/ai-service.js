@@ -102,6 +102,13 @@ const SYSTEM_PROMPTS = {
 - 第一步：依据上述清单完成第一轮改写。
 - 第二步：对改写结果再次逐项排查 AI-isms，若仍有残留痕迹，进行第二轮改写。
 - 仅输出最终改写结果，不要附加任何解释、标注或元信息。`,
+  ai_reduce_versions: `你是一位基于 blader/humanizer 方法论的 AI 痕迹消除专家。请对用户提供的文本进行降AI率改写，输出 3 个不同的版本，每个版本之间用单独一行 "---VERSION---" 分隔。
+
+【要求】
+1. 每个版本都要保留原文的专业术语、数据、引用与核心论点，仅消除"AI 味"。
+2. 三个版本在句式结构、用词习惯、段落节奏上彼此要有明显差异（如：一个偏主动语态、一个偏长短句交替、一个偏主观语气与破折号补充）。
+3. 不改变学术立场与论证逻辑，不增加虚构信息。
+4. 每个版本独立成段，不要附加任何解释、标注或元信息。`,
   defense: '你是一位毕业论文答辩PPT与演讲稿撰写专家。请根据用户给定的论文题目、学科、研究内容，生成一份结构完整的答辩材料：1) PPT大纲（按答辩页码分章节，每页含标题和要点）；2) 配套演讲稿（按PPT顺序逐页给出3-5分钟的口播稿）。要求内容紧扣研究主题，逻辑清晰，适合10-15分钟答辩使用。使用 Markdown 格式，用「## 第N页 PPT标题」分隔。',
   literature_review: '你是一位文献综述撰写专家。请根据用户给定的研究主题、学科领域和关键词，撰写一篇结构化的文献综述（约2000-3000字）：1) 引言（研究背景与意义）；2) 主题分类梳理（按研究方向分2-4个主题，每个主题引用3-5篇代表性文献）；3) 研究述评（已有成果与不足）；4) 研究展望。引用文献使用「(作者, 年份)」格式标注，文末列出参考文献。使用 Markdown 格式。',
   task_book: '你是一位毕业论文任务书撰写专家。请根据用户给定的论文题目、学生信息、学科领域，生成一份规范的毕业论文（设计）任务书，包含：1) 课题背景与意义；2) 研究内容与范围；3) 研究方法与技术路线；4) 预期成果与考核指标；5) 进度安排（按周次）；6) 主要参考文献（8-12条）。使用 Markdown 格式，语言严谨规范。',
@@ -292,6 +299,8 @@ function buildUserPrompt(tool, params) {
     // ===== 借鉴千笔写作新增 =====
     case 'ai_reduce':
       return `请对以下文本执行降AI率改写：先依据系统提示中的 AI-isms 清单完成首轮改写，再对改写结果做二次审计——逐项排查残留的 AI 痕迹，若有则进行第二轮改写。最终只输出人类化后的文本，不要附加解释或标注：\n\n${wrapUserContent(params.text)}${ctx}`;
+    case 'ai_reduce_versions':
+      return `请对以下文本执行降AI率改写，输出 3 个不同版本，每个版本之间用单独一行 "---VERSION---" 分隔：\n\n${wrapUserContent(params.text)}${ctx}`;
     case 'defense': {
       const parts = [`论文题目：${params.topic}`];
       if (params.field) parts.push(`学科领域：${params.field}`);
@@ -363,6 +372,9 @@ export async function runAI(tool, params, responseFormat = null) {
       // ===== 借鉴千笔写作新增：模板回退 =====
       case 'ai_reduce':
         content = builtinAiReduce(params);
+        break;
+      case 'ai_reduce_versions':
+        content = builtinAiReduceVersions(params);
         break;
       case 'defense':
         content = builtinDefense(params);
@@ -478,6 +490,18 @@ function builtinAiReduce(params) {
 
 ---
 *注：当前为内置模板引擎基于 blader/humanizer 方法论的简化改写（已执行：并列结构打破、过渡词多样化、句长突发性提升、破折号引入、高频词困惑度提升）。配置真实AI模型后可执行完整的"二次审计+二次改写"，获得更自然的人类化文本。*`;
+}
+
+function builtinAiReduceVersions(params) {
+  const text = params.text || '';
+  if (!text.trim()) return '';
+  const v1 = builtinAiReduce(params).replace(/\n\n---\n[\s\S]*$/, '');
+  const v2 = rewriteText({ text }).result;
+  const v3 = v1.replace(/([^。！？；\n]{70,})/g, (long) => {
+    const i = long.indexOf('，');
+    return i > 0 ? long.slice(0, i + 1) + '。' + long.slice(i + 1) : long;
+  });
+  return [v1, v2, v3].join('\n---VERSION---\n');
 }
 
 function builtinDefense(params) {

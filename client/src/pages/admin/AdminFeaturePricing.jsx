@@ -37,28 +37,32 @@ export default function AdminFeaturePricing() {
 
   useEffect(() => { load(); }, []);
 
+  const buildPayload = (f, overrides = {}) => ({
+    feature_key: f.feature_key,
+    name: f.name,
+    price: f.is_unlimited || f.pricing_mode === 'quote' ? 0 : Number(drafts[f.feature_key]),
+    unit: f.unit,
+    category: f.category,
+    description: f.description,
+    is_active: f.is_active,
+    is_unlimited: f.is_unlimited,
+    pricing_mode: f.pricing_mode || 'fixed',
+    sort_order: f.sort_order,
+    ...overrides,
+  });
+
   const save = async (f) => {
-    if (!f.is_unlimited) {
+    if (!f.is_unlimited && f.pricing_mode !== 'quote') {
       const price = Number(drafts[f.feature_key]);
-      if (!Number.isFinite(price) || price < f.min_points) {
-        toast.warning(`「${f.name}」积分不能低于最低值 ${f.min_points}`);
+      if (!Number.isFinite(price) || price <= 0) {
+        toast.warning(`「${f.name}」固定价格必须大于 0 元`);
         return;
       }
     }
     setSavingKey(f.feature_key);
     setError('');
     try {
-      await api.adminSaveFeature({
-        feature_key: f.feature_key,
-        name: f.name,
-        price: f.is_unlimited ? 0 : Number(drafts[f.feature_key]),
-        unit: f.unit,
-        category: f.category,
-        description: f.description,
-        is_active: f.is_active,
-        is_unlimited: f.is_unlimited,
-        sort_order: f.sort_order,
-      });
+      await api.adminSaveFeature(buildPayload(f));
       toast.success(`「${f.name}」已更新`);
       await load();
     } catch (err) {
@@ -72,18 +76,23 @@ export default function AdminFeaturePricing() {
     setSavingKey(f.feature_key);
     setError('');
     try {
-      await api.adminSaveFeature({
-        feature_key: f.feature_key,
-        name: f.name,
-        price: f.is_unlimited ? 0 : Number(drafts[f.feature_key]),
-        unit: f.unit,
-        category: f.category,
-        description: f.description,
-        is_active: !f.is_active,
-        is_unlimited: f.is_unlimited,
-        sort_order: f.sort_order,
-      });
+      await api.adminSaveFeature(buildPayload(f, { is_active: !f.is_active }));
       toast.success(f.is_active ? `「${f.name}」已停用` : `「${f.name}」已启用`);
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const toggleMode = async (f) => {
+    const next = f.pricing_mode === 'quote' ? 'fixed' : 'quote';
+    setSavingKey(f.feature_key);
+    setError('');
+    try {
+      await api.adminSaveFeature(buildPayload(f, { pricing_mode: next }));
+      toast.success(next === 'quote' ? `「${f.name}」已切换为人工报价` : `「${f.name}」已切换为固定价格`);
       await load();
     } catch (err) {
       toast.error(err.message);
@@ -98,7 +107,7 @@ export default function AdminFeaturePricing() {
         <div>
           <h1 className="text-xl font-bold text-ink">功能定价</h1>
           <p className="mt-1 text-sm text-slate-500">
-            调整每个功能每次消耗的积分。收费功能积分不得低于最低值（= 该功能 token 成本的 5 倍，1 元 = 10 积分）。
+            以现金金额（元）定价。支持「固定价格」与「人工报价」两种模式；免费功能不限次。
           </p>
         </div>
         <button onClick={load} className="btn-ghost text-xs">
@@ -117,8 +126,8 @@ export default function AdminFeaturePricing() {
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium text-slate-500">
                 <th className="px-4 py-3">功能</th>
                 <th className="px-4 py-3">分类</th>
-                <th className="px-4 py-3">最低积分</th>
-                <th className="px-4 py-3">消耗积分 / 次</th>
+                <th className="px-4 py-3">计费模式</th>
+                <th className="px-4 py-3">价格（元）/ 次</th>
                 <th className="px-4 py-3">状态</th>
                 <th className="px-4 py-3 text-right">操作</th>
               </tr>
@@ -135,8 +144,8 @@ export default function AdminFeaturePricing() {
               ) : (
                 features.map((f) => {
                   const free = !!f.is_unlimited;
+                  const quote = f.pricing_mode === 'quote';
                   const active = f.is_active !== false;
-                  const belowMin = !free && (Number(drafts[f.feature_key]) || 0) < (f.min_points || 0);
                   return (
                     <tr key={f.feature_key} className="border-b border-slate-100 text-sm last:border-0">
                       <td className="px-4 py-3">
@@ -144,26 +153,29 @@ export default function AdminFeaturePricing() {
                         <div className="text-xs text-slate-400">{f.description || ''}</div>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{CATEGORY_LABEL[f.category] || f.category}</td>
-                      <td className="px-4 py-3 text-slate-500">
-                        {free ? '—' : `${f.min_points ?? 0} 分`}
-                      </td>
                       <td className="px-4 py-3">
                         {free ? (
                           <span className="rounded-md bg-green-50 px-2 py-0.5 text-xs text-green-600">免费不限次</span>
+                        ) : quote ? (
+                          <span className="rounded-md bg-purple-50 px-2 py-0.5 text-xs text-purple-600">人工报价</span>
                         ) : (
-                          <div>
-                            <input
-                              type="number"
-                              min={f.min_points ?? 0}
-                              step="1"
-                              className={`input w-28 py-1.5 text-sm ${belowMin ? 'border-red-400' : ''}`}
-                              value={drafts[f.feature_key] ?? ''}
-                              onChange={(e) => setDrafts((prev) => ({ ...prev, [f.feature_key]: e.target.value }))}
-                            />
-                            {belowMin && (
-                              <div className="mt-1 text-xs text-red-500">低于最低值</div>
-                            )}
-                          </div>
+                          <span className="rounded-md bg-accent-50 px-2 py-0.5 text-xs text-accent-700">固定价格</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {free ? (
+                          <span className="text-xs text-slate-400">—</span>
+                        ) : quote ? (
+                          <span className="text-xs text-slate-400">由管理员报价</span>
+                        ) : (
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            className="input w-28 py-1.5 text-sm"
+                            value={drafts[f.feature_key] ?? ''}
+                            onChange={(e) => setDrafts((prev) => ({ ...prev, [f.feature_key]: e.target.value }))}
+                          />
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -182,15 +194,26 @@ export default function AdminFeaturePricing() {
                           />
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => save(f)}
-                          disabled={savingKey === f.feature_key}
-                          className="btn-primary px-3 py-1.5 text-xs"
-                        >
-                          <Save className={`h-3.5 w-3.5 ${savingKey === f.feature_key ? 'animate-pulse' : ''}`} />
-                          {savingKey === f.feature_key ? '保存中…' : '保存'}
-                        </button>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {!free && (
+                            <button
+                              onClick={() => toggleMode(f)}
+                              disabled={savingKey === f.feature_key}
+                              className="btn-secondary px-2.5 py-1.5 text-xs"
+                            >
+                              {quote ? '改固定价' : '改报价'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => save(f)}
+                            disabled={savingKey === f.feature_key}
+                            className="btn-primary px-3 py-1.5 text-xs"
+                          >
+                            <Save className={`h-3.5 w-3.5 ${savingKey === f.feature_key ? 'animate-pulse' : ''}`} />
+                            {savingKey === f.feature_key ? '保存中…' : '保存'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

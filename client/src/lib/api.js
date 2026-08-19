@@ -153,12 +153,12 @@ export const api = {
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (payload) => request('/auth/reset-password', { method: 'POST', body: payload, auth: false }),
   changePassword: (payload) => request('/auth/change-password', { method: 'POST', body: payload }),
+  agreeAcademicIntegrity: () => request('/auth/academic-integrity', { method: 'POST', body: { agreed: true } }),
 
   // ===== public / 站点信息 =====
   getSite: () => request('/public/site', { auth: false }),
-  getStatus: () => request('/public/status'),
-  getPointsPackages: () => request('/membership/points-packages', { auth: false }),
   getChannels: () => request('/membership/channels', { auth: false }),
+  getFeatures: () => request('/membership/features', { auth: false }),
 
   // ===== tools =====
   writing: (payload) => request('/tools/writing', { method: 'POST', body: payload }),
@@ -189,21 +189,21 @@ export const api = {
   formatRefs: (payload) => request('/references/format', { method: 'POST', body: payload }),
   formatPreview: (payload) => request('/references/format-preview', { method: 'POST', body: payload }),
 
-  // ===== 支付 =====
+  // ===== 支付（课程 / 毕业作品，保留独立流程） =====
   createOrder: (payload) => request('/payment/create-order', { method: 'POST', body: payload }),
   mockPay: (orderNo) => request(`/payment/mock/${orderNo}`, { method: 'POST' }),
   alipayQrcode: (orderNo) => request(`/payment/alipay/qrcode/${orderNo}`),
   wechatQrcode: (orderNo) => request(`/payment/wechat/qrcode/${orderNo}`),
   orderStatus: (orderNo) => request(`/payment/order/${orderNo}/status`),
 
+  // ===== 功能订单（现金直付：固定价 / 人工报价） =====
+  createFeatureOrder: (payload) => request('/orders', { method: 'POST', body: payload }),
+  requestQuote: (payload) => request('/orders/request-quote', { method: 'POST', body: payload }),
+  payOrder: (orderNo, payload) => request(`/orders/${orderNo}/pay`, { method: 'POST', body: payload }),
+
   // ===== 我的订单 =====
   listOrders: (params) => request(`/orders?${new URLSearchParams(params).toString()}`),
   orderDetail: (orderNo) => request(`/orders/${orderNo}`),
-
-  // ===== 我的积分 =====
-  myPoints: () => request('/membership/status'),
-  myPointsLog: (params) => request(`/courses/log?${new URLSearchParams(params || {}).toString()}`),
-  myQuota: () => request('/courses/quota'),
 
   // ===== 课程（论文 1 对 1 指导） =====
   listCourses: () => request('/courses'),
@@ -244,15 +244,11 @@ export const api = {
   // ===== admin: 概览 =====
   adminOverview: () => request('/admin/overview'),
 
-  // ===== admin: 功能定价（每功能积分） =====
+  // ===== admin: 功能定价（现金直付：固定价 / 人工报价） =====
   adminListFeatures: () => request('/admin/features'),
   adminSaveFeature: (payload) => request('/admin/features', { method: 'POST', body: payload }),
   adminDeleteFeature: (key) => request(`/admin/features/${key}`, { method: 'DELETE' }),
 
-  // ===== admin: 积分套餐 =====
-  adminListPointsPackages: () => request('/admin/points-packages'),
-  adminSavePointsPackage: (payload) => request('/admin/points-packages', { method: 'POST', body: payload }),
-  adminDeletePointsPackage: (id) => request(`/admin/points-packages/${id}`, { method: 'DELETE' }),
   // 兼容旧接口
   adminListCourses: () => request('/admin/courses'),
   adminSaveCourse: (payload) => request('/admin/courses', { method: 'POST', body: payload }),
@@ -267,9 +263,10 @@ export const api = {
   supportUpdateCourseContact: (id, status) => request(`/support/course-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
   supportListCourses: () => request('/support/courses'),
 
-  // ===== admin: 订单 =====
+  // ===== admin: 订单（现金直付功能订单 + 课程/毕业作品订单） =====
   adminListOrders: (params) => request(`/admin/orders?${new URLSearchParams(params).toString()}`),
-  adminRefundOrder: (orderNo, reason) => request(`/admin/orders/${orderNo}/refund`, { method: 'POST', body: { reason } }),
+  adminQuoteOrder: (id, payload) => request(`/admin/orders/${id}/quote`, { method: 'POST', body: payload }),
+  adminMarkPaid: (id) => request(`/admin/orders/${id}/mark-paid`, { method: 'POST' }),
 
   // ===== admin: 模板 =====
   adminListTemplates: () => request('/admin/templates'),
@@ -291,10 +288,6 @@ export const api = {
   adminCreateUser: (payload) => request('/admin/users', { method: 'POST', body: payload }),
   adminUpdateUser: (id, payload) => request(`/admin/users/${id}`, { method: 'PUT', body: payload }),
   adminDeleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
-  adminAdjustPoints: (id, payload) => request(`/admin/users/${id}/points`, { method: 'PUT', body: payload }),
-  adminGrantPoints: (id, payload) => request(`/admin/users/${id}/grant-points`, { method: 'POST', body: payload }),
-  // 兼容旧接口
-  adminAdjustQuota: (id, payload) => request(`/admin/users/${id}/quota`, { method: 'PUT', body: payload }),
   adminGrantCourse: (id, courseId) => request(`/admin/users/${id}/grant-course`, { method: 'POST', body: { course_id: courseId } }),
 
   // ===== admin: 日志 =====
@@ -338,6 +331,23 @@ export const api = {
   deleteProject: (id) => request(`/projects/${id}`, { method: 'DELETE' }),
   previewProjectContext: (id, params) => request(`/projects/${id}/context-preview?${new URLSearchParams(params).toString()}`),
   listProjectTasks: (id, params) => request(`/projects/${id}/tasks?${new URLSearchParams(params).toString()}`),
+
+  // ===== 阶段三：大纲确认 + 分章节生成 =====
+  confirmOutline: (id) => request(`/projects/${id}/outline/confirm`, { method: 'POST' }),
+  getChapters: (id) => request(`/projects/${id}/chapters`),
+  generateChapters: (id, payload) => request(`/projects/${id}/chapters/generate`, { method: 'POST', body: payload }),
+  regenerateChapter: (id, chapterId, payload) => request(`/projects/${id}/chapters/${chapterId}/regenerate`, { method: 'POST', body: payload }),
+  editChapter: (id, chapterId, content) => request(`/projects/${id}/chapters/${chapterId}`, { method: 'PUT', body: { content } }),
+  mergeChapters: (id) => request(`/projects/${id}/chapters/merge`, { method: 'POST' }),
+
+  // ===== 数据图表 =====
+  uploadChart: (file) => upload('/charts/upload', file),
+  renderChart: (payload) => request('/charts/render', { method: 'POST', body: payload }),
+  listCharts: () => request('/charts'),
+  insertChart: (id, payload) => request(`/charts/${id}/insert`, { method: 'POST', body: payload }),
+
+  // ===== 降AI率（多版本） =====
+  aiReduceVersions: (payload) => request('/tools/ai-reduce-versions', { method: 'POST', body: payload }),
 
   // ===== 任务历史 =====
   listTasks: (params) => request(`/tasks?${new URLSearchParams(params).toString()}`),

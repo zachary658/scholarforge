@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
-import RechargeBanner from '../components/RechargeBanner.jsx';
-import { Sparkle, Copy, Download, Refresh, ArrowRight, Check, Crown, Gift } from '../components/Icons.jsx';
+import FeaturePay from '../components/FeaturePay.jsx';
+import { Sparkle, Copy, Download, Refresh, ArrowRight, Check } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 
 const modes = [
@@ -15,8 +14,7 @@ const modes = [
 const SAMPLE = '我觉得深度学习很重要，所以本文做研究来看一下这个方法。但是数据比较少，还有就是模型很复杂，所以结果不太稳定。';
 
 export default function Polish() {
-  const { refreshStatus, status } = useOutletContext();
-  const tool = useTool(refreshStatus);
+  const tool = useTool();
 
   const [mode, setMode] = useState('polish');
   const [direction, setDirection] = useState('zh2en');
@@ -30,25 +28,20 @@ export default function Polish() {
     };
   }, []);
 
-  const total = status?.total ?? 0;
-  const balance = status?.balance ?? 0;
-  const signup = status?.signup ?? 0;
-
-  // 兼容字段：免费路径返回 result，付费路径返回 content
   const r = tool.result;
   const output = r ? (r.content || r.result || '') : '';
   const changes = r?.changes || [];
   const issues = r?.issues || [];
 
-  const run = () => {
+  const run = (orderNo) => {
     if (!input.trim()) {
       tool.setError('请输入需要处理的文本');
       return;
     }
     tool.run(async () => {
-      if (mode === 'polish') return api.polish({ text: input });
-      if (mode === 'translate') return api.translate({ text: input, direction });
-      return api.grammar({ text: input });
+      if (mode === 'polish') return api.polish({ text: input, orderNo: orderNo || undefined });
+      if (mode === 'translate') return api.translate({ text: input, direction, orderNo: orderNo || undefined });
+      return api.grammar({ text: input, orderNo: orderNo || undefined });
     });
   };
 
@@ -84,13 +77,6 @@ export default function Polish() {
         <div>
           <h1 className="text-xl font-bold text-ink">润色与翻译</h1>
           <p className="mt-1 text-sm text-slate-500">学术润色、中英互译、语法纠错，提升论文表达质量</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="flex items-center gap-1"><Gift className="h-3.5 w-3.5 text-accent" />可用 {total}</span>
-          <span className="text-slate-300">|</span>
-          <span className="flex items-center gap-1"><Crown className="h-3 w-3 text-amber-500" />积分 {balance}</span>
-          <span className="text-slate-300">|</span>
-          <span>赠送 {signup}</span>
         </div>
       </div>
 
@@ -160,10 +146,6 @@ export default function Polish() {
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
                     {r.chargeType === 'paid' ? (
                       <span className="rounded bg-accent-50 px-1.5 py-0.5 font-medium text-accent">已付费 ¥{Number(r.amount || 0).toFixed(2)}</span>
-                    ) : r.chargeType === 'points' ? (
-                      <><Crown className="h-3.5 w-3.5 text-amber-500" /><span>已消耗积分</span></>
-                    ) : r.chargeType === 'free_signup' ? (
-                      <><Gift className="h-3.5 w-3.5 text-accent" /><span>已消耗 1 次赠送额度</span></>
                     ) : null}
                   </div>
                 )}
@@ -205,10 +187,8 @@ export default function Polish() {
 
       {/* 操作栏 */}
       <div className="mt-5 flex items-center justify-between">
-        <span className="text-xs text-slate-500">
-          {total > 0 ? `本次消耗 1 次额度 · 剩余 ${total} 次` : '当前无额度，本次按功能价格付费'}
-        </span>
-        <button onClick={run} disabled={tool.loading} className="btn-primary px-6 py-2.5">
+        <span className="text-xs text-slate-500">本功能为付费功能，先下单支付后再生成</span>
+        <button onClick={() => run()} disabled={tool.loading} className="btn-primary px-6 py-2.5">
           {tool.loading ? (
             <><Refresh className="h-4 w-4 animate-spin" /> 处理中…</>
           ) : (
@@ -223,8 +203,8 @@ export default function Polish() {
         <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tool.error}</div>
       )}
 
-      {tool.needRecharge && (
-        <RechargeBanner balance={tool.needRecharge.balance} needed={tool.needRecharge.needed} />
+      {tool.needOrder && (
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
       )}
     </div>
   );

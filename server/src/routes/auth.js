@@ -19,8 +19,7 @@ import {
   getRefreshTokenFromCookie,
 } from '../auth.js';
 import { authRequired } from '../middleware.js';
-import { getSetting, getSignupPointsConfig, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
-import { grantPoints } from '../services/billing.js';
+import { getSetting, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
 import { sendMail, buildPasswordResetEmail } from '../services/mailer.js';
 import logger from '../logger.js';
 
@@ -163,13 +162,7 @@ router.post('/register', registerLimiter, async (req, res) => {
     throw err;
   }
 
-  // 注册赠送积分
-  const { points } = getSignupPointsConfig();
-  if (points > 0) {
-    grantPoints(info.lastInsertRowid, points, 'signup_bonus', '新用户注册赠送积分');
-    logger.info('auth', `新用户注册赠送 ${points} 积分: ${normalizedEmail} (ip=${ip || 'unknown'}, device=${deviceFingerprint || 'unknown'})`);
-  }
-
+  // 注册成功（现金直付模式：不再赠送积分/额度）
   const user = safeUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid));
   const { accessToken, refreshToken } = await issueTokens(user);
   setRefreshCookie(res, refreshToken);
@@ -292,6 +285,14 @@ router.get('/me', authRequired, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   res.json({ user: safeUser(user) });
+});
+
+// 学术诚信承诺书同意（首次使用「全文生成/降AI率/降重」等敏感功能前强制勾选）
+router.post('/academic-integrity', authRequired, (req, res) => {
+  const { agreed } = req.body || {};
+  if (!agreed) return res.status(400).json({ error: '请先阅读并同意《学术诚信承诺书》' });
+  db.prepare("UPDATE users SET academic_integrity_agreed_at = strftime('%s','now') WHERE id = ?").run(req.user.id);
+  res.json({ ok: true, academic_integrity_agreed: true });
 });
 
 export default router;

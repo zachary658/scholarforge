@@ -29,9 +29,6 @@ db.exec(`
     name TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
-    free_quota INTEGER NOT NULL DEFAULT 0,
-    free_quota_expires_at INTEGER,
-    points INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
 
@@ -69,44 +66,20 @@ db.exec(`
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
 
-  -- 功能定价表（按功能积分收费）
+  -- 功能定价表（按功能现金收费：固定价格 fixed / 人工报价 quote）
   CREATE TABLE IF NOT EXISTS feature_prices (
     feature_key TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    price REAL NOT NULL DEFAULT 0,       -- 积分价格（原价格单位：元→积分，1元=10积分）
+    price REAL NOT NULL DEFAULT 0,       -- 现金价格（元）
     unit TEXT NOT NULL DEFAULT '次',
     category TEXT NOT NULL DEFAULT 'writing',
     description TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
     is_unlimited INTEGER NOT NULL DEFAULT 0,   -- 1=免费且不限次（如大纲生成）
+    pricing_mode TEXT NOT NULL DEFAULT 'fixed', -- fixed=固定价格 / quote=人工报价
     sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
-
-  -- 积分充值套餐
-  CREATE TABLE IF NOT EXISTS points_packages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    price REAL NOT NULL DEFAULT 0,          -- 支付金额（元）
-    points INTEGER NOT NULL DEFAULT 0,       -- 基础积分
-    bonus_points INTEGER NOT NULL DEFAULT 0, -- 赠送积分
-    is_active INTEGER NOT NULL DEFAULT 1,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-  );
-
-  -- 积分变动日志
-  CREATE TABLE IF NOT EXISTS points_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,                      -- signup_bonus / topup / consume / refund / admin_adjust
-    points INTEGER NOT NULL,                 -- 变动量（正=增加，负=减少）
-    balance_after INTEGER NOT NULL,          -- 变动后余额
-    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    description TEXT,
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_points_log_user ON points_log(user_id, created_at DESC);
 
   -- 课程表（论文 1 对 1 指导等服务型商品，管理员后台增删管理）
   CREATE TABLE IF NOT EXISTS courses (
@@ -135,22 +108,31 @@ db.exec(`
     purchased_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
 
-  -- 订单统一表（功能按次付费 / 购买课程）
+  -- 订单统一表（功能按次付费 / 课程 / 毕业作品）
+  -- type: feature=功能订单 / course=课程 / graduation=毕业作品
+  -- 功能订单状态：pending/awaiting_quote/quoted/paid/processing/completed/cancelled
   CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_no TEXT UNIQUE NOT NULL,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
-    target TEXT NOT NULL,
-    target_name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'feature',
+    target TEXT NOT NULL DEFAULT '',
+    target_name TEXT NOT NULL DEFAULT '',
     amount REAL NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
-    payment_method TEXT NOT NULL DEFAULT 'mock',
+    payment_method TEXT NOT NULL DEFAULT 'wechat', -- wechat / alipay / manual / mock
     payment_channel TEXT,
     transaction_id TEXT,
     paid_at INTEGER,
-    refunded_at INTEGER,
-    refund_reason TEXT,
+    item_type TEXT,
+    item_name TEXT,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    custom_requirements TEXT,
+    quoted_price REAL,
+    quote_note TEXT,
+    service_status TEXT NOT NULL DEFAULT 'pending', -- pending/processing/completed/failed
+    task_id INTEGER,
+    params_json TEXT,
     metadata TEXT,
     expires_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
@@ -273,23 +255,48 @@ function addColumnIfMissing(table, column, def) {
     db.exec(`ALTER TABLE ${safeTable} ADD COLUMN ${column} ${def}`);
   }
 }
-addColumnIfMissing('users', 'free_quota', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('users', 'free_quota_expires_at', 'INTEGER');
-addColumnIfMissing('users', 'points', 'INTEGER NOT NULL DEFAULT 0');
-// 注册风控：记录注册 IP 与设备指纹，防止同一 IP/设备反复注册薅赠送积分
+
+// 删除列（SQLite 3.35+ 支持 DROP COLUMN；用于移除积分/额度/退款等废弃字段）
+function dropColumnIfExists(table, column) {
+  const safeTable = table === 'references' ? '"references"' : table;
+  const cols = db.prepare(`PRAGMA table_info(${safeTable})`).all().map((c) => c.name);
+  if (cols.includes(column)) {
+    db.exec(`ALTER TABLE ${safeTable} DROP COLUMN ${column}`);
+  }
+}
+// 注册风控：记录注册 IP 与设备指纹，防止同一 IP/设备反复注册
 addColumnIfMissing('users', 'register_ip', 'TEXT');
 addColumnIfMissing('users', 'device_fingerprint', 'TEXT');
 try {
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_register_ip ON users(register_ip, created_at)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_device_fp ON users(device_fingerprint)');
 } catch {}
+// ===== 移除积分/额度/退款废弃字段（现金直付改造） =====
+dropColumnIfExists('users', 'points');
+dropColumnIfExists('users', 'free_quota');
+dropColumnIfExists('users', 'free_quota_expires_at');
+dropColumnIfExists('orders', 'refunded_at');
+dropColumnIfExists('orders', 'refund_reason');
+db.exec('DROP TABLE IF EXISTS points_log');
+db.exec('DROP TABLE IF EXISTS points_packages');
+
 addColumnIfMissing('orders', 'payment_channel', 'TEXT');
 addColumnIfMissing('orders', 'transaction_id', 'TEXT');
-addColumnIfMissing('orders', 'refund_reason', 'TEXT');
 addColumnIfMissing('orders', 'metadata', 'TEXT');
 addColumnIfMissing('orders', 'expires_at', 'INTEGER');
+// 现金直付订单字段
+addColumnIfMissing('orders', 'item_type', 'TEXT');
+addColumnIfMissing('orders', 'item_name', 'TEXT');
+addColumnIfMissing('orders', 'quantity', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('orders', 'custom_requirements', 'TEXT');
+addColumnIfMissing('orders', 'quoted_price', 'REAL');
+addColumnIfMissing('orders', 'quote_note', 'TEXT');
+addColumnIfMissing('orders', 'service_status', "TEXT NOT NULL DEFAULT 'pending'");
+addColumnIfMissing('orders', 'task_id', 'INTEGER');
+addColumnIfMissing('orders', 'params_json', 'TEXT');
 // 借鉴千笔写作：新增字段
 addColumnIfMissing('feature_prices', 'is_unlimited', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('feature_prices', 'pricing_mode', "TEXT NOT NULL DEFAULT 'fixed'");
 addColumnIfMissing('references', 'source', "TEXT NOT NULL DEFAULT 'web'");
 addColumnIfMissing('references', 'source_url', 'TEXT');
 addColumnIfMissing('references', 'source_db', 'TEXT');
@@ -325,6 +332,22 @@ addColumnIfMissing('courses', 'custom_formula_low', 'REAL');
 addColumnIfMissing('courses', 'custom_formula_mid', 'REAL');
 addColumnIfMissing('courses', 'custom_formula_high', 'REAL');
 addColumnIfMissing('courses', 'custom_urgent_multiplier', 'REAL');
+
+// ===== 阶段三：大纲强制确认 + 分章节草稿 + 数据图表 =====
+addColumnIfMissing('projects', 'outline_confirmed_at', 'INTEGER');
+addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS charts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT,
+    chart_type TEXT NOT NULL DEFAULT 'bar',
+    file_path TEXT NOT NULL,
+    spec_json TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_charts_user ON charts(user_id, created_at DESC);
+`);
 
 // ===== 毕业作品指导制作模块 =====
 db.exec(`
@@ -380,6 +403,9 @@ db.exec(`
 // ===== 认证安全：token_version 用于主动失效 JWT（修改密码/登出时 +1）=====
 addColumnIfMissing('users', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
 
+// ===== 合规：学术诚信承诺书同意时间（阶段四 4.1）=====
+addColumnIfMissing('users', 'academic_integrity_agreed_at', 'INTEGER');
+
 // ===== 认证安全：refresh_tokens 表（可吊销的 refresh token）=====
 db.exec(`
   CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -421,11 +447,6 @@ const settingsDefaults = {
   footer_text: '© 2026 ScholarForge · 仅供学术研究辅助使用',
   // 支付通道：mock / alipay / wechat / mixed
   payment_mode: 'mock',
-  // 注册赠送免费额度（兼容旧字段，新系统使用积分）
-  signup_free_quota: '3',
-  signup_free_quota_validity_days: '30',
-  // 注册赠送积分
-  signup_points: '30',
   // 注册风控：同 IP 24h 最大注册数 / 同设备指纹最大注册数（防批量注册白嫖）
   signup_ip_limit: '3',
   signup_device_limit: '1',
@@ -463,27 +484,27 @@ const settingsDefaults = {
 };
 for (const [k, v] of Object.entries(settingsDefaults)) seedSettings.run(k, v);
 
-// ========== 种子功能定价（积分制，1元=10积分）==========
+// ========== 种子功能定价（现金直付：price 单位为元） ==========
 const seedFeature = db.prepare(
   'INSERT OR IGNORE INTO feature_prices (feature_key, name, price, unit, category, description, is_active, is_unlimited, sort_order) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)'
 );
 const featuresSeed = [
   // writing_outline：大纲生成免费且不限次（引流策略）
   ['writing_outline', '大纲生成', 0, '次', 'writing', '生成论文结构大纲（免费不限次）', 1, 0],
-  ['writing_paragraph', '段落续写', 10, '次', 'writing', '续写正文段落', 0, 1],
-  ['writing_abstract', '摘要生成', 10, '次', 'writing', '提炼论文摘要', 0, 2],
-  ['writing_fulltext', '全文生成', 50, '次', 'writing', '生成完整论文', 0, 3],
-  ['proposal', '开题报告撰写', 80, '次', 'writing', '生成结构化开题报告', 0, 4],
-  ['polish', '学术润色', 20, '次', 'polish', '学术化语句润色', 0, 5],
-  ['translate', '中英翻译', 20, '次', 'translate', '中英双向翻译', 0, 6],
-  ['grammar', '语法纠错', 10, '次', 'grammar', '语法问题检测', 0, 7],
+  ['writing_paragraph', '段落续写', 2, '次', 'writing', '续写正文段落', 0, 1],
+  ['writing_abstract', '摘要生成', 2, '次', 'writing', '提炼论文摘要', 0, 2],
+  ['writing_fulltext', '全文生成', 35, '次', 'writing', '生成完整论文', 0, 3],
+  ['proposal', '开题报告撰写', 8, '次', 'writing', '生成结构化开题报告', 0, 4],
+  ['polish', '学术润色', 2, '次', 'polish', '学术化语句润色', 0, 5],
+  ['translate', '中英翻译', 2, '次', 'translate', '中英双向翻译', 0, 6],
+  ['grammar', '语法纠错', 2, '次', 'grammar', '语法问题检测', 0, 7],
   ['ref_search', '文献检索', 0, '次', 'reference', '检索学术文献', 1, 8],
   ['ref_format', '文献格式化', 0, '次', 'reference', '引用格式导出', 1, 9],
-  ['rewrite', '论文降重', 30, '次', 'polish', '同义改写降低重复率', 0, 11],
-  ['ai_reduce', '降AI率', 40, '次', 'polish', '智能改写消除AI痕迹，让文本更像人类写作', 0, 13],
-  ['literature_review', '文献综述', 60, '次', 'writing', '生成结构化文献综述，含主题分类与文献引用', 0, 14],
-  ['task_book', '任务书生成', 40, '次', 'writing', '生成毕业论文任务书，含进度安排与考核指标', 0, 15],
-  ['defense', '答辩PPT+演讲稿', 80, '次', 'writing', '生成答辩PPT大纲与配套演讲稿', 0, 16],
+  ['rewrite', '论文降重', 3, '次', 'polish', '同义改写降低重复率', 0, 11],
+  ['ai_reduce', '降AI率', 4, '次', 'polish', '智能改写消除AI痕迹，让文本更像人类写作', 0, 13],
+  ['literature_review', '文献综述', 6, '次', 'writing', '生成结构化文献综述，含主题分类与文献引用', 0, 14],
+  ['task_book', '任务书生成', 4, '次', 'writing', '生成毕业论文任务书，含进度安排与考核指标', 0, 15],
+  ['defense', '答辩PPT+演讲稿', 8, '次', 'writing', '生成答辩PPT大纲与配套演讲稿', 0, 16],
   ['journal', '期刊论文撰写', 100, '次', 'writing', '撰写符合期刊发表规范的完整学术论文', 0, 17],
 ];
 for (const f of featuresSeed) seedFeature.run(...f);
@@ -501,17 +522,17 @@ if (!migRow || migRow.value !== 'done') {
   db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(MIGRATION_KEY);
 }
 
-// ========== 种子积分充值套餐 ==========
-const packageCount = db.prepare('SELECT COUNT(*) as c FROM points_packages').get().c;
-if (packageCount === 0) {
-  const insertPkg = db.prepare(
-    'INSERT INTO points_packages (name, price, points, bonus_points, is_active, sort_order) VALUES (?, ?, ?, ?, 1, ?)'
-  );
-  insertPkg.run('10元充值', 10, 100, 0, 0);
-  insertPkg.run('30元充值', 30, 300, 20, 1);
-  insertPkg.run('50元充值', 50, 500, 50, 2);
-  insertPkg.run('100元充值', 100, 1000, 100, 3);
-  insertPkg.run('200元充值', 200, 2000, 300, 4);
+// ========== 一次性迁移：功能价格 积分 → 现金（现金直付改造，确定性写入） ==========
+// 历史数据中 feature_prices.price 为积分值，此处按功能键硬设为现金价（元），仅执行一次
+const PRICE_MIGRATION_KEY = 'migration_feature_cash_price_v1';
+const priceMigRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(PRICE_MIGRATION_KEY);
+if (!priceMigRow || priceMigRow.value !== 'done') {
+  const setPrice = db.prepare('UPDATE feature_prices SET price = ?, pricing_mode = ? WHERE feature_key = ?');
+  for (const f of featuresSeed) {
+    // f = [feature_key, name, price, unit, category, description, is_unlimited, sort_order]
+    setPrice.run(f[2], 'fixed', f[0]);
+  }
+  db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(PRICE_MIGRATION_KEY);
 }
 
 // ========== 种子课程（论文 1 对 1 指导） ==========

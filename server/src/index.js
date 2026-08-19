@@ -24,8 +24,8 @@ import docsRoutes from './routes/docs.js';
 import projectsRoutes from './routes/projects.js';
 import tasksRoutes from './routes/tasks.js';
 import graduationRoutes from './routes/graduation.js';
+import chartsRoutes from './routes/charts.js';
 import { closeExpiredOrders } from './services/payment.js';
-import { migrateFeatureMinPrices } from './services/billing.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
@@ -35,14 +35,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // 初始化管理员账号（异步：bcrypt hash 不阻塞事件循环）
 await ensureAdminAccount();
-
-// 一次性迁移：把功能定价低于下限的旧价格抬到最低积分（token 成本 × 5），幂等
-try {
-  const migrated = migrateFeatureMinPrices();
-  if (migrated > 0) logger.info('migrate', `功能定价下限迁移：抬价 ${migrated} 个功能`);
-} catch (err) {
-  logger.error('migrate', `功能定价迁移失败：${err.message}`);
-}
 
 // 生产环境安全自检：默认支付模式为 mock 且未配置任何真实通道时拒绝启动。
 // 防止"上线即免费支付"的配置事故（NODE_ENV=production 但 payment_mode 仍是默认 mock，用户可零成本绕过支付）
@@ -157,6 +149,7 @@ app.use('/api/docs', docsRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/graduation', graduationRoutes);
+app.use('/api/charts', chartsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
 

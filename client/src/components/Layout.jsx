@@ -1,11 +1,10 @@
 import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
-import { api } from '../lib/api.js';
 import {
-  Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Cart, Receipt, Layers,
-  Logout, Shield, ArrowRight, Gift, Crown, Menu, X, Refresh,
-  FileText, Activity, Cpu, Lock,
+  Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Receipt, Layers,
+  Logout, Shield, ArrowRight, Menu, X,
+  FileText, Activity, Cpu, Lock, ChartBar,
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 
@@ -39,7 +38,7 @@ const navGroups = [
   {
     label: '文本优化',
     items: [
-      { to: '/app/rewrite', label: '论文降重', icon: Refresh, end: false },
+      { to: '/app/rewrite', label: '论文降重', icon: Activity, end: false },
       { to: '/app/ai-reduce', label: '降AI率', icon: Shield, end: false },
       { to: '/app/polish', label: '润色翻译', icon: Globe, end: false },
     ],
@@ -48,8 +47,8 @@ const navGroups = [
     label: '资源与账户',
     items: [
       { to: '/app/references', label: '文献管理', icon: Book, end: false },
+      { to: '/app/charts', label: '数据图表', icon: ChartBar, end: false },
       { to: '/app/templates', label: '格式模板', icon: Layers, end: false },
-      { to: '/app/points', label: '积分充值', icon: Cart, end: false },
       { to: '/app/tasks', label: '我的任务', icon: Activity, end: false },
       { to: '/app/docs', label: '我的文档', icon: FileWord, end: false },
       { to: '/app/orders', label: '我的订单', icon: Receipt, end: false },
@@ -61,22 +60,8 @@ const navGroups = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [status, setStatus] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [changePwdOpen, setChangePwdOpen] = useState(false);
-
-  const loadStatus = async () => {
-    try {
-      const data = await api.getStatus();
-      setStatus(data);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  useEffect(() => {
-    loadStatus();
-  }, []);
 
   // 路由切换时关闭移动端侧边栏
   useEffect(() => {
@@ -100,8 +85,6 @@ export default function Layout() {
     await logout();
     navigate('/');
   };
-
-  const total = status?.balance ?? 0;
 
   const sidebar = (
     <aside className="flex h-full w-64 flex-col border-r border-slate-200 bg-white">
@@ -149,28 +132,6 @@ export default function Layout() {
           </div>
         ))}
       </nav>
-
-      {/* 积分状态卡片 */}
-      <div className="px-3 pb-3">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              <Gift className="h-3.5 w-3.5 text-accent" />
-              我的积分
-            </span>
-            <span className="text-sm font-bold text-accent">{total}</span>
-          </div>
-          <button
-            onClick={() => {
-              setSidebarOpen(false);
-              navigate('/app/points');
-            }}
-            className="mt-2.5 w-full rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-700"
-          >
-            {total > 0 ? '查看积分' : '积分充值'}
-          </button>
-        </div>
-      </div>
 
       {/* 用户信息 */}
       <div className="border-t border-slate-200 px-4 py-3">
@@ -235,12 +196,8 @@ export default function Layout() {
             <Logo className="h-6 w-6" />
             <span className="text-sm font-bold text-ink">ScholarForge</span>
           </div>
-          <div className="ml-auto flex items-center gap-1.5 rounded-md bg-accent-50 px-2 py-1 text-xs font-semibold text-accent">
-            <Gift className="h-3.5 w-3.5" />
-            {total}
-          </div>
         </div>
-        <Outlet context={{ refreshStatus: loadStatus, status }} />
+        <Outlet />
       </main>
 
       {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}

@@ -7,6 +7,11 @@ import logger from '../logger.js';
 
 const router = Router();
 
+// 检索结果缓存（相同关键词 24 小时，内存缓存；进程内有效）
+const searchCache = new Map(); // key -> { data, at }
+const SEARCH_CACHE_TTL = 24 * 3600 * 1000;
+const SEARCH_TIMEOUT = 10000; // 10 秒超时
+
 // OpenAlex API 邮箱（进入 polite pool，可经配置覆盖；默认使用产品邮箱）
 function getOpenAlexMailto() {
   return getSetting('openalex_mailto', 'scholarforge@test.com') || 'scholarforge@test.com';
@@ -103,10 +108,27 @@ router.get('/search', authRequired, async (req, res) => {
   const mailto = getOpenAlexMailto();
   const url = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&mailto=${encodeURIComponent(mailto)}&per-page=20`;
 
+  // 相同关键词缓存 24 小时
+  const cacheKey = q.toLowerCase();
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL) {
+    return res.json({ ...cached.data, cached: true });
+  }
+
+  const doFetch = () => fetch(url, {
+    headers: { 'User-Agent': `ScholarForge/1.0 (mailto:${mailto})` },
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT),
+  });
+
   try {
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': `ScholarForge/1.0 (mailto:${mailto})` },
-    });
+    let resp;
+    try {
+      resp = await doFetch();
+    } catch (firstErr) {
+      // 超时/网络错误：重试一次
+      logger.warn('references', `OpenAlex 首次请求失败，重试一次: ${firstErr && firstErr.message ? firstErr.message : String(firstErr)}`);
+      resp = await doFetch();
+    }
     if (!resp.ok) {
       return res.status(502).json({
         error: `OpenAlex 服务返回异常（${resp.status}），请稍后重试`,
@@ -117,11 +139,17 @@ router.get('/search', authRequired, async (req, res) => {
     const data = await resp.json();
     const works = Array.isArray(data.results) ? data.results : [];
     const results = works.map(mapWork);
-    return res.json({
+    const payload = {
       results,
       total: results.length,
       note: '所有检索结果均来自 OpenAlex 真实学术数据库，可溯源至原文链接',
-    });
+    };
+    searchCache.set(cacheKey, { data: payload, at: Date.now() });
+    if (searchCache.size > 200) {
+      const firstKey = searchCache.keys().next().value;
+      searchCache.delete(firstKey);
+    }
+    return res.json(payload);
   } catch (err) {
     logger.error('references', `OpenAlex 检索失败: ${err && err.message ? err.message : String(err)}`);
     return res.status(502).json({

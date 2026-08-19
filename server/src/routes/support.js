@@ -93,7 +93,11 @@ router.get('/overview', (_req, res) => {
   const courseOverdue = db.prepare("SELECT COUNT(*) as c FROM user_courses WHERE contact_status = 'pending' AND purchased_at < ?").get(overdueTs).c;
   const gpOverdue = db.prepare("SELECT COUNT(*) as c FROM graduation_project_orders WHERE contact_status = 'pending' AND purchased_at < ?").get(overdueTs).c;
 
-  res.json({ pending, contacted, completed, total, gpPending, gpContacted, gpCompleted, gpTotal, courseToday, gpToday, gpQuotePending, courseOverdue, gpOverdue });
+  // 功能订单（现金直付）统计：待报价订单数、今日新增订单
+  const featureAwaitingQuote = db.prepare("SELECT COUNT(*) as c FROM orders WHERE type = 'feature' AND status = 'awaiting_quote'").get().c;
+  const featureToday = db.prepare("SELECT COUNT(*) as c FROM orders WHERE type = 'feature' AND created_at >= ?").get(todayTs).c;
+
+  res.json({ pending, contacted, completed, total, gpPending, gpContacted, gpCompleted, gpTotal, courseToday, gpToday, gpQuotePending, courseOverdue, gpOverdue, featureAwaitingQuote, featureToday });
 });
 
 // ========== 毕业作品订单管理（客服只读） ==========

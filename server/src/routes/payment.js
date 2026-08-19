@@ -70,7 +70,7 @@ router.post('/mock/:orderNo', authRequired, async (req, res) => {
     // 已支付，幂等返回
     return res.json({ ok: true, order, alreadyPaid: true });
   }
-  if (order.status !== 'pending') return res.status(400).json({ error: `订单状态 ${order.status}，不能支付` });
+  if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: `订单状态 ${order.status}，不能支付` });
 
   try {
     await markOrderPaid({ orderNo: order.order_no, transactionId: `mock_${Date.now()}`, channel: 'mock' });
@@ -86,7 +86,7 @@ router.get('/alipay/qrcode/:orderNo', authRequired, async (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(req.params.orderNo);
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
-  if (order.status !== 'pending') return res.status(400).json({ error: '订单状态不允许支付' });
+  if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
   try {
     const qrCode = await createAlipayQrcode(order);
     res.json({ qr_code: qrCode, order_no: order.order_no, amount: order.amount });
@@ -100,7 +100,7 @@ router.get('/wechat/qrcode/:orderNo', authRequired, async (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(req.params.orderNo);
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
-  if (order.status !== 'pending') return res.status(400).json({ error: '订单状态不允许支付' });
+  if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
   try {
     const codeUrl = await createWechatQrcode(order);
     res.json({ code_url: codeUrl, order_no: order.order_no, amount: order.amount });

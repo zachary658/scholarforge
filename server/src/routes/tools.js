@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import { runAI } from '../ai-service.js';
-import { formatReference } from '../ai.js';
+import { formatReference, rewriteText } from '../ai.js';
 import { logUsage } from '../usage.js';
 import logger from '../logger.js';
 import { getFeaturePrice } from '../config-store.js';
-import { isFreeUnlimitedFeature, getPointsBalance, consumePoints, refundPoints, estimatePointsForCall, estimateCallTokens, tokensToPoints, estimateEffectivePoints, getFeatureFixedPoints } from '../services/billing.js';
+import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
 import { saveTask, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
+import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
 
 const router = Router();
@@ -24,20 +26,27 @@ function checkTextLen(text, max, label = '文本') {
   return null;
 }
 
-// 工具调用前置：按大模型 token 用量预估积分，决定是直接执行（免费/积分充足）还是需要充值
-// 返回 { mode: 'unlimited' | 'points' | 'need_points', points?, balance?, needed? }
-function resolveBilling(userId, featureKey, toolType, params) {
+// 学术诚信：敏感功能（全文生成/降AI率/降重）使用前必须已同意承诺书
+function hasAgreedAcademicIntegrity(userId) {
+  const u = db.prepare('SELECT academic_integrity_agreed_at FROM users WHERE id = ?').get(userId);
+  return !!u?.academic_integrity_agreed_at;
+}
+
+// 工具调用前置：现金直付模式下，免费功能直接放行，收费功能需关联已支付订单
+function resolveBilling(userId, featureKey, orderNo) {
   // 免费且不限次的功能（如大纲生成、文献检索），直接放行
   if (isFreeUnlimitedFeature(featureKey)) {
     return { ok: true, mode: 'unlimited' };
   }
-  // 有效积分 = max(管理员固定定价, 按 token 动态估算)，保证不亏本
-  const points = estimateEffectivePoints(featureKey, toolType, params);
-  const balance = getPointsBalance(userId);
-  if (balance >= points) {
-    return { ok: true, mode: 'points', points, balance };
-  }
-  return { ok: true, mode: 'need_points', balance, needed: points };
+  if (!orderNo) return { ok: true, mode: 'need_order' };
+  const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(orderNo);
+  if (!order) return { ok: false, error: '订单不存在' };
+  if (order.user_id !== userId) return { ok: false, error: '无权使用该订单' };
+  if (order.type !== 'feature') return { ok: false, error: '订单类型不正确' };
+  if (order.item_type !== featureKey) return { ok: false, error: '订单与功能不匹配' };
+  if (order.status !== 'paid') return { ok: false, error: '订单未支付' };
+  if (!['pending', 'processing'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
+  return { ok: true, mode: 'order', order };
 }
 
 // 通用：执行 AI 调用 + 失败时退款/取消订单
@@ -46,11 +55,15 @@ function resolveBilling(userId, featureKey, toolType, params) {
 // generateDocxOptions: 写作类/开题报告等需要输出 Word 时传入
 // generatePptxOptions: 答辩等需要输出 .pptx 时传入（与 generateDocxOptions 互斥）
 // transformContent: 可选，对 AI 输出做后处理（如引用/图表占位符替换），在 docx/pptx 生成前执行
-async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null }) {
+async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null }) {
   // 安全：校验工作区归属（防跨用户上下文注入），非本人工作区直接拒绝
   if (projectId && !isProjectOwned(userId, projectId)) {
     throw new Error('无权访问该工作区');
   }
+
+  // 内容安全审核：用户输入（调用 AI 前）
+  const inCheck = await checkContent(inputText || JSON.stringify(params || {}));
+  if (!inCheck.safe) throw new Error(inCheck.reason);
 
   // 注入工作区上下文（如果有 projectId）—— 先注入，让 token 预估包含上下文用量
   let contextSummary = '';
@@ -62,50 +75,29 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     }
   }
 
-  const bill = resolveBilling(userId, featureKey, toolType, params);
+  const bill = resolveBilling(userId, featureKey, orderNo);
   if (!bill.ok) throw new Error(bill.error);
 
-  let chargeType = 'none';
-  let amount = 0;
-  let deductedPoints = 0;
-  let estimatedTokens = null;
-  let order = null; // 积分制不再创建按次订单，保留变量供日志关联
-
-  if (bill.mode === 'unlimited') {
-    // 免费且不限次（如大纲生成），不消耗积分
-    chargeType = 'unlimited';
-  } else if (bill.mode === 'points') {
-    // 积分充足，按预估 token 用量扣减
-    try {
-      consumePoints(userId, bill.points, `${featureKey}：${action}（按大模型用量计费）`);
-      deductedPoints = bill.points;
-      chargeType = 'points';
-      estimatedTokens = estimateCallTokens(toolType, params);
-    } catch (err) {
-      return {
-        needPoints: true,
-        balance: getPointsBalance(userId),
-        needed: bill.points,
-        message: err.message,
-      };
-    }
-  } else {
-    // 积分不足，提示充值
-    return {
-      needPoints: true,
-      balance: bill.balance || 0,
-      needed: bill.needed,
-    };
+  if (bill.mode === 'need_order') {
+    const fp = getFeaturePrice(featureKey);
+    return { needOrder: true, featureKey, itemType: featureKey, amount: fp ? fp.price : 0 };
   }
+
+  let chargeType = bill.mode === 'unlimited' ? 'unlimited' : 'paid';
+  let amount = bill.order ? bill.order.amount : 0;
+  const order = bill.order || null;
 
   // 执行 AI
   let aiResult;
   try {
     aiResult = await runAI(toolType, params);
+    // 内容安全审核：AI 输出（违规则不返回结果）
+    const outCheck = await checkContent(aiResult.content);
+    if (!outCheck.safe) throw new Error(outCheck.reason);
   } catch (err) {
-    // 失败退款
-    if (deductedPoints > 0) {
-      refundPoints(userId, deductedPoints, `AI 调用失败退款：${featureKey}`);
+    // 失败标记订单服务失败
+    if (order) {
+      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
     }
     // 记录失败日志
     try {
@@ -130,32 +122,6 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   // 后处理：在 docx/pptx 生成前，对 AI 输出做占位符替换（引用编号 + 数据图表由代码生成）
   if (typeof transformContent === 'function') {
     aiResult.content = await transformContent(aiResult.content, aiResult);
-  }
-
-  // 计费结算：按真实 token 用量多退少补（仅真实 AI 且本次预扣了积分）
-  // 最终应扣 = max(固定定价, 真实用量动态积分)，与预扣的差额多退少补
-  let settledPoints = deductedPoints;
-  if (deductedPoints > 0 && aiResult.promptTokens != null && aiResult.tokens > 0) {
-    const actualCompletionTokens = aiResult.completionTokens || Math.max(0, aiResult.tokens - aiResult.promptTokens);
-    const actualDynamic = tokensToPoints(aiResult.promptTokens, actualCompletionTokens);
-    const finalPoints = Math.max(getFeatureFixedPoints(featureKey), actualDynamic);
-    const diff = finalPoints - deductedPoints;
-    if (diff > 0) {
-      // 实际用量超出预估，补扣差额；余额不足不阻断已成功的调用，但清零余额防止继续白嫖
-      try {
-        consumePoints(userId, diff, `${featureKey}：用量结算补扣`);
-        settledPoints = finalPoints;
-      } catch (err) {
-        logger.error('tools', `结算补扣失败，欠费 ${diff} 积分，清零余额: ${err.message}`);
-        db.prepare('UPDATE users SET points = 0 WHERE id = ?').run(userId);
-      }
-    } else if (diff < 0) {
-      // 预估偏高，退还差额
-      refundPoints(userId, -diff, `${featureKey}：用量结算退款`);
-      settledPoints = finalPoints;
-    } else {
-      settledPoints = finalPoints;
-    }
   }
 
   // 生成 Word（仅写作类 / 开题报告）
@@ -231,6 +197,11 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     logger.error('tools', `task-save failed: ${err.message}`);
   }
 
+  // 标记订单服务完成
+  if (order) {
+    db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+  }
+
   return {
     content: aiResult.content,
     model: { name: aiResult.model.name, usedRealAI: aiResult.usedRealAI },
@@ -241,20 +212,32 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     orderId: order?.id || null,
     taskId,
     projectId: projectId || null,
-    points: getPointsBalance(userId),
-    deductedPoints: settledPoints,
-    estimatedTokens,
-    estimatedPoints: deductedPoints,
+    orderNo: order?.order_no || null,
   };
 }
 
 // ========== AI 论文写作（输出 Word） ==========
 router.post('/writing', authRequired, async (req, res) => {
-  const { type, topic, field, template_id, projectId } = req.body || {};
+  const { type, topic, field, template_id, projectId, orderNo } = req.body || {};
   if (!type) return res.status(400).json({ error: '请选择写作类型' });
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
   if (lenErr) return res.status(400).json({ error: lenErr });
+
+  // 大纲强制确认：全文生成必须先有已确认的大纲（关联论文工作区）
+  if (type === 'fulltext') {
+    if (!hasAgreedAcademicIntegrity(req.user.id)) {
+      return res.status(403).json({ error: '请先阅读并同意《学术诚信承诺书》', needAcademicIntegrity: true });
+    }
+    if (!projectId) {
+      return res.status(400).json({ error: '全文生成前请先创建论文工作区并确认大纲', needConfirmOutline: true });
+    }
+    const proj = db.prepare('SELECT id, outline_confirmed_at FROM projects WHERE id = ? AND user_id = ?').get(projectId, req.user.id);
+    if (!proj) return res.status(404).json({ error: '工作区不存在' });
+    if (!proj.outline_confirmed_at) {
+      return res.status(400).json({ error: '请先在论文工作区确认大纲后再生成全文', needConfirmOutline: true });
+    }
+  }
 
   const featureKey = `writing_${type}`;
   const fp = getFeaturePrice(featureKey);
@@ -303,9 +286,10 @@ router.post('/writing', authRequired, async (req, res) => {
         const { replaceCitePlaceholders, replaceChartPlaceholders } = await import('../services/paper-distillation.js');
         return replaceChartPlaceholders(replaceCitePlaceholders(content, sourceRefs), sourceBenchmarks);
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
 
     // 全文生成后审校：引用一致性 / 结构完整性 / 明显幻觉（仅真实 AI 下执行，免费但记录 token 成本）
@@ -347,8 +331,7 @@ router.post('/writing', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '生成失败：' + err.message });
@@ -357,9 +340,9 @@ router.post('/writing', authRequired, async (req, res) => {
 
 // ========== 智能写作（检索→蒸馏→原创生成）==========
 // 流程：多源检索同方向论文 → MapReduce提取框架 → 融合大纲 → 原创生成
-// 计费：检索和框架提取免费，生成阶段按 writing_outline + writing_fulltext 计费
+// 现金直付：需关联已支付的 literature_review 订单
 router.post('/smart-writing', authRequired, async (req, res) => {
-  const { topic, field, keywords, projectId } = req.body || {};
+  const { topic, field, keywords, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   if (!field) return res.status(400).json({ error: '请选择学科领域' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
@@ -370,52 +353,19 @@ router.post('/smart-writing', authRequired, async (req, res) => {
     return res.status(403).json({ error: '无权访问该工作区' });
   }
 
-  // 计费：多源检索免费，但框架提取 + 大纲生成会调用大模型，按预估用量扣积分，防止白嫖
-  // 使用 literature_review 的输出预算作为保守估算（框架提取 + 大纲生成的实际输出通常更低）
-  // 有效积分 = max(literature_review 固定定价, 动态 token 估算)
-  const billingParams = { topic, field, keywords };
-  const points = estimateEffectivePoints('literature_review', 'literature_review', billingParams);
-  const balance = getPointsBalance(req.user.id);
-  if (balance < points) {
-    return res.json({ needPoints: true, balance, needed: points });
+  // 现金直付：智能写作需关联已支付订单
+  const bill = resolveBilling(req.user.id, 'literature_review', orderNo);
+  if (!bill.ok) return res.status(400).json({ error: bill.error });
+  if (bill.mode === 'need_order') {
+    const fp = getFeaturePrice('literature_review');
+    return res.json({ needOrder: true, itemType: 'literature_review', amount: fp ? fp.price : 0 });
   }
-
-  let deductedPoints = 0;
-  try {
-    consumePoints(req.user.id, points, 'smart_writing：智能写作框架提取与大纲生成');
-    deductedPoints = points;
-  } catch (err) {
-    return res.json({ needPoints: true, balance: getPointsBalance(req.user.id), needed: points });
-  }
+  const order = bill.order || null;
 
   try {
     const { smartWriting } = await import('../services/paper-distillation.js');
     const result = await smartWriting({ topic, field, keywords, projectId, userId: req.user.id });
 
-    // 按真实 token 用量结算（多退少补），修正原先按固定输出预算预估的偏差
-    let settledPoints = deductedPoints;
-    const rt = result.tokens || { promptTokens: 0, completionTokens: 0 };
-    if (rt.promptTokens > 0 || rt.completionTokens > 0) {
-      const actualDynamic = tokensToPoints(rt.promptTokens, rt.completionTokens);
-      const finalPoints = Math.max(getFeatureFixedPoints('literature_review'), actualDynamic);
-      const diff = finalPoints - deductedPoints;
-      if (diff > 0) {
-        try {
-          consumePoints(req.user.id, diff, 'smart_writing：真实用量结算补扣');
-          settledPoints = finalPoints;
-        } catch (e) {
-          logger.error('tools', `智能写作结算补扣失败，欠费 ${diff} 积分，清零余额: ${e.message}`);
-          db.prepare('UPDATE users SET points = 0 WHERE id = ?').run(req.user.id);
-        }
-      } else if (diff < 0) {
-        refundPoints(req.user.id, -diff, 'smart_writing：真实用量结算退款');
-        settledPoints = finalPoints;
-      } else {
-        settledPoints = finalPoints;
-      }
-    }
-
-    // 保存任务记录（检索+蒸馏+大纲，已按积分计费）
     const taskId = saveTask({
       userId: req.user.id,
       projectId: projectId || null,
@@ -428,10 +378,15 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       contextSummary: `参考 ${result.framework.paperCount} 篇论文，数据源：${result.framework.sources_used?.join('、')}`,
       modelName: 'multi-source',
       tokens: 0,
-      chargeType: 'points',
-      amount: settledPoints,
+      chargeType: order ? 'paid' : 'unlimited',
+      amount: order ? order.amount : 0,
+      orderId: order?.id || null,
       status: 'success',
     });
+
+    if (order) {
+      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+    }
 
     res.json({
       ok: true,
@@ -441,25 +396,22 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       benchmarks: result.benchmarks,
       degraded: result.degraded,
       taskId,
-      chargeType: 'points',
-      deductedPoints: settledPoints,
-      points: getPointsBalance(req.user.id),
+      chargeType: order ? 'paid' : 'unlimited',
+      amount: order ? order.amount : 0,
+      orderNo: order?.order_no || null,
       message: result.degraded
         ? `已检索 ${result.references.length} 篇相关论文（当前为模板降级模式，配置真实 AI 后框架提取与生成更精准）`
         : `已检索 ${result.references.length} 篇相关论文并提取研究框架，可基于此大纲生成分章节论文`,
     });
   } catch (err) {
-    // 失败退款
-    if (deductedPoints > 0) {
-      refundPoints(req.user.id, deductedPoints, '智能写作失败退款');
-    }
+    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
     res.status(500).json({ error: '智能写作失败：' + err.message });
   }
 });
 
 // ========== 开题报告撰写（输出 Word） ==========
 router.post('/proposal', authRequired, async (req, res) => {
-  const { topic, field, direction, keywords, objective, method, innovation, template_id, projectId } = req.body || {};
+  const { topic, field, direction, keywords, objective, method, innovation, template_id, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   if (!field) return res.status(400).json({ error: '请选择学科领域' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(objective, MAX_INPUT_CHARS, '研究目标') || checkTextLen(method, MAX_INPUT_CHARS, '研究方法');
@@ -485,9 +437,10 @@ router.post('/proposal', authRequired, async (req, res) => {
         title: `${topic}开题报告`,
         template,
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       content: result.content,
@@ -498,8 +451,7 @@ router.post('/proposal', authRequired, async (req, res) => {
       chargeType: result.chargeType,
       amount: result.amount,
       orderId: result.orderId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '开题报告生成失败：' + err.message });
@@ -508,7 +460,7 @@ router.post('/proposal', authRequired, async (req, res) => {
 
 // ========== 论文润色（纯文本） ==========
 router.post('/polish', authRequired, async (req, res) => {
-  const { text, projectId } = req.body || {};
+  const { text, projectId, orderNo } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要润色的文本' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -522,9 +474,10 @@ router.post('/polish', authRequired, async (req, res) => {
       params: { text },
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     // 模板引擎时附润色说明
     let changes = [];
@@ -542,8 +495,7 @@ router.post('/polish', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '润色失败：' + err.message });
@@ -552,7 +504,7 @@ router.post('/polish', authRequired, async (req, res) => {
 
 // ========== 中英翻译（纯文本） ==========
 router.post('/translate', authRequired, async (req, res) => {
-  const { text, direction, projectId } = req.body || {};
+  const { text, direction, projectId, orderNo } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要翻译的文本' });
   if (!['zh2en', 'en2zh'].includes(direction)) return res.status(400).json({ error: '请选择翻译方向' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
@@ -567,9 +519,10 @@ router.post('/translate', authRequired, async (req, res) => {
       params: { text, direction },
       projectId: projectId || null,
       inputText: `[${direction}] ${text.slice(0, 2000)}`,
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       result: result.content,
@@ -581,8 +534,7 @@ router.post('/translate', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '翻译失败：' + err.message });
@@ -591,7 +543,7 @@ router.post('/translate', authRequired, async (req, res) => {
 
 // ========== 语法纠错（纯文本） ==========
 router.post('/grammar', authRequired, async (req, res) => {
-  const { text, projectId } = req.body || {};
+  const { text, projectId, orderNo } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要检查的文本' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -605,9 +557,10 @@ router.post('/grammar', authRequired, async (req, res) => {
       params: { text },
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     // 始终基于原始输入做纯 JS 语法统计检测（内置模式与真实 AI 模式均附加）
     let issues = [];
@@ -627,8 +580,7 @@ router.post('/grammar', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '检查失败：' + err.message });
@@ -644,34 +596,38 @@ router.post('/format-reference', authRequired, (req, res) => {
 
 // ========== 论文降重（纯文本） ==========
 router.post('/rewrite', authRequired, async (req, res) => {
-  const { text, projectId } = req.body || {};
+  const { text, projectId, orderNo } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要降重的文本' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
+  if (!hasAgreedAcademicIntegrity(req.user.id)) {
+    return res.status(403).json({ error: '请先阅读并同意《学术诚信承诺书》', needAcademicIntegrity: true });
+  }
+
   try {
+    // 降重优化：先用内置学术同义词库替换常见连接词，再交给大模型重组句子
+    const synonymDetail = rewriteText({ text });
     const result = await executeWithBilling({
       userId: req.user.id,
       featureKey: 'rewrite',
       toolType: 'rewrite',
       action: 'rewrite',
-      params: { text },
+      params: { text: synonymDetail.result },
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     // 内置模板引擎时附带降重修改记录
-    let changes = [];
-    if (!result.model.usedRealAI) {
-      const { rewriteText } = await import('../ai.js');
-      const detail = rewriteText({ text });
-      changes = detail.changes;
-    }
+    const changes = result.model.usedRealAI ? [] : synonymDetail.changes;
+    const coherence = checkCoherence(result.content);
     res.json({
       result: result.content,
       changes,
+      coherence,
       model: result.model,
       tokens: result.tokens,
       chargeType: result.chargeType,
@@ -679,8 +635,7 @@ router.post('/rewrite', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '降重失败：' + err.message });
@@ -689,10 +644,14 @@ router.post('/rewrite', authRequired, async (req, res) => {
 
 // ========== 降AI率（借鉴千笔） ==========
 router.post('/ai-reduce', authRequired, async (req, res) => {
-  const { text, projectId } = req.body || {};
+  const { text, projectId, orderNo } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要降AI的文本' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
   if (lenErr) return res.status(400).json({ error: lenErr });
+
+  if (!hasAgreedAcademicIntegrity(req.user.id)) {
+    return res.status(403).json({ error: '请先阅读并同意《学术诚信承诺书》', needAcademicIntegrity: true });
+  }
 
   try {
     const result = await executeWithBilling({
@@ -703,9 +662,10 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       params: { text },
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       result: result.content,
@@ -716,17 +676,82 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '降AI率失败：' + err.message });
   }
 });
 
+// ========== 降AI率（多版本，供用户选择） ==========
+router.post('/ai-reduce-versions', authRequired, async (req, res) => {
+  const { text, projectId, orderNo } = req.body || {};
+  if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要降AI的文本' });
+  const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
+  if (lenErr) return res.status(400).json({ error: lenErr });
+
+  if (!hasAgreedAcademicIntegrity(req.user.id)) {
+    return res.status(403).json({ error: '请先阅读并同意《学术诚信承诺书》', needAcademicIntegrity: true });
+  }
+
+  const bill = resolveBilling(req.user.id, 'ai_reduce', orderNo);
+  if (!bill.ok) return res.status(400).json({ error: bill.error });
+  if (bill.mode === 'need_order') {
+    const fp = getFeaturePrice('ai_reduce');
+    return res.json({ needOrder: true, itemType: 'ai_reduce', amount: fp ? fp.price : 0 });
+  }
+  const order = bill.order || null;
+
+  try {
+    const data = await aiReduceVersions(text);
+    const taskId = saveTask({
+      userId: req.user.id,
+      projectId: projectId || null,
+      toolType: 'ai_reduce',
+      action: 'ai_reduce_versions',
+      inputText: text.slice(0, 2000),
+      outputText: (data.versions || []).join('\n---\n').slice(0, 5000),
+      params: {},
+      modelName: data.model?.name || '',
+      tokens: data.tokens,
+      chargeType: order ? 'paid' : 'unlimited',
+      amount: order ? order.amount : 0,
+      orderId: order?.id || null,
+      status: 'success',
+    });
+    if (order) {
+      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+    }
+    logUsage({
+      userId: req.user.id,
+      toolType: 'ai_reduce',
+      action: 'ai_reduce_versions',
+      model: data.model,
+      inputChars: text.length,
+      outputChars: (data.versions || []).join('').length,
+      tokens: data.tokens,
+      status: 'success',
+      orderId: order?.id,
+      chargeType: order ? 'paid' : 'unlimited',
+      amount: order ? order.amount : 0,
+    });
+    res.json({
+      versions: data.versions,
+      coherence: data.coherence,
+      model: data.model,
+      tokens: data.tokens,
+      taskId,
+      orderNo: order?.order_no || null,
+    });
+  } catch (err) {
+    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
+    res.status(500).json({ error: '降AI率失败：' + err.message });
+  }
+});
+
 // ========== 文献综述生成（输出 Word） ==========
 router.post('/literature-review', authRequired, async (req, res) => {
-  const { topic, field, keywords, years, template_id, projectId } = req.body || {};
+  const { topic, field, keywords, years, template_id, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写研究主题' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '主题');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -749,9 +774,10 @@ router.post('/literature-review', authRequired, async (req, res) => {
         title: `${topic}文献综述`,
         template,
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       content: result.content,
@@ -764,8 +790,7 @@ router.post('/literature-review', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '文献综述生成失败：' + err.message });
@@ -774,7 +799,7 @@ router.post('/literature-review', authRequired, async (req, res) => {
 
 // ========== 任务书生成（输出 Word） ==========
 router.post('/task-book', authRequired, async (req, res) => {
-  const { topic, student_name, student_id, field, advisor, template_id, projectId } = req.body || {};
+  const { topic, student_name, student_id, field, advisor, template_id, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -797,9 +822,10 @@ router.post('/task-book', authRequired, async (req, res) => {
         title: `${topic}任务书`,
         template,
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       content: result.content,
@@ -812,8 +838,7 @@ router.post('/task-book', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '任务书生成失败：' + err.message });
@@ -822,7 +847,7 @@ router.post('/task-book', authRequired, async (req, res) => {
 
 // ========== 答辩PPT+演讲稿生成（输出 .pptx） ==========
 router.post('/defense', authRequired, async (req, res) => {
-  const { topic, field, research_content, innovation, duration, projectId } = req.body || {};
+  const { topic, field, research_content, innovation, duration, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(research_content, MAX_INPUT_CHARS, '研究内容');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -839,9 +864,10 @@ router.post('/defense', authRequired, async (req, res) => {
       generatePptxOptions: {
         title: `${topic}答辩PPT`,
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       content: result.content,
@@ -854,8 +880,7 @@ router.post('/defense', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '答辩材料生成失败：' + err.message });
@@ -864,7 +889,7 @@ router.post('/defense', authRequired, async (req, res) => {
 
 // ========== 期刊论文撰写（输出 Word） ==========
 router.post('/journal', authRequired, async (req, res) => {
-  const { topic, field, research_content, method, journal_type, template_id, projectId } = req.body || {};
+  const { topic, field, research_content, method, journal_type, template_id, projectId, orderNo } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(research_content, MAX_INPUT_CHARS, '研究内容');
   if (lenErr) return res.status(400).json({ error: lenErr });
@@ -887,9 +912,10 @@ router.post('/journal', authRequired, async (req, res) => {
         title: topic,
         template,
       },
+      orderNo: orderNo || null,
     });
-    if (result.needPoints) {
-      return res.json({ needPoints: true, feature: result.feature, balance: result.balance, needed: result.needed });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
     }
     res.json({
       content: result.content,
@@ -902,8 +928,7 @@ router.post('/journal', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
-      points: result.points,
-      deductedPoints: result.deductedPoints,
+      orderNo: result.orderNo,
     });
   } catch (err) {
     res.status(500).json({ error: '期刊论文生成失败：' + err.message });

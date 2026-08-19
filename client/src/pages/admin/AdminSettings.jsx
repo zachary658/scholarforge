@@ -4,7 +4,13 @@ import { Refresh } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import { useConfirm } from '../../components/ConfirmModal.jsx';
 
-const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key'];
+const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key', 'aliyun_access_key_secret', 'yidun_secret_key'];
+
+const CONTENT_SAFETY_PROVIDERS = [
+  { value: 'local', label: '本地敏感词过滤（默认）' },
+  { value: 'aliyun', label: '阿里云内容安全' },
+  { value: 'yidun', label: '网易易盾' },
+];
 
 const PAYMENT_MODES = [
   { value: 'mock', label: '模拟支付（测试）' },
@@ -17,11 +23,12 @@ const defaultSettings = {
   site_name: '',
   site_description: '',
   footer_text: '',
+  icp_number: '',
+  icp_link: '',
   announcement: '',
   service_wechat: '',
   service_wechat_qrcode: '',
   registration_open: true,
-  signup_points: 30,
   signup_ip_limit: 3,
   signup_device_limit: 1,
   ai_input_cost_per_million: 1,
@@ -51,6 +58,12 @@ const defaultSettings = {
   wechat_notify_url: '',
   wechat_platform_public_key: '',
   wechat_platform_serial_no: '',
+  content_safety_provider: 'local',
+  aliyun_access_key_id: '',
+  aliyun_access_key_secret: '',
+  yidun_secret_id: '',
+  yidun_secret_key: '',
+  yidun_business_id: '',
 };
 
 export default function AdminSettings() {
@@ -74,12 +87,13 @@ export default function AdminSettings() {
       next.site_name = s.site_name ?? '';
       next.site_description = s.site_description ?? '';
       next.footer_text = s.footer_text ?? '';
+      next.icp_number = s.icp_number ?? '';
+      next.icp_link = s.icp_link ?? '';
       next.announcement = s.announcement ?? '';
       next.service_wechat = s.service_wechat ?? '';
       next.service_wechat_qrcode = s.service_wechat_qrcode ?? '';
-      // 注册与赠送积分
+      // 注册
       next.registration_open = parseBool(s.registration_open);
-      next.signup_points = s.signup_points ?? 30;
       next.signup_ip_limit = s.signup_ip_limit ?? 3;
       next.signup_device_limit = s.signup_device_limit ?? 1;
       // AI 计费
@@ -109,6 +123,11 @@ export default function AdminSettings() {
       next.wechat_serial_no = s.wechat_serial_no ?? '';
       next.wechat_notify_url = s.wechat_notify_url ?? '';
       next.wechat_platform_serial_no = s.wechat_platform_serial_no ?? '';
+      // 内容安全审核
+      next.content_safety_provider = s.content_safety_provider ?? 'local';
+      next.aliyun_access_key_id = s.aliyun_access_key_id ?? '';
+      next.yidun_secret_id = s.yidun_secret_id ?? '';
+      next.yidun_business_id = s.yidun_business_id ?? '';
       // 敏感字段：已配置则留空并标记
       SENSITIVE_FIELDS.forEach((f) => {
         const v = s[f] ?? '';
@@ -145,10 +164,11 @@ export default function AdminSettings() {
         site_name: settings.site_name,
         site_description: settings.site_description,
         footer_text: settings.footer_text,
+        icp_number: settings.icp_number,
+        icp_link: settings.icp_link,
         announcement: settings.announcement,
         service_wechat: settings.service_wechat,
         registration_open: settings.registration_open ? 'true' : 'false',
-        signup_points: Number(settings.signup_points) || 0,
         signup_ip_limit: Number(settings.signup_ip_limit) || 0,
         signup_device_limit: Number(settings.signup_device_limit) || 0,
         ai_input_cost_per_million: Number(settings.ai_input_cost_per_million) || 0,
@@ -173,6 +193,10 @@ export default function AdminSettings() {
         wechat_serial_no: settings.wechat_serial_no,
         wechat_notify_url: settings.wechat_notify_url,
         wechat_platform_serial_no: settings.wechat_platform_serial_no,
+        content_safety_provider: settings.content_safety_provider,
+        aliyun_access_key_id: settings.aliyun_access_key_id,
+        yidun_secret_id: settings.yidun_secret_id,
+        yidun_business_id: settings.yidun_business_id,
       };
       // 敏感字段：仅当用户输入了新值才发送
       SENSITIVE_FIELDS.forEach((f) => {
@@ -274,6 +298,28 @@ export default function AdminSettings() {
                 placeholder="© 2026 ScholarForge"
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">ICP 备案号</label>
+                <input
+                  className="input"
+                  value={settings.icp_number}
+                  onChange={(e) => update('icp_number', e.target.value)}
+                  placeholder="如：沪ICP备XXXXXXXX号"
+                />
+                <p className="mt-1.5 text-xs text-slate-400">留空则页脚不展示备案信息</p>
+              </div>
+              <div>
+                <label className="label">ICP 备案链接</label>
+                <input
+                  className="input"
+                  value={settings.icp_link}
+                  onChange={(e) => update('icp_link', e.target.value)}
+                  placeholder="https://beian.miit.gov.cn/"
+                />
+                <p className="mt-1.5 text-xs text-slate-400">留空默认跳转工信部备案查询</p>
+              </div>
+            </div>
             <div>
               <label className="label">客服微信</label>
               <input
@@ -355,21 +401,11 @@ export default function AdminSettings() {
                 />
               </button>
             </div>
-            <div>
-              <label className="label">注册赠送积分</label>
-              <input
-                type="number"
-                className="input max-w-[200px]"
-                value={settings.signup_points}
-                onChange={(e) => update('signup_points', e.target.value)}
-              />
-              <p className="mt-1.5 text-xs text-slate-400">新用户注册时赠送的积分数量（默认 30）</p>
-            </div>
 
             <div className="my-3 border-t border-slate-100" />
 
             <div>
-              <div className="text-sm font-medium text-ink">注册风控（防批量注册白嫖积分）</div>
+              <div className="text-sm font-medium text-ink">注册风控（防批量注册）</div>
               <p className="mt-1 text-xs text-slate-400">0 表示不限制</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -733,6 +769,89 @@ export default function AdminSettings() {
               />
               <p className="mt-1.5 text-xs text-slate-400">{configured.wechat_platform_public_key ? '当前已配置，留空将保持不变' : '回调验签必需，尚未配置'}</p>
             </div>
+          </div>
+        </div>
+
+        {/* 内容安全审核 */}
+        <div className="card p-6">
+          <h3 className="text-sm font-semibold text-ink">内容安全审核</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            对用户输入与 AI 生成内容进行文本审核，拦截违法/违规信息。本地敏感词过滤始终启用作为兜底；配置第三方服务后由其接管。
+          </p>
+          <div className="mt-4 space-y-4">
+            <div>
+              <label className="label">审核服务</label>
+              <select
+                className="input"
+                value={settings.content_safety_provider}
+                onChange={(e) => update('content_safety_provider', e.target.value)}
+              >
+                {CONTENT_SAFETY_PROVIDERS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {settings.content_safety_provider === 'aliyun' && (
+              <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+                <div className="text-xs font-medium text-slate-500">阿里云内容安全（AccessKey）</div>
+                <div>
+                  <label className="label">AccessKey ID</label>
+                  <input
+                    className="input font-mono text-xs"
+                    value={settings.aliyun_access_key_id}
+                    onChange={(e) => update('aliyun_access_key_id', e.target.value)}
+                    placeholder="阿里云 AccessKey ID"
+                  />
+                </div>
+                <div>
+                  <label className="label">AccessKey Secret</label>
+                  <input
+                    type="password"
+                    className="input font-mono text-xs"
+                    value={settings.aliyun_access_key_secret}
+                    onChange={(e) => update('aliyun_access_key_secret', e.target.value)}
+                    placeholder={configured.aliyun_access_key_secret ? '已配置，留空不修改' : '阿里云 AccessKey Secret'}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400">{configured.aliyun_access_key_secret ? '当前已配置，留空将保持不变' : '尚未配置'}</p>
+                </div>
+              </div>
+            )}
+
+            {settings.content_safety_provider === 'yidun' && (
+              <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+                <div className="text-xs font-medium text-slate-500">网易易盾（文本反垃圾）</div>
+                <div>
+                  <label className="label">Secret ID</label>
+                  <input
+                    className="input font-mono text-xs"
+                    value={settings.yidun_secret_id}
+                    onChange={(e) => update('yidun_secret_id', e.target.value)}
+                    placeholder="易盾 Secret ID"
+                  />
+                </div>
+                <div>
+                  <label className="label">Secret Key</label>
+                  <input
+                    type="password"
+                    className="input font-mono text-xs"
+                    value={settings.yidun_secret_key}
+                    onChange={(e) => update('yidun_secret_key', e.target.value)}
+                    placeholder={configured.yidun_secret_key ? '已配置，留空不修改' : '易盾 Secret Key'}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400">{configured.yidun_secret_key ? '当前已配置，留空将保持不变' : '尚未配置'}</p>
+                </div>
+                <div>
+                  <label className="label">业务 ID（Business ID）</label>
+                  <input
+                    className="input font-mono text-xs"
+                    value={settings.yidun_business_id}
+                    onChange={(e) => update('yidun_business_id', e.target.value)}
+                    placeholder="易盾业务 ID（可留空）"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -177,6 +177,8 @@ export function getProject(projectId, userId) {
   if (!p) return null;
   try { p.outline = JSON.parse(p.outline_json || '[]'); } catch { p.outline = []; }
   delete p.outline_json;
+  try { p.chapters = JSON.parse(p.chapters_json || '[]'); } catch { p.chapters = []; }
+  delete p.chapters_json;
   return p;
 }
 
@@ -191,6 +193,8 @@ export function listProjects(userId) {
   for (const p of projects) {
     try { p.outline = JSON.parse(p.outline_json || '[]'); } catch { p.outline = []; }
     delete p.outline_json;
+    try { p.chapters = JSON.parse(p.chapters_json || '[]'); } catch { p.chapters = []; }
+    delete p.chapters_json;
   }
   return projects;
 }
@@ -216,6 +220,14 @@ export function deleteProject(projectId, userId) {
   // 软删除：归档而非物理删除，保留关联任务
   const r = db.prepare("UPDATE projects SET status = 'archived', updated_at = ? WHERE id = ? AND user_id = ?").run(now(), projectId, userId);
   return r.changes > 0;
+}
+
+// 确认（或重新确认）大纲：记录确认时间，全文生成前强制校验
+export function confirmOutline(projectId, userId) {
+  const p = db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  if (!p) return null;
+  db.prepare('UPDATE projects SET outline_confirmed_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), projectId);
+  return getProject(projectId, userId);
 }
 
 // ========== 上下文组装 ==========
