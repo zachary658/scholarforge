@@ -1,4 +1,5 @@
 import db from './db.js';
+import { MODEL_CATALOG, getModelPreset, getModelKeyFromEnv } from './model-catalog.js';
 
 // 读取单个设置
 export function getSetting(key, fallback = '') {
@@ -127,14 +128,14 @@ export function invalidatePaymentCache() {
 }
 
 // 判断某通道是否已配置（用于前端展示「可用通道」）
-// 安全：mock 通道仅在无真实通道或显式 mock 模式下开放，防止生产环境支付绕过
+// 安全：mock 通道仅限非生产环境（且未配置真实通道或显式 mock 模式）时暴露；
+// 生产环境永不返回 mock，避免默认 payment_mode=mock 时被用于零成本绕过支付
 export function getAvailableChannels() {
   const cfg = getPaymentConfig();
   const channels = [];
   if (cfg.alipay.appid && cfg.alipay.privateKey && cfg.alipay.publicKey) channels.push('alipay');
   if (cfg.wechat.appid && cfg.wechat.mchId && cfg.wechat.apiV3Key && cfg.wechat.privateKey) channels.push('wechat');
-  // 仅当无真实通道，或显式 mock 模式时才暴露 mock（避免生产环境被用户主动指定 mock 绕过支付）
-  if (channels.length === 0 || cfg.mode === 'mock') channels.push('mock');
+  if (process.env.NODE_ENV !== 'production' && (channels.length === 0 || cfg.mode === 'mock')) channels.push('mock');
   return channels;
 }
 
@@ -212,15 +213,50 @@ export function getCourseQuoteConfig(course = null) {
   };
 }
 
-// 默认 AI 模型
+// 默认 AI 模型（预设目录 + 环境变量 Key，Key 不落库）
+// 返回结构与旧 ai_models 记录一致，兼容 ai-service / paper-distillation / has_real_ai 判断
 export function getDefaultModel() {
-  return db.prepare('SELECT * FROM ai_models WHERE is_default = 1 AND is_active = 1').get()
-    || db.prepare('SELECT * FROM ai_models WHERE is_active = 1 ORDER BY id ASC').get()
-    || null;
+  const defaultKey = getSetting('ai_default_model', '');
+  const preset = defaultKey ? getModelPreset(defaultKey) : null;
+  if (!preset) return null;
+  const apiKey = getModelKeyFromEnv(preset);
+  if (!apiKey) return null;
+  return {
+    id: null,
+    key: preset.key,
+    name: preset.name,
+    provider: preset.provider,
+    base_url: preset.base_url,
+    api_key: apiKey,
+    model_name: preset.model_name,
+    temperature: preset.temperature ?? 0.7,
+    max_tokens: preset.max_tokens || 2048,
+    is_default: 1,
+    is_active: 1,
+  };
 }
 
+// 预设模型状态列表（供管理后台「选择模型」展示；不含 Key 明文，仅返回是否已配置）
 export function getModels() {
-  return db.prepare('SELECT * FROM ai_models ORDER BY is_default DESC, id ASC').all();
+  const defaultKey = getSetting('ai_default_model', '');
+  return MODEL_CATALOG.map((m) => {
+    const keyConfigured = !!getModelKeyFromEnv(m);
+    return {
+      id: m.key,
+      key: m.key,
+      name: m.name,
+      provider: m.provider,
+      base_url: m.base_url,
+      model_name: m.model_name,
+      temperature: m.temperature ?? 0.7,
+      max_tokens: m.max_tokens || 2048,
+      env_key: m.env_key,
+      api_key_configured: keyConfigured,
+      api_key_masked: keyConfigured ? `已通过 ${m.env_key} 环境变量配置` : `未配置（需设置 ${m.env_key}）`,
+      is_default: defaultKey === m.key ? 1 : 0,
+      is_active: 1,
+    };
+  });
 }
 
 // 公开站点信息（不含敏感项）

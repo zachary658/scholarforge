@@ -28,6 +28,7 @@ import { closeExpiredOrders } from './services/payment.js';
 import { migrateFeatureMinPrices } from './services/billing.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
+import { getPaymentConfig, getAvailableChannels } from './config-store.js';
 import logger from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,22 @@ try {
   if (migrated > 0) logger.info('migrate', `功能定价下限迁移：抬价 ${migrated} 个功能`);
 } catch (err) {
   logger.error('migrate', `功能定价迁移失败：${err.message}`);
+}
+
+// 生产环境安全自检：默认支付模式为 mock 且未配置任何真实通道时拒绝启动。
+// 防止"上线即免费支付"的配置事故（NODE_ENV=production 但 payment_mode 仍是默认 mock，用户可零成本绕过支付）
+if (process.env.NODE_ENV === 'production') {
+  const payCfg = getPaymentConfig();
+  const channels = getAvailableChannels();
+  const hasRealChannel = channels.some((c) => c !== 'mock');
+  if (payCfg.mode === 'mock' || !hasRealChannel) {
+    logger.error(
+      'config',
+      '生产环境必须配置真实支付通道：请在管理后台将支付模式设置为 alipay/wechat/mixed 并填写完整密钥。' +
+      '当前 payment_mode=mock 且无可用真实通道，拒绝启动以防止模拟支付绕过。'
+    );
+    process.exit(1);
+  }
 }
 
 const app = express();

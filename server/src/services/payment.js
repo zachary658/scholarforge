@@ -42,15 +42,20 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
   const channels = getAvailableChannels();
 
   // 选择通道：优先用户指定 → 管理员配置 mode → mock 兜底
-  // 安全：非 mock 模式下，拒绝用户主动指定 mock 通道（防止支付绕过）
-  if (channel === 'mock' && cfg.mode !== 'mock') {
+  // 安全：生产环境禁用 mock 通道（防止默认 mock 模式下零成本绕过支付）；
+  //       非 mock 模式下拒绝用户主动指定 mock 通道（防止支付绕过）
+  const isProd = process.env.NODE_ENV === 'production';
+  if (channel === 'mock' && (cfg.mode !== 'mock' || isProd)) {
     throw new Error('模拟支付通道未开放');
   }
   let useChannel = channel;
   if (!useChannel || !channels.includes(useChannel)) {
+    const real = channels.find((c) => c !== 'mock');
     if (cfg.mode === 'alipay' && channels.includes('alipay')) useChannel = 'alipay';
     else if (cfg.mode === 'wechat' && channels.includes('wechat')) useChannel = 'wechat';
-    else if (cfg.mode === 'mixed') useChannel = channels.find((c) => c !== 'mock') || 'mock';
+    else if (real) useChannel = real;
+    // 生产环境可用通道列表已排除 mock，无真实通道时直接报错，绝不回落 mock
+    else if (isProd) throw new Error('未配置可用的支付通道，请联系管理员');
     else useChannel = 'mock';
   }
 
@@ -107,8 +112,8 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
   }
 
   if (amount === 0) {
-    // 0 元订单：仅在 mock 模式允许，生产环境拒绝（防止支付绕过）
-    if (cfg.mode !== 'mock') {
+    // 0 元订单：仅限非生产环境且 mock 模式允许，生产环境拒绝（防止支付绕过）
+    if (cfg.mode !== 'mock' || process.env.NODE_ENV === 'production') {
       throw new Error('不支持0元订单，请联系管理员');
     }
     // 直接标记为 paid，并立即发放权益（包裹在事务内，保证一致性）
@@ -246,6 +251,17 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
     if (order.type === 'graduation') {
       const meta = JSON.parse(order.metadata || '{}');
       if (meta.gp_order_id) {
+        // 支付时重新校验报价与审批状态（防报价变更/驳回后仍按旧价成交，审批流绕过）
+        const gp = db.prepare(
+          'SELECT user_id, status, quote_status, quoted_price FROM graduation_project_orders WHERE id = ?'
+        ).get(meta.gp_order_id);
+        if (!gp) throw new Error('毕业作品订单不存在，支付已取消');
+        if (gp.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
+        if (gp.status !== 'pending') throw new Error(`毕业作品订单状态 ${gp.status}，不能支付`);
+        if (gp.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
+        if (gp.quoted_price == null || Number(gp.quoted_price) !== Number(order.amount)) {
+          throw new Error('报价已变更，请重新发起支付');
+        }
         db.prepare('UPDATE graduation_project_orders SET status = ?, order_id = ? WHERE id = ?')
           .run('paid', order.id, meta.gp_order_id);
       }
@@ -262,6 +278,15 @@ export function closeExpiredOrders() {
     `UPDATE orders SET status = 'closed' WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < ?`
   ).run(now());
   return r.changes;
+}
+
+// 报价变更/审批状态变化时，作废该毕业作品订单关联的所有待支付 orders
+// 防止用户按旧报价成交（配合 markOrderPaid 支付时重新校验，形成双重防线）
+export function closePendingGraduationOrders(gpOrderId) {
+  if (!gpOrderId) return 0;
+  return db.prepare(
+    "UPDATE orders SET status = 'closed' WHERE status = 'pending' AND type = 'graduation' AND target = ?"
+  ).run(String(gpOrderId)).changes;
 }
 
 // 退款（管理员手动 / 自动退款）

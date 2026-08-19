@@ -69,22 +69,6 @@ db.exec(`
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
 
-  -- AI 模型配置
-  CREATE TABLE IF NOT EXISTS ai_models (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    base_url TEXT NOT NULL,
-    api_key TEXT NOT NULL DEFAULT '',
-    model_name TEXT NOT NULL,
-    temperature REAL NOT NULL DEFAULT 0.7,
-    max_tokens INTEGER NOT NULL DEFAULT 2048,
-    is_default INTEGER NOT NULL DEFAULT 0,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-  );
-
   -- 功能定价表（按功能积分收费）
   CREATE TABLE IF NOT EXISTS feature_prices (
     feature_key TEXT PRIMARY KEY,
@@ -582,14 +566,6 @@ if (gpCount === 0) {
   insertGP.run('PLC 生产线自动化', 'PLC设计', '生产线自动化方案指导：多站联动控制、变频调速、气动控制、故障诊断。', 3999, '5-7 周', '本科', 12);
   insertGP.run('电子电路设计', '其他', '电子电路毕业设计指导：原理图设计、PCB 布局布线、元器件选型、焊接调试。', 2999, '4-6 周', '本科', 13);
   insertGP.run('嵌入式系统开发', '其他', '嵌入式系统设计指导：单片机编程、传感器接口、RTOS 系统、样机调试。', 3499, '4-6 周', '本科', 14);
-}
-
-// ========== 默认 AI 模型 ==========
-const modelCount = db.prepare('SELECT COUNT(*) as c FROM ai_models').get().c;
-if (modelCount === 0) {
-  db.prepare(
-    'INSERT INTO ai_models (name, provider, base_url, api_key, model_name, temperature, max_tokens, is_default, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run('内置模板引擎（无需配置）', 'builtin', '', '', 'builtin', 0.7, 2048, 1, 1);
 }
 
 // ========== 预置高校论文格式模板（借鉴千笔写作：内置学校模板） ==========

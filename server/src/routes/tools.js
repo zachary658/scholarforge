@@ -7,7 +7,7 @@ import logger from '../logger.js';
 import { getFeaturePrice } from '../config-store.js';
 import { isFreeUnlimitedFeature, getPointsBalance, consumePoints, refundPoints, estimatePointsForCall, estimateCallTokens, tokensToPoints, estimateEffectivePoints, getFeatureFixedPoints } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, buildProjectContext } from '../services/task-store.js';
+import { saveTask, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import db from '../db.js';
 
 const router = Router();
@@ -47,6 +47,11 @@ function resolveBilling(userId, featureKey, toolType, params) {
 // generatePptxOptions: 答辩等需要输出 .pptx 时传入（与 generateDocxOptions 互斥）
 // transformContent: 可选，对 AI 输出做后处理（如引用/图表占位符替换），在 docx/pptx 生成前执行
 async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null }) {
+  // 安全：校验工作区归属（防跨用户上下文注入），非本人工作区直接拒绝
+  if (projectId && !isProjectOwned(userId, projectId)) {
+    throw new Error('无权访问该工作区');
+  }
+
   // 注入工作区上下文（如果有 projectId）—— 先注入，让 token 预估包含上下文用量
   let contextSummary = '';
   if (projectId) {
@@ -358,6 +363,11 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   if (!field) return res.status(400).json({ error: '请选择学科领域' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
   if (lenErr) return res.status(400).json({ error: lenErr });
+
+  // 安全：校验工作区归属（防跨用户上下文注入）
+  if (projectId && !isProjectOwned(req.user.id, projectId)) {
+    return res.status(403).json({ error: '无权访问该工作区' });
+  }
 
   // 计费：多源检索免费，但框架提取 + 大纲生成会调用大模型，按预估用量扣积分，防止白嫖
   // 使用 literature_review 的输出预算作为保守估算（框架提取 + 大纲生成的实际输出通常更低）

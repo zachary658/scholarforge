@@ -62,7 +62,7 @@ npm install
 ```bash
 cd server
 cp .env.example .env
-# 编辑 .env 填写 AI 密钥等（不配置也可运行，使用内置模板）
+# 编辑 .env 配置服务信息；AI 模型 Key 通过环境变量 LLM_API_KEY_XXX 注入（见 .env.example），不配置则使用内置模板
 ```
 
 ### 3. 启动服务

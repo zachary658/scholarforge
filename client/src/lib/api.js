@@ -274,12 +274,10 @@ export const api = {
   adminListTemplates: () => request('/admin/templates'),
   adminDeleteTemplate: (id) => request(`/admin/templates/${id}`, { method: 'DELETE' }),
 
-  // ===== admin: 模型 =====
+  // ===== admin: 模型（预设目录 + 环境变量 Key，后台仅支持选择默认模型与测试连接） =====
   adminListModels: () => request('/admin/models'),
-  adminCreateModel: (payload) => request('/admin/models', { method: 'POST', body: payload }),
-  adminUpdateModel: (id, payload) => request(`/admin/models/${id}`, { method: 'PUT', body: payload }),
-  adminDeleteModel: (id) => request(`/admin/models/${id}`, { method: 'DELETE' }),
-  adminTestModel: (id) => request(`/admin/models/${id}/test`, { method: 'POST' }),
+  adminSetDefaultModel: (key) => request('/admin/models/default', { method: 'PUT', body: { key } }),
+  adminTestModel: (key) => request(`/admin/models/${key}/test`, { method: 'POST' }),
 
   // ===== admin: 系统设置 =====
   adminGetSettings: () => request('/admin/settings'),

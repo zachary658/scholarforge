@@ -22,6 +22,14 @@ const MAX_TASK_PARAMS = 20000;
 
 // ========== AI 任务历史 ==========
 
+// 校验工作区归属：projectId 为空视为通过；非本人所有返回 false
+// 安全：防止跨用户把任务写入他人工作区（存储型 prompt 注入 / 上下文污染）
+export function isProjectOwned(userId, projectId) {
+  if (!projectId) return true;
+  const row = db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  return !!row;
+}
+
 // 保存一次 AI 调用的完整记录
 export function saveTask({
   userId,
@@ -41,6 +49,12 @@ export function saveTask({
   usageLogId = null,
   status = 'success',
 }) {
+  // 安全（纵深防御）：任务只能写入本人工作区；跨用户 projectId 直接丢弃关联，
+  // 防止任何调用路径（含未来新增）把内容注入他人项目上下文
+  if (projectId && !isProjectOwned(userId, projectId)) {
+    logger.warn('task-store', `rejected cross-user project_id=${projectId} for user=${userId}, task=${toolType}/${action}`);
+    projectId = null;
+  }
   // 自动生成标题：取输入前 30 字
   const autoTitle = title || (inputText ? inputText.slice(0, 30).replace(/\n/g, ' ') : `${toolType}-${action}`);
   // 截断超长文本，防 DB 行过大（输入/输出各上限 MAX_TASK_CHARS，params 上限 MAX_TASK_PARAMS）
@@ -253,15 +267,16 @@ export function buildProjectContext(projectId, userId, { currentToolType = '', c
 
   // 3. 同工作区最近的相关任务输出
   // 智能选取：优先选同工具类型的，其次选最近的
+  // 安全：必须按 user_id 过滤，防止他人注入到本工作区的任务污染上下文
   const recentTasks = db.prepare(
     `SELECT tool_type, action, title, output_text, created_at
      FROM ai_tasks
-     WHERE project_id = ? AND status = 'success' AND output_text != ''
+     WHERE project_id = ? AND user_id = ? AND status = 'success' AND output_text != ''
      ORDER BY
        CASE WHEN tool_type = ? THEN 0 ELSE 1 END,
        created_at DESC
      LIMIT 5`
-  ).all(projectId, currentToolType);
+  ).all(projectId, userId, currentToolType);
 
   if (recentTasks.length > 0) {
     parts.push('');

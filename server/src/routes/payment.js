@@ -43,15 +43,16 @@ router.post('/create-order', authRequired, (req, res) => {
 
 // 模拟支付：直接标记为 paid 并执行功能订单
 // 安全限制（多层防御）：
-//   1. 生产环境 + 非 mock 模式 → 完全禁用
+//   1. 生产环境 → 无条件完全禁用（无论 payment_mode 如何配置，防默认 mock 绕过）
 //   2. 非生产环境但已配置真实支付通道且未显式 mock 模式 → 禁用（防演示/预发环境误用 mock 绕过支付）
 //   3. 订单 payment_channel 必须为 mock（创建订单时已校验，此处再核一次）
 router.post('/mock/:orderNo', authRequired, async (req, res) => {
-  const paymentMode = getSetting('payment_mode', 'mock');
-  // 生产环境且支付模式非 mock 时，完全禁用模拟支付端点
-  if (process.env.NODE_ENV === 'production' && paymentMode !== 'mock') {
+  // 生产环境一律禁用模拟支付端点（无论 payment_mode 如何配置），
+  // 防止默认 mock 模式下被用于零成本绕过支付
+  if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ error: '模拟支付已禁用' });
   }
+  const paymentMode = getSetting('payment_mode', 'mock');
   // 收紧：已配置真实支付通道但未显式 mock 模式时，禁用模拟支付（即便非生产环境）
   if (paymentMode !== 'mock') {
     const channels = getAvailableChannels();

@@ -4,7 +4,7 @@ import { Refresh } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import { useConfirm } from '../../components/ConfirmModal.jsx';
 
-const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key'];
+const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key'];
 
 const PAYMENT_MODES = [
   { value: 'mock', label: '模拟支付（测试）' },
@@ -49,6 +49,8 @@ const defaultSettings = {
   wechat_serial_no: '',
   wechat_private_key: '',
   wechat_notify_url: '',
+  wechat_platform_public_key: '',
+  wechat_platform_serial_no: '',
 };
 
 export default function AdminSettings() {
@@ -106,6 +108,7 @@ export default function AdminSettings() {
       next.wechat_mch_id = s.wechat_mch_id ?? '';
       next.wechat_serial_no = s.wechat_serial_no ?? '';
       next.wechat_notify_url = s.wechat_notify_url ?? '';
+      next.wechat_platform_serial_no = s.wechat_platform_serial_no ?? '';
       // 敏感字段：已配置则留空并标记
       SENSITIVE_FIELDS.forEach((f) => {
         const v = s[f] ?? '';
@@ -169,6 +172,7 @@ export default function AdminSettings() {
         wechat_mch_id: settings.wechat_mch_id,
         wechat_serial_no: settings.wechat_serial_no,
         wechat_notify_url: settings.wechat_notify_url,
+        wechat_platform_serial_no: settings.wechat_platform_serial_no,
       };
       // 敏感字段：仅当用户输入了新值才发送
       SENSITIVE_FIELDS.forEach((f) => {
@@ -708,6 +712,26 @@ export default function AdminSettings() {
                 placeholder="https://your-domain.com/api/payment/wechat/notify"
               />
               <p className="mt-1.5 text-xs text-slate-400">微信支付异步通知地址，需为公网可访问的 HTTPS URL</p>
+            </div>
+            <div>
+              <label className="label">微信平台证书序列号</label>
+              <input
+                className="input font-mono text-xs"
+                value={settings.wechat_platform_serial_no}
+                onChange={(e) => update('wechat_platform_serial_no', e.target.value)}
+                placeholder="微信支付平台证书序列号（回调验签必需）"
+              />
+              <p className="mt-1.5 text-xs text-slate-400">在微信支付商户平台「账户中心 → API 安全 → 平台证书」查看；未配置时回调将被拒绝</p>
+            </div>
+            <div>
+              <label className="label">微信平台公钥</label>
+              <textarea
+                className="input min-h-[80px] resize-none font-mono text-xs"
+                value={settings.wechat_platform_public_key}
+                onChange={(e) => update('wechat_platform_public_key', e.target.value)}
+                placeholder={configured.wechat_platform_public_key ? '已配置，留空不修改' : '粘贴微信支付平台公钥（PEM）'}
+              />
+              <p className="mt-1.5 text-xs text-slate-400">{configured.wechat_platform_public_key ? '当前已配置，留空将保持不变' : '回调验签必需，尚未配置'}</p>
             </div>
           </div>
         </div>

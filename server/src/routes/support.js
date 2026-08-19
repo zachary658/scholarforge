@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { supportRequired } from '../middleware.js';
 import db from '../db.js';
+import { closePendingGraduationOrders } from '../services/payment.js';
 
 const router = Router();
 
@@ -185,6 +186,8 @@ router.post('/graduation-orders/:id/quote', (req, res) => {
   // 客服报价进入待审批状态，需管理员审批后生效
   db.prepare('UPDATE graduation_project_orders SET quoted_price = ?, quote_status = ? WHERE id = ?')
     .run(price, 'pending', row.id);
+  // 报价变更：作废用户已创建的待支付订单，防止按旧价成交
+  closePendingGraduationOrders(row.id);
   res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'pending' });
 });
 

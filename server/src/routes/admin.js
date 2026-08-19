@@ -19,7 +19,8 @@ import {
   invalidatePaymentCache,
 } from '../config-store.js';
 import { hashPassword } from '../auth.js';
-import { refundOrder } from '../services/payment.js';
+import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
+import { refundOrder, closePendingGraduationOrders } from '../services/payment.js';
 import { grantPoints, getPointsBalance, getFeatureMinPoints } from '../services/billing.js';
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
@@ -437,99 +438,47 @@ router.delete('/templates/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ========== AI 模型管理 ==========
+// ========== AI 模型管理（预设目录 + 环境变量 Key） ==========
+// 安全设计：API Key 一律通过环境变量注入（LLM_API_KEY_<KEY 大写>，见 model-catalog.js），
+// 不存储在数据库、不返回给前端。管理后台只做「选择默认模型」与「测试连接」，
+// 不提供 Key 的录入/编辑/存储，从源头杜绝 Key 因拖库/配置失误泄露或被前端截获。
+// 新增模型：在 model-catalog.js 追加预设 + 配置对应环境变量即可，无需改动本接口。
+
 router.get('/models', (_req, res) => {
-  const models = getModels().map((m) => ({
-    ...m,
-    api_key_masked: m.api_key ? m.api_key.slice(0, 6) + '••••••' + m.api_key.slice(-4) : '',
-  }));
-  res.json({ models });
+  // getModels() 已脱敏：仅返回是否已配置（api_key_configured / api_key_masked），不含 Key 明文
+  res.json({ models: getModels() });
 });
 
-router.post('/models', (req, res) => {
-  const { name, provider, base_url, api_key, model_name, temperature, max_tokens, is_default, is_active } = req.body || {};
-  if (!name || !provider || !model_name) return res.status(400).json({ error: '请填写名称、提供商和模型名' });
-  if (provider !== 'builtin' && !base_url) return res.status(400).json({ error: '请填写 API Base URL' });
-
-  const tx = db.transaction(() => {
-    if (is_default) db.prepare('UPDATE ai_models SET is_default = 0').run();
-    const info = db.prepare(
-      `INSERT INTO ai_models (name, provider, base_url, api_key, model_name, temperature, max_tokens, is_default, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      name, provider, base_url || '', api_key || '', model_name,
-      temperature ?? 0.7, max_tokens || 2048, is_default ? 1 : 0, is_active === false ? 0 : 1
-    );
-    return info.lastInsertRowid;
-  });
-  const id = tx();
-  res.json({ ok: true, id });
+// 设置默认模型（仅接受内置预设的 key）
+router.put('/models/default', (req, res) => {
+  const { key } = req.body || {};
+  if (!key) return res.status(400).json({ error: '请指定模型' });
+  if (!getModelPreset(key)) return res.status(400).json({ error: '未知的模型，请检查模型目录' });
+  setSetting('ai_default_model', key);
+  res.json({ ok: true, default_key: key });
 });
 
-router.put('/models/:id', (req, res) => {
-  const m = db.prepare('SELECT * FROM ai_models WHERE id = ?').get(req.params.id);
-  if (!m) return res.status(404).json({ error: '模型不存在' });
-  const { name, provider, base_url, api_key, model_name, temperature, max_tokens, is_default, is_active } = req.body || {};
-
-  const tx = db.transaction(() => {
-    if (is_default) db.prepare('UPDATE ai_models SET is_default = 0').run();
-    db.prepare(
-      `UPDATE ai_models SET
-         name = COALESCE(?, name),
-         provider = COALESCE(?, provider),
-         base_url = COALESCE(?, base_url),
-         api_key = CASE WHEN ? IS NULL OR ? = '' THEN api_key ELSE ? END,
-         model_name = COALESCE(?, model_name),
-         temperature = COALESCE(?, temperature),
-         max_tokens = COALESCE(?, max_tokens),
-         is_default = COALESCE(?, is_default),
-         is_active = COALESCE(?, is_active),
-         updated_at = strftime('%s','now')
-       WHERE id = ?`
-    ).run(
-      name ?? null, provider ?? null, base_url ?? null,
-      api_key ?? null, api_key ?? null, api_key ?? null,
-      model_name ?? null, temperature ?? null, max_tokens ?? null,
-      is_default === undefined ? null : (is_default ? 1 : 0),
-      is_active === undefined ? null : (is_active ? 1 : 0),
-      m.id
-    );
-  });
-  tx();
-  res.json({ ok: true });
-});
-
-router.delete('/models/:id', (req, res) => {
-  const m = db.prepare('SELECT * FROM ai_models WHERE id = ?').get(req.params.id);
-  if (!m) return res.status(404).json({ error: '模型不存在' });
-  if (m.is_default) {
-    const others = db.prepare('SELECT COUNT(*) as c FROM ai_models WHERE id != ?').get(m.id).c;
-    if (others > 0) db.prepare('UPDATE ai_models SET is_default = 1 WHERE id = (SELECT id FROM ai_models WHERE id != ? LIMIT 1)').run(m.id);
-  }
-  db.prepare('DELETE FROM ai_models WHERE id = ?').run(m.id);
-  res.json({ ok: true });
-});
-
-// 测试模型连通性
-router.post('/models/:id/test', async (req, res) => {
-  const m = db.prepare('SELECT * FROM ai_models WHERE id = ?').get(req.params.id);
-  if (!m) return res.status(404).json({ error: '模型不存在' });
-  if (m.provider === 'builtin' || !m.api_key) {
-    return res.json({ ok: true, message: '内置模板引擎，无需测试', usedRealAI: false });
+// 测试模型连通性（Key 从环境变量读取，测试过程不返回任何 Key 信息）
+router.post('/models/:key/test', async (req, res) => {
+  const preset = getModelPreset(req.params.key);
+  if (!preset) return res.status(404).json({ error: '模型不存在' });
+  const apiKey = getModelKeyFromEnv(preset);
+  if (!apiKey) {
+    return res.json({ ok: false, message: `未配置 ${preset.env_key} 环境变量` });
   }
   // SSRF 防护：校验 base_url 仅允许 http/https 且非云元数据/回环/链路本地
   try {
-    assertSafeAiBaseUrl(m.base_url);
+    assertSafeAiBaseUrl(preset.base_url);
   } catch (err) {
     return res.json({ ok: false, message: err.message });
   }
   try {
-    const url = m.base_url.replace(/\/$/, '') + '/chat/completions';
+    const url = preset.base_url.replace(/\/$/, '') + '/chat/completions';
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: m.model_name,
+        model: preset.model_name,
         messages: [{ role: 'user', content: '请回复"连接成功"四个字。' }],
         max_tokens: 20,
       }),
@@ -564,11 +513,11 @@ const SETTINGS_WHITELIST = new Set([
   'course_quote_base_word_count', 'course_quote_word_price', 'course_quote_chart_price', 'course_quote_drawing_price',
   'course_quote_formula_low', 'course_quote_formula_mid', 'course_quote_formula_high', 'course_quote_urgent_multiplier',
   'alipay_appid', 'alipay_private_key', 'alipay_public_key', 'alipay_gateway', 'alipay_sandbox',
-  'wechat_appid', 'wechat_mch_id', 'wechat_api_v3_key', 'wechat_serial_no', 'wechat_private_key', 'wechat_notify_url', 'wechat_platform_public_key',
+  'wechat_appid', 'wechat_mch_id', 'wechat_api_v3_key', 'wechat_serial_no', 'wechat_private_key', 'wechat_notify_url', 'wechat_platform_public_key', 'wechat_platform_serial_no',
 ]);
 
 const SENSITIVE_KEYS = new Set([
-  'alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key',
+  'alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key',
 ]);
 
 router.get('/settings', (_req, res) => {
@@ -1112,6 +1061,8 @@ router.put('/graduation-orders/:id/quote', (req, res) => {
   // 管理员报价直接生效（管理员具备审批权限，无需再走审批）
   db.prepare('UPDATE graduation_project_orders SET quoted_price = ?, quote_status = ? WHERE id = ?')
     .run(price, 'approved', row.id);
+  // 报价变更：作废用户已创建的待支付订单，防止按旧价成交
+  closePendingGraduationOrders(row.id);
   res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'approved' });
 });
 
@@ -1125,6 +1076,8 @@ router.put('/graduation-orders/:id/quote-status', (req, res) => {
     return res.status(400).json({ error: '无有效报价，无法通过审批' });
   }
   db.prepare('UPDATE graduation_project_orders SET quote_status = ? WHERE id = ?').run(status, row.id);
+  // 审批状态变化（通过/驳回）：作废用户已创建的待支付订单，防止按旧价成交
+  closePendingGraduationOrders(row.id);
   res.json({ ok: true, id: row.id, quote_status: status });
 });
 
