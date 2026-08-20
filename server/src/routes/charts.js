@@ -150,7 +150,12 @@ router.get('/', (req, res) => {
 router.get('/:id/file', (req, res) => {
   const chart = db.prepare('SELECT * FROM charts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!chart || !chart.file_path) return res.status(404).json({ error: '图表不存在' });
-  res.sendFile(join(chartsDir, chart.file_path));
+  // 纵深防御：file_path 由服务端生成（<id>.png），此处仍校验防路径遍历（与 docs.js 的 safeFilePath 一致）
+  const fp = String(chart.file_path);
+  if (fp.includes('..') || fp.includes('\0') || fp.includes('/') || fp.includes('\\') || !/^[\w.-]+$/.test(fp)) {
+    return res.status(400).json({ error: '文件路径非法' });
+  }
+  res.sendFile(join(chartsDir, fp));
 });
 
 // 一键插入到正在撰写的论文章节
