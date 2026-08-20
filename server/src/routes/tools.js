@@ -10,7 +10,7 @@ import { generateDocx } from '../services/docx-generator.js';
 import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
-import { now } from '../utils.js';
+import { claimOrderExecution } from '../services/order-claim.js';
 import db from '../db.js';
 
 const router = Router();
@@ -66,24 +66,6 @@ function resolveBilling(userId, featureKey, orderNo) {
   // failed 允许重试：AI 瞬时失败（超时/网络抖动）不应锁死用户已付费的订单
   if (!['pending', 'processing', 'failed'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
   return { ok: true, mode: 'order', order };
-}
-
-// 订单执行超时（秒）：进入 processing 超过该时长视为「卡死」（进程崩溃/重启遗留），允许抢占重试
-const ORDER_CLAIM_TIMEOUT_SEC = 30 * 60; // 30 分钟
-
-// 原子抢占订单执行权：pending/failed → processing；processing 超时（卡死）也允许抢占。
-// 防同一订单并发多次生成（一次付费多次白嫖），并修复进程崩溃后订单永久卡在 processing 的问题
-// 返回 true 表示本请求获得执行权；false 表示订单正被其他请求处理中
-function claimOrderExecution(order) {
-  if (!order) return true;
-  const r = db.prepare(
-    `UPDATE orders
-        SET service_status = 'processing', updated_at = ?
-      WHERE id = ?
-        AND (service_status IN ('pending', 'failed')
-             OR (service_status = 'processing' AND (updated_at IS NULL OR updated_at < ?)))`
-  ).run(now(), order.id, now() - ORDER_CLAIM_TIMEOUT_SEC);
-  return r.changes === 1;
 }
 
 // 推断自动工作区标题：论文类工具按题目建区；无题目的文本优化类统一归「文本优化」区

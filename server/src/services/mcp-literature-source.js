@@ -185,8 +185,19 @@ export function parseCnkiResult(text, limit = 8) {
 }
 
 // ===== 主入口 =====
+// 序列化所有检索请求：cnki-mcp 底层是单个浏览器实例，无法真正并发检索，
+// 串行化也消除了「并发请求共享单例、超时互拆连接」的问题。
+let searchQueue = Promise.resolve();
+
 // 返回 { papers, disabled, circuitOpen, error }
-export async function searchCnkiViaMCP(query, limit = 8) {
+export function searchCnkiViaMCP(query, limit = 8) {
+  const run = () => searchCnkiOnce(query, limit);
+  const p = searchQueue.then(run, run);
+  searchQueue = p.then(() => {}, () => {}); // 无论成败都让队列继续
+  return p;
+}
+
+async function searchCnkiOnce(query, limit = 8) {
   if (!isCnkiMCPConfigured()) return { papers: [], disabled: true };
   if (isCircuitOpen()) return { papers: [], disabled: false, circuitOpen: true };
   try {
@@ -222,10 +233,9 @@ export async function searchCnkiViaMCP(query, limit = 8) {
   } catch (err) {
     recordFailure(err.message);
     logger.warn('cnki-mcp', `检索失败（忽略，不影响其他源）: ${err.message}`);
-    // 连接已建立后子进程崩溃：重置连接引用，下次调用重新拉起子进程。
-    // 超时（浏览器自动化慢）不视为崩溃：不重置共享单例连接，避免并发检索请求互拆连接
-    // （此前超时也会关闭共享连接，导致其他在途请求全部失败）。
-    if (err.message !== 'MCP 调用超时' && clientPromise) {
+    // 任何失败（含超时）都重置连接：序列化保证无并发在途请求，杀掉子进程让下次重新拉起，
+    // 从而真正从浏览器自动化挂死中恢复（此前超时不重置，挂死的子进程会被永久复用）。
+    if (clientPromise) {
       const stale = clientPromise;
       clientPromise = null;
       stale.then(({ client, transport }) => {
