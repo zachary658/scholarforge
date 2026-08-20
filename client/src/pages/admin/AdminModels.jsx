@@ -181,7 +181,7 @@ export default function AdminModels() {
           })}
 
           <div className="rounded-lg bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-500">
-            未选择默认模型或所选模型未配置 Key 时，系统自动使用内置模板引擎，保证所有功能可用。
+            未选择默认模型或所选模型未配置 Key 时，系统自动启用备用写作引擎（标准模式），保证所有功能可用。
           </div>
         </div>
       )}

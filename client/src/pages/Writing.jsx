@@ -31,7 +31,7 @@ export default function Writing() {
   const [copied, setCopied] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const copyTimerRef = useRef(null);
-  // 深度蒸馏（大纲生成后的付费升级）：多视角检索 → 蒸馏框架/文献/数据
+  // 深度文献调研（大纲生成后的付费升级）：多角度检索 → 解析研究框架/文献/数据
   const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export default function Writing() {
     }
   };
 
-  // 深度蒸馏：大纲生成后的付费升级（需已支付的 literature_review 订单）
+  // 深度文献调研：大纲生成后的付费升级（需已支付的文献综述订单）
   const runDistill = async (orderNo) => {
     if (!form.topic.trim()) return;
     setDistill({ loading: true, error: '', result: null, needOrder: null });
@@ -105,7 +105,7 @@ export default function Writing() {
         setDistill({ loading: false, error: '', result: data, needOrder: null });
       }
     } catch (err) {
-      setDistill({ loading: false, error: err.message || '深度蒸馏失败', result: null, needOrder: null });
+      setDistill({ loading: false, error: err.message || '深度调研失败', result: null, needOrder: null });
     }
   };
 
@@ -289,7 +289,7 @@ export default function Writing() {
                   <p className="text-sm text-slate-400">内容已生成</p>
                 )}
 
-                {/* ===== 大纲生成后的「深度蒸馏」升级（单页面递进式） ===== */}
+                {/* ===== 大纲生成后的「深度文献调研」升级（单页面递进式） ===== */}
                 {form.type === 'outline' && result && !distill.result && (
                   <div className="mt-5 rounded-xl border border-accent/25 bg-accent-50/40 p-4">
                     <div className="flex items-start gap-3">
@@ -297,17 +297,17 @@ export default function Writing() {
                         <Brain className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-ink">深度蒸馏（付费升级）</div>
+                        <div className="text-sm font-semibold text-ink">深度文献调研（付费升级）</div>
                         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                          拆分 3-5 个研究视角深度检索真实论文，蒸馏出研究方法/创新点/结论、真实文献清单与可套用的实验数据表格，
-                          覆盖到工作区供分章节生成自动引用
+                          从多个研究角度深度检索真实文献，解析出研究方法、创新点和结论，附带真实文献清单与可参考的实验数据表格，
+                          存入工作区供正文自动引用
                         </p>
                       </div>
                       <button onClick={() => runDistill()} disabled={distill.loading} className="btn-primary shrink-0 px-3 py-2 text-xs">
                         {distill.loading ? (
-                          <><Refresh className="h-3.5 w-3.5 animate-spin" /> 蒸馏中…（约 1 分钟）</>
+                          <><Refresh className="h-3.5 w-3.5 animate-spin" /> 深度调研中…（约 1 分钟）</>
                         ) : (
-                          <><Brain className="h-3.5 w-3.5" /> 开始深度蒸馏</>
+                          <><Brain className="h-3.5 w-3.5" /> 开始深度调研</>
                         )}
                       </button>
                     </div>

@@ -106,7 +106,7 @@ export default function App() {
         }
       >
         <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
-        {/* 智能写作已并入论文写作页（大纲生成 → 深度蒸馏升级），旧入口重定向 */}
+        {/* 深度文献调研已并入论文写作页（大纲生成 → 深度调研升级），旧入口重定向 */}
         <Route path="smart-writing" element={<Navigate to="/app/writing" replace />} />
         <Route path="writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
         <Route path="proposal" element={<Suspense fallback={<PageFallback />}><Proposal /></Suspense>} />

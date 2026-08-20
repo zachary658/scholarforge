@@ -4,8 +4,8 @@ import {
   Copy, Check, Brain, Book, Layers, Table, BadgeCheck, ArrowRight,
 } from './Icons.jsx';
 
-// 深度蒸馏（智能写作）结果展示：状态条 + 四标签（大纲 / 研究框架 / 文献 / 数据表格）
-// 供 Writing 页大纲生成后"深度蒸馏升级"复用
+// 深度文献调研结果展示：状态条 + 四标签（深度调研大纲 / 研究框架 / 文献 / 数据表格）
+// 供 Writing 页大纲生成后"深度文献调研"付费升级复用
 export default function SmartWritingResult({ result, onOutlineChange }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState('outline');
@@ -30,12 +30,12 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
       {/* 状态条 */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-2.5 text-xs">
         <span className={`rounded px-2 py-0.5 font-medium ${result.degraded ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-          {result.degraded ? '模板降级模式（未配置真实 AI）' : '真实 AI 蒸馏'}
+          {result.degraded ? '标准模式' : '深度解析'}
         </span>
         <span className="text-slate-500">检索 {references.length} 篇文献</span>
-        <span className="text-slate-500">· {framework?.paperCount || 0} 篇完成蒸馏</span>
+        <span className="text-slate-500">· {framework?.paperCount || 0} 篇完成深度解析</span>
         {framework?.perspectives_used?.length > 0 && (
-          <span className="text-slate-500">· {framework.perspectives_used.length} 个研究视角</span>
+          <span className="text-slate-500">· {framework.perspectives_used.length} 个研究角度</span>
         )}
         <span className="ml-auto flex items-center gap-1 text-accent">
           <BadgeCheck className="h-3.5 w-3.5" /> 已存入工作区
@@ -45,7 +45,7 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
       {/* 标签页切换 */}
       <div className="flex gap-1 border-b border-slate-100 px-5 pt-2">
         {[
-          { key: 'outline', label: '蒸馏大纲', icon: Layers },
+          { key: 'outline', label: '深度调研大纲', icon: Layers },
           { key: 'framework', label: '研究框架', icon: Brain },
           { key: 'refs', label: `文献 (${references.length})`, icon: Book },
           { key: 'data', label: `数据/表格 (${benchmarks.length + tables.length})`, icon: Table },
@@ -99,7 +99,7 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
           <div className="space-y-4">
             {framework?.perspectives?.length > 0 && (
               <div>
-                <h3 className="mb-2 text-sm font-semibold text-ink">研究视角与方法分布</h3>
+                <h3 className="mb-2 text-sm font-semibold text-ink">研究角度与方法分布</h3>
                 <div className="space-y-2">
                   {framework.perspectives.map((p) => (
                     <div key={p.view} className="rounded-lg bg-slate-50 px-3 py-2">
@@ -152,14 +152,14 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
                 </div>
               </div>
             ))}
-            {references.length === 0 && <p className="text-sm text-slate-400">未检索到文献（降级模式）</p>}
+            {references.length === 0 && <p className="text-sm text-slate-400">未检索到文献（标准模式）</p>}
           </div>
         )}
 
         {tab === 'data' && (
           <div className="space-y-4">
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-ink">套用的实验数据（用于对比图表，自动标注来源）</h3>
+              <h3 className="mb-2 text-sm font-semibold text-ink">可参考的实验数据（对比图表自动标注来源）</h3>
               {benchmarks.length > 0 ? (
                 <div className="space-y-2">
                   {benchmarks.map((b, i) => (
@@ -176,14 +176,14 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
               )}
             </div>
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-ink">套用的表格数据（三线表，自动标注来源）</h3>
+              <h3 className="mb-2 text-sm font-semibold text-ink">可参考的表格数据（自动标注来源）</h3>
               {tables.length > 0 ? (
                 <div className="space-y-3">
                   {tables.map((t, i) => (
                     <div key={i} className="overflow-x-auto rounded-lg border border-slate-100">
                       <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
                         数据引自：{t.source}{t.year ? `，${t.year}` : ''}
-                        {t.from_mineru && <span className="ml-2 rounded bg-accent-50 px-1 py-0.5 text-[10px] text-accent">MinerU 解析</span>}
+                        {t.from_mineru && <span className="ml-2 rounded bg-accent-50 px-1 py-0.5 text-[10px] text-accent">高精度解析</span>}
                       </div>
                       <table className="w-full text-xs">
                         <tbody>
