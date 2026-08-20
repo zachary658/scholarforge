@@ -181,6 +181,7 @@ router.post('/features', (req, res) => {
     description || '', is_active === false ? 0 : 1, unlimited ? 1 : 0, mode, sort_order ?? 0
   );
   const saved = getFeaturePrices().find((f) => f.feature_key === feature_key);
+  invalidateSiteCache(); // 价格变更立即失效站点缓存（用户端展示实时更新）
   res.json({ ok: true, feature: saved });
 });
 
@@ -191,6 +192,7 @@ router.delete('/features/:key', (req, res) => {
     return res.status(400).json({ error: '内置功能不可删除，可停用' });
   }
   db.prepare('DELETE FROM feature_prices WHERE feature_key = ?').run(req.params.key);
+  invalidateSiteCache();
   res.json({ ok: true });
 });
 
@@ -233,6 +235,7 @@ router.post('/courses', (req, res) => {
       vd, is_active === false ? 0 : 1, Number(sort_order) || 0,
       cbc, cwp, ccp, cdp, cfl, cfm, cfh, cum, id
     );
+    invalidateSiteCache(); // 课程价格/信息变更立即生效
     return res.json({ ok: true, course: getCourse(id) });
   }
   const info = db.prepare(
@@ -245,11 +248,13 @@ router.post('/courses', (req, res) => {
     vd, is_active === false ? 0 : 1, Number(sort_order) || 0,
     cbc, cwp, ccp, cdp, cfl, cfm, cfh, cum
   );
+  invalidateSiteCache();
   res.json({ ok: true, course: getCourse(info.lastInsertRowid) });
 });
 
 router.delete('/courses/:id', (req, res) => {
   db.prepare('DELETE FROM courses WHERE id = ?').run(req.params.id);
+  invalidateSiteCache();
   res.json({ ok: true });
 });
 
@@ -877,17 +882,20 @@ router.post('/graduation', (req, res) => {
          degree = ?, is_active = ?, sort_order = ?, updated_at = strftime('%s','now')
        WHERE id = ?`
     ).run(String(title).trim(), String(category).trim(), description || '', price, dur, deg, active, sort, id);
+    invalidateSiteCache(); // 毕业作品价格/信息变更立即生效
     return res.json({ ok: true, project: db.prepare('SELECT * FROM graduation_projects WHERE id = ?').get(id) });
   }
   const info = db.prepare(
     `INSERT INTO graduation_projects (title, category, description, base_price, duration_text, degree, is_active, sort_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(String(title).trim(), String(category).trim(), description || '', price, dur, deg, active, sort);
+  invalidateSiteCache();
   res.json({ ok: true, project: db.prepare('SELECT * FROM graduation_projects WHERE id = ?').get(info.lastInsertRowid) });
 });
 
 router.delete('/graduation/:id', (req, res) => {
   db.prepare('DELETE FROM graduation_projects WHERE id = ?').run(req.params.id);
+  invalidateSiteCache();
   res.json({ ok: true });
 });
 
