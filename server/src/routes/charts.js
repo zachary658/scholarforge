@@ -72,6 +72,14 @@ router.post('/render', async (req, res) => {
   if (!['bar', 'line', 'pie', 'scatter'].includes(chart_type)) return res.status(400).json({ error: '不支持的图表类型' });
   if (!x || !y) return res.status(400).json({ error: '请选择 X 轴和 Y 轴字段' });
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: '缺少图表数据' });
+  // 行数/字段数上限：防客户端 POST 超大 rows 拖垮 vega 渲染并膨胀 spec_json 落库
+  if (rows.length > 500) return res.status(400).json({ error: '图表数据最多 500 行' });
+  if (x.length > 100 || y.length > 100) return res.status(400).json({ error: '字段名过长' });
+  for (const r of rows.slice(0, 5)) {
+    if (r && typeof r === 'object' && Object.keys(r).length > 50) {
+      return res.status(400).json({ error: '数据字段过多，请精简后重试' });
+    }
+  }
 
   try {
     const numericRows = rows.map((r) => ({ ...r, [y]: Number(r[y]) })).filter((r) => Number.isFinite(r[y]));

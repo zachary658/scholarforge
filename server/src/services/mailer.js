@@ -55,7 +55,9 @@ export async function sendMail({ to, subject, text, html }) {
 
   // mock 模式（仅非生产环境）：打印到控制台 + 写文件
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const logFile = join(mailLogDir, `${ts}_${to.replace(/[@.]/g, '_')}.txt`);
+  // 收件人消毒：仅保留字母数字与 @.-，防路径分隔符/.. 逃逸 mail_log 目录
+  const safeTo = String(to).replace(/[^\w@.-]/g, '_').slice(0, 100);
+  const logFile = join(mailLogDir, `${ts}_${safeTo}.txt`);
   const logContent = `To: ${to}\nFrom: ${MAIL_FROM}\nSubject: ${subject}\nDate: ${new Date().toISOString()}\n\n${text}\n`;
   try {
     fs.writeFileSync(logFile, logContent, 'utf8');

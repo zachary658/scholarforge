@@ -3,6 +3,8 @@
  * 避免各模块重复定义 now()、时间格式化等
  */
 import fs from 'fs';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 /** 当前 Unix 时间戳（秒） */
 export function now() {
@@ -25,6 +27,36 @@ const CLOUD_METADATA_HOSTS = new Set([
   'instance-data',
   'instance-data.ec2.internal',
 ]);
+
+// DNS 重绑定域名后缀：解析结果指向内网/回环，绕过主机名字面量校验
+const REBIND_SUFFIXES = ['.nip.io', '.sslip.io', '.xip.io', '.local', '.internal'];
+
+// 主机名黑名单：localhost 及常见重绑定域名
+function isBlockedHostname(host) {
+  const h = host.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
+  if (!h) return false;
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h === '::1' || h === '::' || h === '0:0:0:0:0:0:0:1') return true; // IPv6 回环
+  if (REBIND_SUFFIXES.some((s) => h.endsWith(s))) return true;
+  return false;
+}
+
+// 判断解析出的 IP 是否不安全（回环/未指定/链路本地，含云元数据地址）
+function isUnsafeIp(ip) {
+  if (!ip) return true;
+  if (ip.includes(':')) {
+    const lower = ip.toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    // 链路本地 fe80::/10（fe80-fe8b 前缀；宽松匹配 fe8/fe9/fea/feb）
+    if (/^fe[89ab]/.test(lower)) return true;
+    return false;
+  }
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  if (parts[0] === 127 || parts[0] === 0) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true;
+  return false;
+}
 
 export function assertSafeAiBaseUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') {
@@ -49,6 +81,11 @@ export function assertSafeAiBaseUrl(rawUrl) {
     throw new Error('AI 服务地址不允许指向云元数据端点');
   }
 
+  // 拦截 localhost / IPv6 回环 / DNS 重绑定域名（此前仅拦 IPv4 字面量，可被绕过）
+  if (isBlockedHostname(hostLower)) {
+    throw new Error('AI 服务地址不允许指向本机、回环或重绑定域名');
+  }
+
   // 拦截 IP 字面量：回环(127/8)、未指定(0.0.0.0)、链路本地(169.254/16，含云元数据 169.254.169.254)
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostLower)) {
     const parts = hostLower.split('.').map(Number);
@@ -57,6 +94,26 @@ export function assertSafeAiBaseUrl(rawUrl) {
     }
   }
 
+  return url;
+}
+
+// 解析后校验：对域名做真实 DNS 解析，拦截解析到回环/链路本地/云元数据的地址（防 DNS 重绑定）
+// 私网地址（10.x / 192.168.x / 172.16-31.x）默认放行，兼容内网部署的模型服务（vLLM/Ollama）
+export async function assertSafeAiResolvedUrl(rawUrl) {
+  const url = assertSafeAiBaseUrl(rawUrl);
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host)) return url; // IP 字面量已在上一步校验
+  try {
+    const { address } = await lookup(host, { verbatim: true });
+    if (isUnsafeIp(address)) {
+      throw new Error('AI 服务地址解析到不安全的目标（回环/链路本地/云元数据），已拒绝');
+    }
+  } catch (err) {
+    if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN') {
+      throw new Error('AI 服务地址无法解析');
+    }
+    throw err;
+  }
   return url;
 }
 

@@ -12,7 +12,7 @@ import {
 import { getDefaultModel } from './config-store.js';
 import { genProposalBuiltin, buildProposalUserPrompt, PROPOSAL_SYSTEM_PROMPT } from './services/proposal.js';
 import logger from './logger.js';
-import { assertSafeAiBaseUrl } from './utils.js';
+import { assertSafeAiResolvedUrl } from './utils.js';
 
 // 各工具的 system prompt
 // 安全：所有 system prompt 末尾追加防注入指令，明确分隔符内为数据而非指令
@@ -145,7 +145,8 @@ function wrapContext(ctx) {
 //   - maxTokensOverride：长文生成场景（如毕业论文全文）需要突破默认 2048 token 限制
 //   - responseFormat：JSON 模式（结构化输出），约束模型返回合法 JSON，替代脆弱的正则解析
 async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) {
-  assertSafeAiBaseUrl(model.base_url); // SSRF 防护：拒绝云元数据/回环/链路本地目标
+  // SSRF 防护：拒绝云元数据/回环/链路本地目标 + DNS 解析后二次校验（防重绑定）
+  await assertSafeAiResolvedUrl(model.base_url);
   const maxTokensOverride = opts.maxTokensOverride;
   const responseFormat = opts.responseFormat;
   const url = model.base_url.replace(/\/$/, '') + '/chat/completions';
@@ -245,6 +246,16 @@ function formatBenchmarks(benchmarks) {
   }).join('\n');
 }
 
+// 格式化套用的真实表格数据（OA PDF 提取）：每张表标注来源，三线表由 docx-generator 渲染
+function formatDataTables(tables) {
+  if (!Array.isArray(tables) || tables.length === 0) return '';
+  return tables.map((t, i) => {
+    const head = `表格 ${i + 1}（数据引自：${t.source || '未知来源'}${t.year ? '，' + t.year : ''}）`;
+    const rows = (t.rows || []).slice(0, 8).map((r) => `| ${r.join(' | ')} |`).join('\n');
+    return `${head}\n${rows}`;
+  }).join('\n\n');
+}
+
 function buildUserPrompt(tool, params) {
   // 注入工作区上下文 + 真实文献列表 + 真实 benchmark 数据（用分隔符包裹防注入）
   const dataParts = [];
@@ -254,6 +265,9 @@ function buildUserPrompt(tool, params) {
   }
   if (Array.isArray(params.benchmarks) && params.benchmarks.length > 0) {
     dataParts.push(`【真实实验数据（图表/对比数据仅可使用以下真实数据，严禁编造数值）】\n${formatBenchmarks(params.benchmarks)}`);
+  }
+  if (Array.isArray(params.dataTables) && params.dataTables.length > 0) {
+    dataParts.push(`【可套用的真实表格数据（三线表仅可使用以下数据，引用时必须保留"数据引自"来源标注）】\n${formatDataTables(params.dataTables)}`);
   }
   const ctx = wrapContext(dataParts.join('\n\n'));
   switch (tool) {

@@ -128,6 +128,7 @@ router.post('/register', registerLimiter, async (req, res) => {
     return res.status(403).json({ error: '管理员已关闭注册' });
   }
   if (!email || !password || !name) return res.status(400).json({ error: '请填写邮箱、密码和昵称' });
+  if (String(name).length > 50) return res.status(400).json({ error: '昵称过长（最多 50 字符）' });
   // 用户需知：注册前必须勾选同意（规避学术滥用法律风险）
   if (!agree_terms) return res.status(400).json({ error: '请先阅读并同意用户需知' });
   const pwdErr = validatePasswordStrength(password);
@@ -186,8 +187,9 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 // 刷新 access token：用 refresh token 换新 access + 新 refresh（轮换）
+// refresh token 仅从 HttpOnly Cookie 读取（此前支持 body 回退，弱化了 HttpOnly 设计，已收紧）
 router.post('/refresh', async (req, res) => {
-  const refreshToken = getRefreshTokenFromCookie(req) || (req.body && req.body.refreshToken);
+  const refreshToken = getRefreshTokenFromCookie(req);
   const user = verifyRefreshToken(refreshToken);
   if (!user) {
     clearRefreshCookie(res);
@@ -203,7 +205,7 @@ router.post('/refresh', async (req, res) => {
 // 登出：仅吊销当前 refresh token（不影响其他设备）
 // access token 短效（15 分钟），自然过期即可；不再全局 token_version++（那会误伤其他已登录设备）
 router.post('/logout', authRequired, (req, res) => {
-  const refreshToken = getRefreshTokenFromCookie(req) || (req.body && req.body.refreshToken);
+  const refreshToken = getRefreshTokenFromCookie(req);
   if (refreshToken) {
     // 仅吊销当前设备的 refresh token，不吊销其他设备
     revokeRefreshToken(refreshToken);

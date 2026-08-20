@@ -179,6 +179,8 @@ export function getProject(projectId, userId) {
   delete p.outline_json;
   try { p.chapters = JSON.parse(p.chapters_json || '[]'); } catch { p.chapters = []; }
   delete p.chapters_json;
+  try { p.sources = JSON.parse(p.sources_json || '{}'); } catch { p.sources = {}; }
+  delete p.sources_json;
   return p;
 }
 
@@ -195,6 +197,8 @@ export function listProjects(userId) {
     delete p.outline_json;
     try { p.chapters = JSON.parse(p.chapters_json || '[]'); } catch { p.chapters = []; }
     delete p.chapters_json;
+    try { p.sources = JSON.parse(p.sources_json || '{}'); } catch { p.sources = {}; }
+    delete p.sources_json;
   }
   return projects;
 }
@@ -228,6 +232,16 @@ export function confirmOutline(projectId, userId) {
   if (!p) return null;
   db.prepare('UPDATE projects SET outline_confirmed_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), projectId);
   return getProject(projectId, userId);
+}
+
+// 持久化蒸馏产物（检索→蒸馏：框架/文献/benchmark/表格数据）到工作区
+// 分章节生成与全文生成统一从 sources_json 消费，保证蒸馏结果贯通到正文
+export function saveProjectSources(projectId, userId, sources) {
+  if (!projectId || !userId) return false;
+  const r = db.prepare(
+    'UPDATE projects SET sources_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
+  ).run(JSON.stringify(sources || {}), now(), projectId, userId);
+  return r.changes > 0;
 }
 
 // ========== 上下文组装 ==========

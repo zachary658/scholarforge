@@ -336,6 +336,10 @@ addColumnIfMissing('courses', 'custom_urgent_multiplier', 'REAL');
 // ===== 阶段三：大纲强制确认 + 分章节草稿 + 数据图表 =====
 addColumnIfMissing('projects', 'outline_confirmed_at', 'INTEGER');
 addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
+// ===== 蒸馏流水线贯通：工作区持久化检索→蒸馏产物（框架/文献/benchmark/表格数据） =====
+// sources_json 结构：{ framework, references, benchmarks, tables, sources_used, saved_at }
+// 分章节生成与全文生成统一消费，保证蒸馏产物贯通到正文
+addColumnIfMissing('projects', 'sources_json', "TEXT DEFAULT '{}'");
 db.exec(`
   CREATE TABLE IF NOT EXISTS charts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

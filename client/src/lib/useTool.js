@@ -12,11 +12,13 @@ import { useState, useCallback } from 'react';
 export function useTool() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [errorData, setErrorData] = useState(null); // 后端业务标志（needAcademicIntegrity / needConfirmOutline 等）
   const [result, setResult] = useState(null); // { content, doc, model, tokens, chargeType, amount, orderNo, ... }
   const [needOrder, setNeedOrder] = useState(null); // { itemType, amount }
 
   const run = useCallback(async (apiCall) => {
     setError('');
+    setErrorData(null);
     setLoading(true);
     setResult(null);
     setNeedOrder(null);
@@ -29,6 +31,7 @@ export function useTool() {
       setResult(data);
     } catch (err) {
       setError(err.message || '调用失败');
+      setErrorData(err.data || null);
     } finally {
       setLoading(false);
     }
@@ -37,9 +40,10 @@ export function useTool() {
   const reset = useCallback(() => {
     setResult(null);
     setError('');
+    setErrorData(null);
     setNeedOrder(null);
     setLoading(false);
   }, []);
 
-  return { loading, error, result, needOrder, run, reset, setError };
+  return { loading, error, errorData, result, needOrder, run, reset, setError };
 }

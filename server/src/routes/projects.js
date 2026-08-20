@@ -107,7 +107,12 @@ router.post('/:id/chapters/generate', authRequired, async (req, res) => {
     const result = await startChapterGeneration(req.user.id, parseInt(req.params.id, 10), orderNo);
     res.json(result);
   } catch (err) {
-    if (err.needOrder) return res.status(402).json({ error: err.message, needOrder: true, itemType: err.itemType });
+    if (err.needOrder) {
+      // 携带金额，前端 FeaturePay 需要展示价格（此前前端硬编码 amount=0，展示 ¥0.00）
+      const { getFeaturePrice } = await import('../config-store.js');
+      const fp = getFeaturePrice(err.itemType || 'writing_fulltext');
+      return res.status(402).json({ error: err.message, needOrder: true, itemType: err.itemType, amount: fp ? fp.price : 0 });
+    }
     res.status(400).json({ error: err.message });
   }
 });
@@ -119,6 +124,11 @@ router.post('/:id/chapters/:chapterId/regenerate', authRequired, async (req, res
     const result = await regenerateChapter(req.user.id, parseInt(req.params.id, 10), req.params.chapterId, orderNo);
     res.json(result);
   } catch (err) {
+    if (err.needOrder) {
+      const { getFeaturePrice } = await import('../config-store.js');
+      const fp = getFeaturePrice(err.itemType || 'writing_fulltext');
+      return res.status(402).json({ error: err.message, needOrder: true, itemType: err.itemType, amount: fp ? fp.price : 0 });
+    }
     res.status(400).json({ error: err.message });
   }
 });

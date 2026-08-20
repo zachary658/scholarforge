@@ -123,6 +123,13 @@ router.post('/alipay/notify', async (req, res) => {
   if (!verified) {
     return res.send('fail');
   }
+  // 商户归属校验：回调 app_id 必须等于本平台配置的 appid。
+  // 防跨商户通知重放攻击：攻击者用自己的支付宝商户号对相同订单号发起支付（钱付给自己，
+  // 零成本），再把支付宝发给自己的合法通知重放到本平台，验签可过但 app_id 必不匹配。
+  if (!cfg.appid || params.app_id !== cfg.appid) {
+    logger.error('payment', `支付宝回调 app_id 不匹配: 回调=${params.app_id || '(空)'} 配置=${cfg.appid || '(空)'}，已拒绝`);
+    return res.send('fail');
+  }
   if (params.trade_status !== 'TRADE_SUCCESS' && params.trade_status !== 'TRADE_FINISHED') {
     return res.send('success');
   }
@@ -180,6 +187,16 @@ router.post('/wechat/notify', async (req, res) => {
   }
   if (resource.trade_state !== 'SUCCESS') {
     return res.json({ code: 'SUCCESS', message: 'OK' });
+  }
+  // 商户归属校验：解密后的 resource 必须属于本平台商户（mchid / appid 双校验）。
+  // resource 用本商户 APIv3Key 加密，正常情况必然匹配；显式校验可防配置漂移与历史密钥泄露。
+  if (!cfg.mchId || resource.mchid !== cfg.mchId) {
+    logger.error('payment', `微信回调商户号不匹配: 回调=${resource.mchid || '(空)'} 配置=${cfg.mchId || '(空)'}，已拒绝`);
+    return res.json({ code: 'FAIL', message: '商户号不匹配' });
+  }
+  if (resource.appid && cfg.appid && resource.appid !== cfg.appid) {
+    logger.error('payment', `微信回调 appid 不匹配: 回调=${resource.appid} 配置=${cfg.appid}，已拒绝`);
+    return res.json({ code: 'FAIL', message: 'appid 不匹配' });
   }
   try {
     // 金额一致性校验（微信金额单位为分）：强制转数字并严格比较，避免 typeof 跳过校验

@@ -11,14 +11,39 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = process.env.LOG_DIR || join(__dirname, '..', 'logs');
 const shouldWriteFile = process.env.LOG_TO_FILE === 'true' || process.env.NODE_ENV === 'production';
 
-function writeToFile(line) {
-  if (!shouldWriteFile) return;
+// 异步写盘队列：内存缓冲 + 1s 定时 flush + 200 条高水位直接刷盘。
+// 此前每条日志同步 existsSync + appendFileSync，生产环境高频日志会反复阻塞事件循环。
+const pendingLines = [];
+let flushTimer = null;
+let flushing = false;
+
+function ensureLogDir() {
   try {
     if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
-    const dateStr = new Date().toISOString().slice(0, 10);
-    fs.appendFileSync(join(LOG_DIR, `scholarforge-${dateStr}.log`), line + '\n');
-  } catch {
-    /* 忽略文件写入失败，避免影响主流程 */
+  } catch { /* 忽略目录创建失败 */ }
+}
+
+function flushPending() {
+  if (flushing || pendingLines.length === 0) return;
+  flushing = true;
+  const batch = pendingLines.splice(0, pendingLines.length);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  ensureLogDir();
+  fs.appendFile(join(LOG_DIR, `scholarforge-${dateStr}.log`), batch.join('\n') + '\n', 'utf8', () => {
+    flushing = false;
+    if (pendingLines.length > 0) flushPending();
+  });
+}
+
+function writeToFile(line) {
+  if (!shouldWriteFile) return;
+  pendingLines.push(line);
+  if (pendingLines.length >= 200) {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    flushPending();
+  } else if (!flushTimer) {
+    flushTimer = setTimeout(() => { flushTimer = null; flushPending(); }, 1000);
+    flushTimer.unref?.();
   }
 }
 

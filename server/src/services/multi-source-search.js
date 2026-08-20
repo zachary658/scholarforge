@@ -96,6 +96,7 @@ async function searchOpenAlex(query, limit = 8) {
       cited_by_count: work.cited_by_count || 0,
       source_url: sourceUrl,
       source_db: 'OpenAlex',
+      pdf_url: bestOa.pdf_url || '', // 开放获取 PDF 入口（数据套用引擎用）
       _dedupKey: (doi || work.title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
     };
   });
@@ -128,6 +129,7 @@ async function searchSemanticScholar(query, limit = 8) {
       cited_by_count: p.citationCount || 0,
       source_url: sourceUrl,
       source_db: 'Semantic Scholar',
+      pdf_url: p.openAccessPdf?.url || '', // 开放获取 PDF 入口（数据套用引擎用）
       _dedupKey: (doi || p.title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
     };
   });
@@ -161,6 +163,7 @@ async function searchCrossRef(query, limit = 8) {
       cited_by_count: item['is-referenced-by-count'] || 0,
       source_url: item.URL || (doi ? `https://doi.org/${doi}` : ''),
       source_db: 'CrossRef',
+      pdf_url: '', // CrossRef 无 OA PDF 直链，由 OpenAlex/Semantic Scholar 补
       _dedupKey: (doi || (item.title || [''])[0] || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
     };
   });
@@ -176,6 +179,7 @@ function dedupeAndMerge(results, limit = 8) {
       // 已存在，合并信息（优先保留有摘要的、引用数高的）
       const existing = seen.get(key);
       if (!existing.abstract && r.abstract) existing.abstract = r.abstract;
+      if (!existing.pdf_url && r.pdf_url) existing.pdf_url = r.pdf_url;
       if (r.cited_by_count > existing.cited_by_count) existing.cited_by_count = r.cited_by_count;
       // 记录所有来源
       if (!existing.all_sources) existing.all_sources = [existing.source_db];
@@ -251,6 +255,11 @@ export async function searchMultiSource(query, opts = {}) {
   // 去重合并
   const results = dedupeAndMerge(allResults, limit);
   const result = { results, sources_used, errors };
-  searchCache.set(cacheKey, { at: Date.now(), value: result });
+  // 写入缓存前顺带清理过期条目，防 Map 无界增长
+  const nowMs = Date.now();
+  for (const [k, v] of searchCache) {
+    if (nowMs - v.at > SEARCH_CACHE_TTL_MS) searchCache.delete(k);
+  }
+  searchCache.set(cacheKey, { at: nowMs, value: result });
   return result;
 }

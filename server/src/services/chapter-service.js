@@ -8,6 +8,39 @@ import { getProject } from './task-store.js';
 import { now } from '../utils.js';
 import logger from '../logger.js';
 
+// 蒸馏产物注入：分章节生成消费工作区 sources（smart-writing 持久化的框架/文献/数据/表格）
+async function buildChapterAIParams(project, ch, context) {
+  const sources = project.sources || {};
+  const params = {
+    type: 'paragraph',
+    topic: project.title,
+    field: project.field,
+  };
+
+  // 1. 融合框架（研究方法/创新点/结论）注入上下文
+  if (sources.framework && (sources.framework.methods?.length || sources.framework.innovations?.length)) {
+    try {
+      const { buildFrameworkContext } = await import('./paper-distillation.js');
+      context += `\n\n${buildFrameworkContext(sources.framework, [])}`;
+    } catch (err) {
+      logger.warn('chapter', `框架上下文注入失败（忽略）: ${err.message}`);
+    }
+  }
+
+  // 2. 真实文献 / benchmark 数据 / 套用表格注入（AI 只许引用，占位符由代码替换）
+  if (Array.isArray(sources.references) && sources.references.length > 0) {
+    params.references = sources.references;
+  }
+  if (Array.isArray(sources.benchmarks) && sources.benchmarks.length > 0) {
+    params.benchmarks = sources.benchmarks;
+  }
+  if (Array.isArray(sources.tables) && sources.tables.length > 0) {
+    params.dataTables = sources.tables;
+  }
+
+  params.context = `当前要撰写章节：${ch.chapter}\n\n${context}`;
+  return params;
+}
 // 进程内队列：正在生成中的 projectId 集合
 const running = new Set();
 
@@ -25,17 +58,28 @@ function saveChapters(projectId, chapters) {
     .run(JSON.stringify(chapters), now(), projectId);
 }
 
-// 校验章节生成所需订单：需已支付的 writing_fulltext / writing_paragraph 订单
+// 校验章节生成所需订单：需已支付的 writing_fulltext 订单
+// 注意：仅接受"全文生成"订单——写作段落（writing_paragraph）是独立功能，不能驱动整篇论文生成
 function validateOrder(userId, orderNo) {
   if (!orderNo) return { ok: false, error: '请先下单支付后再生成正文', needOrder: true, itemType: 'writing_fulltext' };
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(orderNo);
   if (!order) return { ok: false, error: '订单不存在', needOrder: true, itemType: 'writing_fulltext' };
   if (order.user_id !== userId) return { ok: false, error: '无权使用该订单' };
   if (order.type !== 'feature') return { ok: false, error: '订单类型不正确' };
-  if (!['writing_fulltext', 'writing_paragraph'].includes(order.item_type)) return { ok: false, error: '订单与功能不匹配' };
+  if (order.item_type !== 'writing_fulltext') return { ok: false, error: '订单与功能不匹配（分章节生成需全文生成订单）' };
   if (order.status !== 'paid') return { ok: false, error: '订单未支付' };
-  if (!['pending', 'processing'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
+  // failed 允许重试：AI 瞬时失败不应锁死已付费订单
+  if (!['pending', 'processing', 'failed'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
   return { ok: true, order };
+}
+
+// 原子抢占订单执行权：pending/failed → processing。
+// 防同一订单并发多项目/多请求复用（一次付费生成多篇论文）
+function claimOrderExecution(order) {
+  const r = db.prepare(
+    "UPDATE orders SET service_status = 'processing' WHERE id = ? AND service_status IN ('pending', 'failed')"
+  ).run(order.id);
+  return r.changes === 1;
 }
 
 // 从已确认大纲初始化章节草稿
@@ -68,13 +112,22 @@ async function generateChapter(project, chapters, idx) {
     prevContent ? `\n【前序章节（供衔接参考）】\n${prevContent}` : '',
   ].filter(Boolean).join('\n');
 
-  const result = await runAI('writing', {
-    type: 'paragraph',
-    topic: project.title,
-    field: project.field,
-    context: `当前要撰写章节：${ch.chapter}\n\n${context}`,
-  });
-  return result.content || '';
+  const params = await buildChapterAIParams(project, ch, context);
+  const result = await runAI('writing', params);
+  let content = result.content || '';
+
+  // 占位符替换：引用编号 + 数据图表由代码生成（与全文生成路径保持一致）
+  try {
+    const { replaceCitePlaceholders, replaceChartPlaceholders } = await import('./paper-distillation.js');
+    const sources = project.sources || {};
+    content = replaceChartPlaceholders(
+      replaceCitePlaceholders(content, sources.references || null),
+      sources.benchmarks || []
+    );
+  } catch (err) {
+    logger.warn('chapter', `章节占位符替换失败（忽略）: ${err.message}`);
+  }
+  return content;
 }
 
 // 启动分章节生成（异步执行，立即返回）
@@ -100,15 +153,22 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
 
   // 全部已完成则直接返回，不重复入队
   const hasPending = chapters.some((c) => c.status !== 'done');
-  if (!hasPending) return { queued: false, chapters };
+  if (!hasPending) {
+    // 若订单正处于本次生成会话中（processing），补齐完成状态，防止残留 processing 被复用于其他项目
+    db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
+    return { queued: false, chapters };
+  }
 
   if (running.has(projectId)) {
     return { queued: true, alreadyRunning: true, chapters: getChapters(projectId) };
   }
-  running.add(projectId);
 
-  // 标记订单服务进行中
-  db.prepare("UPDATE orders SET service_status = 'processing' WHERE id = ?").run(bill.order.id);
+  // 原子抢占订单执行权：pending/failed → processing。
+  // processing（正在生成/已绑定其他项目）→ 拒绝，防一单多论文
+  if (!claimOrderExecution(bill.order)) {
+    throw new Error('该订单正在生成中或服务已结束，请勿重复提交');
+  }
+  running.add(projectId);
 
   (async () => {
     try {
@@ -125,13 +185,14 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
         cur[i] = { ...cur[i], content, status: 'done' };
         saveChapters(projectId, cur);
       }
-      // 全部完成：标记订单服务完成
-      db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ?").run(bill.order.id);
+      // 全部完成：标记订单服务完成（仅当仍处于 processing，防并发覆盖）
+      db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
     } catch (err) {
       logger.error('chapter', `章节生成失败 project=${projectId}: ${err.message}`);
       const cur = getChapters(projectId).map((c) => (c.status === 'processing' ? { ...c, status: 'failed' } : c));
       saveChapters(projectId, cur);
-      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(bill.order.id);
+      // failed 状态允许用户重新发起生成（重试），不再永久锁死订单
+      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
     } finally {
       running.delete(projectId);
     }
@@ -140,21 +201,35 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
   return { queued: true, chapters: getChapters(projectId) };
 }
 
+// 单章重写次数上限：一次全文订单 = 全论文生成 + 每章最多 3 次重写（防一单无限白嫖 AI）
+const MAX_REGEN_PER_CHAPTER = 3;
+
 // 重新生成某一章
 export async function regenerateChapter(userId, projectId, chapterId, orderNo) {
   const project = getProject(projectId, userId);
   if (!project) throw new Error('工作区不存在');
   const bill = validateOrder(userId, orderNo);
-  if (!bill.ok) throw new Error(bill.error);
+  if (!bill.ok) {
+    const err = new Error(bill.error);
+    err.needOrder = bill.needOrder;
+    err.itemType = bill.itemType;
+    throw err;
+  }
 
   const chapters = getChapters(projectId);
   const idx = chapters.findIndex((c) => c.id === chapterId);
   if (idx === -1) throw new Error('章节不存在');
   if (running.has(projectId)) throw new Error('该论文正在生成中，请稍后再试');
 
+  // 重写次数限制：订单完成前每章最多重写 3 次
+  const regenCount = Number(chapters[idx].regenerate_count || 0);
+  if (regenCount >= MAX_REGEN_PER_CHAPTER) {
+    throw new Error(`该章节重写次数已达上限（每章最多 ${MAX_REGEN_PER_CHAPTER} 次）`);
+  }
+
   running.add(projectId);
   try {
-    chapters[idx] = { ...chapters[idx], status: 'processing', content: '' };
+    chapters[idx] = { ...chapters[idx], status: 'processing', content: '', regenerate_count: regenCount + 1 };
     saveChapters(projectId, chapters);
     const content = await generateChapter(project, chapters, idx);
     const cur = getChapters(projectId);

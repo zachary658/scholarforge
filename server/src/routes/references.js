@@ -210,6 +210,8 @@ router.post('/format', authRequired, (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: '请选择需要格式化的文献' });
   }
+  // 数量上限：防一次传入海量 id 构造超长 IN 子句（SQLite 变量数上限约 999）
+  if (ids.length > 200) return res.status(400).json({ error: '单次最多格式化 200 条文献' });
   const placeholders = ids.map(() => '?').join(',');
   const refs = db
     .prepare(`SELECT * FROM "references" WHERE user_id = ? AND id IN (${placeholders})`)

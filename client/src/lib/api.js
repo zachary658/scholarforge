@@ -362,6 +362,11 @@ export async function downloadDocFile(id, filename = '文档.docx') {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename.endsWith('.docx') ? filename : `${filename}.docx`;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  // Firefox 等浏览器在 click() 后立即 revoke 会导致下载失败：延迟 1s 再释放
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
 }

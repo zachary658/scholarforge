@@ -7,7 +7,7 @@ import logger from '../logger.js';
 import { getFeaturePrice } from '../config-store.js';
 import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
@@ -32,10 +32,27 @@ function hasAgreedAcademicIntegrity(userId) {
   return !!u?.academic_integrity_agreed_at;
 }
 
+// 免费不限次功能的每用户每小时调用上限：免费引流不意味着无限刷真实大模型成本
+const UNLIMITED_HOURLY_LIMIT = 60;
+const UNLIMITED_TOOL_ACTION = {
+  writing_outline: ['writing', 'outline'],
+};
+
 // 工具调用前置：现金直付模式下，免费功能直接放行，收费功能需关联已支付订单
 function resolveBilling(userId, featureKey, orderNo) {
   // 免费且不限次的功能（如大纲生成、文献检索），直接放行
   if (isFreeUnlimitedFeature(featureKey)) {
+    // 防滥用：按用户每小时调用次数限流（防批量注册后无限刷大模型）
+    const ta = UNLIMITED_TOOL_ACTION[featureKey];
+    if (ta) {
+      const cutoff = Math.floor(Date.now() / 1000) - 3600;
+      const cnt = db.prepare(
+        'SELECT COUNT(*) as c FROM ai_tasks WHERE user_id = ? AND tool_type = ? AND action = ? AND created_at >= ?'
+      ).get(userId, ta[0], ta[1], cutoff).c;
+      if (cnt >= UNLIMITED_HOURLY_LIMIT) {
+        return { ok: false, error: '免费功能使用过于频繁，请 1 小时后再试' };
+      }
+    }
     return { ok: true, mode: 'unlimited' };
   }
   if (!orderNo) return { ok: true, mode: 'need_order' };
@@ -45,8 +62,19 @@ function resolveBilling(userId, featureKey, orderNo) {
   if (order.type !== 'feature') return { ok: false, error: '订单类型不正确' };
   if (order.item_type !== featureKey) return { ok: false, error: '订单与功能不匹配' };
   if (order.status !== 'paid') return { ok: false, error: '订单未支付' };
-  if (!['pending', 'processing'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
+  // failed 允许重试：AI 瞬时失败（超时/网络抖动）不应锁死用户已付费的订单
+  if (!['pending', 'processing', 'failed'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
   return { ok: true, mode: 'order', order };
+}
+
+// 原子抢占订单执行权：pending/failed → processing，防同一订单并发多次生成（一次付费多次白嫖）
+// 返回 true 表示本请求获得执行权；false 表示订单正被其他请求处理中
+function claimOrderExecution(order) {
+  if (!order) return true;
+  const r = db.prepare(
+    "UPDATE orders SET service_status = 'processing' WHERE id = ? AND service_status IN ('pending', 'failed')"
+  ).run(order.id);
+  return r.changes === 1;
 }
 
 // 通用：执行 AI 调用 + 失败时退款/取消订单
@@ -87,6 +115,12 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   let amount = bill.order ? bill.order.amount : 0;
   const order = bill.order || null;
 
+  // 原子抢占订单执行权：pending/failed → processing；processing 表示已有请求正在执行。
+  // 防并发重放同一 orderNo 造成一次付费多次生成（AI 调用期间订单保持 processing）。
+  if (order && !claimOrderExecution(order)) {
+    throw new Error('订单正在处理中，请勿重复提交');
+  }
+
   // 执行 AI
   let aiResult;
   try {
@@ -95,9 +129,9 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     const outCheck = await checkContent(aiResult.content);
     if (!outCheck.safe) throw new Error(outCheck.reason);
   } catch (err) {
-    // 失败标记订单服务失败
+    // 失败标记订单服务失败（仅当订单仍处于 processing，防覆盖已完成状态；failed 可重试）
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
+      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
     }
     // 记录失败日志
     try {
@@ -197,9 +231,9 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     logger.error('tools', `task-save failed: ${err.message}`);
   }
 
-  // 标记订单服务完成
+  // 标记订单服务完成（仅当订单仍处于 processing，防并发场景下失败/完成互相覆盖）
   if (order) {
-    db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+    db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
   }
 
   return {
@@ -249,17 +283,32 @@ router.post('/writing', authRequired, async (req, res) => {
     template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
   }
 
-  // 全文/大纲：检索真实文献与数据，注入引用/数据硬约束（检索失败降级，不阻断主流程）
+  // 全文/大纲：优先复用工作区已蒸馏的文献/数据（smart-writing 产物），否则实时检索
+  // 检索失败降级，不阻断主流程
   let sourceRefs = null;
   let sourceBenchmarks = null;
+  let sourceTables = null;
   if (type === 'fulltext' || type === 'outline') {
-    try {
-      const { collectWritingSources } = await import('../services/paper-distillation.js');
-      const { references, benchmarks } = await collectWritingSources(topic, field, '', 8);
-      sourceRefs = references;
-      sourceBenchmarks = benchmarks;
-    } catch (err) {
-      logger.warn('tools', `写作检索失败（忽略，改用无文献生成）: ${err.message}`);
+    if (projectId) {
+      try {
+        const proj = getProject(projectId, req.user.id);
+        const src = proj?.sources || {};
+        if (Array.isArray(src.references) && src.references.length > 0) sourceRefs = src.references;
+        if (Array.isArray(src.benchmarks) && src.benchmarks.length > 0) sourceBenchmarks = src.benchmarks;
+        if (Array.isArray(src.tables) && src.tables.length > 0) sourceTables = src.tables;
+      } catch (err) {
+        logger.warn('tools', `读取工作区蒸馏产物失败（忽略）: ${err.message}`);
+      }
+    }
+    if (!sourceRefs) {
+      try {
+        const { collectWritingSources } = await import('../services/paper-distillation.js');
+        const { references, benchmarks } = await collectWritingSources(topic, field, '', 8);
+        sourceRefs = references;
+        sourceBenchmarks = benchmarks;
+      } catch (err) {
+        logger.warn('tools', `写作检索失败（忽略，改用无文献生成）: ${err.message}`);
+      }
     }
   }
 
@@ -275,6 +324,7 @@ router.post('/writing', authRequired, async (req, res) => {
         field,
         ...(sourceRefs?.length ? { references: sourceRefs } : {}),
         ...(sourceBenchmarks?.length ? { benchmarks: sourceBenchmarks } : {}),
+        ...(sourceTables?.length ? { dataTables: sourceTables } : {}),
       },
       projectId: projectId || null,
       inputText: `【${type}】题目：${topic}${field ? ' | 学科：' + field : ''}`,
@@ -362,9 +412,31 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   }
   const order = bill.order || null;
 
+  // 原子抢占：防同一订单并发重复执行（检索+蒸馏耗时数十秒）
+  if (order && !claimOrderExecution(order)) {
+    return res.status(400).json({ error: '订单正在处理中，请勿重复提交' });
+  }
+
   try {
     const { smartWriting } = await import('../services/paper-distillation.js');
     const result = await smartWriting({ topic, field, keywords, projectId, userId: req.user.id });
+
+    // 蒸馏产物持久化到工作区：分章节生成/全文生成统一消费（框架/文献/数据/表格）
+    if (projectId) {
+      try {
+        const { saveProjectSources } = await import('../services/task-store.js');
+        saveProjectSources(projectId, req.user.id, {
+          framework: result.framework || null,
+          references: result.references || [],
+          benchmarks: Array.isArray(result.benchmarks?.data) ? result.benchmarks.data : [],
+          tables: result.tables || [],
+          sources_used: result.framework?.sources_used || [],
+          saved_at: Math.floor(Date.now() / 1000),
+        });
+      } catch (err) {
+        logger.warn('tools', `蒸馏产物持久化失败（忽略，本次仍可使用）: ${err.message}`);
+      }
+    }
 
     const taskId = saveTask({
       userId: req.user.id,
@@ -385,7 +457,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
     });
 
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
     }
 
     res.json({
@@ -394,6 +466,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       references: result.references,
       framework: result.framework,
       benchmarks: result.benchmarks,
+      tables: result.tables || [],
       degraded: result.degraded,
       taskId,
       chargeType: order ? 'paid' : 'unlimited',
@@ -404,7 +477,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         : `已检索 ${result.references.length} 篇相关论文并提取研究框架，可基于此大纲生成分章节论文`,
     });
   } catch (err) {
-    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
+    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
     res.status(500).json({ error: '智能写作失败：' + err.message });
   }
 });
@@ -702,6 +775,11 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
   }
   const order = bill.order || null;
 
+  // 原子抢占：防同一订单并发重复执行
+  if (order && !claimOrderExecution(order)) {
+    return res.status(400).json({ error: '订单正在处理中，请勿重复提交' });
+  }
+
   try {
     const data = await aiReduceVersions(text);
     const taskId = saveTask({
@@ -720,7 +798,7 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
       status: 'success',
     });
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ?").run(taskId, order.id);
+      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
     }
     logUsage({
       userId: req.user.id,
@@ -744,7 +822,7 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
       orderNo: order?.order_no || null,
     });
   } catch (err) {
-    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ?").run(order.id);
+    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
     res.status(500).json({ error: '降AI率失败：' + err.message });
   }
 });

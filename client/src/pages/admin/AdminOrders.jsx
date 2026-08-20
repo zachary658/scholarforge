@@ -53,6 +53,8 @@ export default function AdminOrders() {
   const [quoteForm, setQuoteForm] = useState({ quoted_price: '', quote_note: '' });
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef(null);
+  // 请求序号：筛选即时请求与搜索防抖请求并发时，丢弃过期响应（防慢响应覆盖新筛选结果）
+  const requestSeqRef = useRef(0);
 
   const SIZE = 50;
 
@@ -100,15 +102,17 @@ export default function AdminOrders() {
     if (q.trim()) params.q = q.trim();
     setLoading(true);
     setError('');
+    const seq = ++requestSeqRef.current;
     api.adminListOrders(params)
       .then((data) => {
+        if (seq !== requestSeqRef.current) return; // 过期响应，丢弃
         setList(data.orders || []);
         setPage(data.page || 1);
         setPages(data.pages || 1);
         setTotal(data.total ?? (data.orders || []).length);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => { if (seq === requestSeqRef.current) setError(err.message); })
+      .finally(() => { if (seq === requestSeqRef.current) setLoading(false); });
   };
 
   const onSearchChange = (v) => {
@@ -121,15 +125,17 @@ export default function AdminOrders() {
       if (v.trim()) params.q = v.trim();
       setLoading(true);
       setError('');
+      const seq = ++requestSeqRef.current;
       api.adminListOrders(params)
         .then((data) => {
+          if (seq !== requestSeqRef.current) return; // 过期响应，丢弃
           setList(data.orders || []);
           setPage(data.page || 1);
           setPages(data.pages || 1);
           setTotal(data.total ?? (data.orders || []).length);
         })
-        .catch((err) => setError(err.message))
-        .finally(() => setLoading(false));
+        .catch((err) => { if (seq === requestSeqRef.current) setError(err.message); })
+        .finally(() => { if (seq === requestSeqRef.current) setLoading(false); });
     }, 350);
   };
 

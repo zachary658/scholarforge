@@ -16,11 +16,18 @@ const BLOCKED_WORDS = {
   政治敏感: ['颠覆国家', '分裂国家', '邪教', '恐怖主义'],
 };
 
+// 文本归一化：去空白 + 全角转半角，防"冰 毒""冰_毒"全角同形等简单绕过
+function normalizeText(text) {
+  return String(text || '')
+    .replace(/\s+/g, '')
+    .replace(/[\uff01-\uff5e]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+}
+
 function localCheck(text) {
-  const t = String(text || '');
+  const t = normalizeText(text);
   for (const [category, words] of Object.entries(BLOCKED_WORDS)) {
     for (const w of words) {
-      if (t.includes(w)) {
+      if (t.includes(normalizeText(w))) {
         return { safe: false, reason: `内容包含违规信息（${category}），请修改后重试`, provider: 'local' };
       }
     }
@@ -64,8 +71,13 @@ async function yidunCheck(text) {
 }
 
 // 阿里云内容安全文本反垃圾（若在后台配置了 AccessKey）
+// 签名规范：阿里云 RPC 风格 v1.0 —— Authorization: acs {AccessKeyId}:{Signature}
+// （此前漏发 AccessKeyId，鉴权必然失败导致外部审核形同虚设，已修复）
 async function aliyunCheck(text) {
   const cfg = getContentSafetyConfig().aliyun;
+  if (!cfg.accessKeyId || !cfg.accessKeySecret) {
+    throw new Error('阿里云内容安全未配置完整 AccessKey');
+  }
   const host = 'green.cn-shanghai.aliyuncs.com';
   const path = '/green/text/scan';
   const body = JSON.stringify({
@@ -86,6 +98,7 @@ async function aliyunCheck(text) {
       'Content-MD5': contentMd5,
       Date: date,
       Accept: 'application/json',
+      Authorization: `acs ${cfg.accessKeyId}:${signature}`,
       'x-acs-signature-method': 'HMAC-SHA1',
       'x-acs-signature-nonce': nonce,
       'x-acs-signature-version': '1.0',

@@ -114,7 +114,7 @@ export function verifyRefreshToken(token) {
   if (!row) return null;
   if (row.revoked_at) return null;
   if (row.expires_at < now()) return null;
-  if (row.status === 'banned') return null;
+  if (row.status === 'banned' || row.status === 'deleted') return null;
   return {
     id: row.user_id,
     email: row.email,

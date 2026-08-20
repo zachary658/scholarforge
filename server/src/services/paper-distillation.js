@@ -7,7 +7,8 @@
  *   3. [翻译] 外文摘要自动翻译为中文（控制 token，仅翻译摘要）
  *   4. [Reduce] 融合多个框架，生成最优结构大纲（去重+按频率排序）
  *   5. [生成] 基于融合框架 + 用户题目，分章节原创生成
- *   6. [数据借鉴] 提取论文中的关键数据，用 chart-renderer 重新生成图表
+ *   6. [数据套用] 提取论文中的关键数据（摘要指标 + OA 全文 PDF 表格数据），
+ *      用 chart-renderer 重新绘制图表/三线表，自动标注数据来源（数据引自 XXX [n]）
  *
  * Token 成本控制：
  *   - Map 阶段：每篇仅输入摘要（300-500字），不取全文，8篇 ≈ 4000 tokens
@@ -18,12 +19,18 @@
  * 学术伦理：
  *   - 仅借鉴研究框架和思路，不照搬原文表述
  *   - 引用真实文献（标注来源），数据借鉴标注出处
- *   - 生成内容为原创，查重友好
+ *   - 图表/表格由代码重绘，且强制附带来源标注，避免查重与学术不端风险
  */
 import { searchMultiSource } from './multi-source-search.js';
 import { runAI } from '../ai-service.js';
 import { getDefaultModel } from '../config-store.js';
 import logger from '../logger.js';
+
+// pdfjs 动态导入（Node 18+ 兼容）；仅在需要解析 OA PDF 时加载，避免拖慢常规路径
+async function loadPdfjs() {
+  const mod = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  return mod.getDocument;
+}
 
 // ===== 判断是否配置了真实 AI =====
 // 结果缓存 60s：默认模型配置变更频率低，避免 Map 阶段每篇论文重复查 DB
@@ -286,9 +293,21 @@ export async function smartWriting(params) {
         degraded: true,
       },
       benchmarks: null,
+      tables: [],
       degraded: true,
       tokens: { promptTokens: 0, completionTokens: 0 },
     };
+  }
+
+  // 1.5 数据套用富集：OA 全文 PDF 提取指标与表格（失败静默降级，不阻断主流程）
+  let enrichedBenchmarks = benchmarks;
+  let dataTables = [];
+  try {
+    const enriched = await enrichSourcesFromOpenAccess(papers, benchmarks);
+    enrichedBenchmarks = enriched.benchmarks;
+    dataTables = enriched.tables;
+  } catch (err) {
+    logger.warn('paper-distillation', `OA PDF 富集阶段失败（忽略，仅用摘要数据）: ${err.message}`);
   }
 
   // 2. Map 阶段：提取每篇论文框架（并行，但限制并发数避免API限流）
@@ -305,7 +324,7 @@ export async function smartWriting(params) {
   const mergedFramework = mergeFrameworks(frameworks);
 
   // 4. 真实 benchmark 图表配置（真实文献/数据已在 collectWritingSources 构建）
-  const benchmarkChart = benchmarksToChartConfig(benchmarks, '准确率') || benchmarksToChartConfig(benchmarks, 'Dice');
+  const benchmarkChart = benchmarksToChartConfig(enrichedBenchmarks, '准确率') || benchmarksToChartConfig(enrichedBenchmarks, 'Dice');
 
   // 5. 生成大纲（基于融合框架 + 真实文献 + 真实数据，禁止编造引用与数据）
   const outlineResult = await runAI('writing', {
@@ -314,14 +333,14 @@ export async function smartWriting(params) {
     field,
     context: buildFrameworkContext(mergedFramework, papers),
     references,
-    benchmarks,
+    benchmarks: enrichedBenchmarks,
   });
   tokenAcc.promptTokens += outlineResult.promptTokens || 0;
   tokenAcc.completionTokens += outlineResult.completionTokens || 0;
 
   return {
     // 大纲同样经过占位符替换（引用编号 + 数据图表由代码生成）
-    outline: replaceChartPlaceholders(replaceCitePlaceholders(outlineResult.content, references), benchmarks),
+    outline: replaceChartPlaceholders(replaceCitePlaceholders(outlineResult.content, references), enrichedBenchmarks),
     references,
     framework: {
       methods: mergedFramework.methods,
@@ -332,8 +351,10 @@ export async function smartWriting(params) {
       sources_used,
       search_errors: errors,
     },
-    // 借鉴的实验数据 + 图表配置（前端可直接渲染，或注入到生成的论文中）
-    benchmarks: benchmarkChart ? { data: benchmarks, chartConfig: benchmarkChart } : null,
+    // 套用的实验数据 + 图表配置（前端可直接渲染，或注入到生成的论文中）
+    benchmarks: benchmarkChart ? { data: enrichedBenchmarks, chartConfig: benchmarkChart } : null,
+    // 套用的表格数据（分章节生成时注入上下文，三线表由 docx-generator 渲染）
+    tables: dataTables,
     // 真实 token 用量（供按真实用量结算）
     tokens: { promptTokens: tokenAcc.promptTokens, completionTokens: tokenAcc.completionTokens },
     // 降级模式：未配置真实 AI 时，框架提取为规则匹配、大纲为模板生成，需提示用户
@@ -342,46 +363,65 @@ export async function smartWriting(params) {
 }
 
 // 构建框架上下文（注入到AI生成的context中）
-function buildFrameworkContext(framework, papers) {
+// papers 可选：仅用于统计来源数据库；持久化场景下可由 framework.paperCount / sources_used 提供
+export function buildFrameworkContext(framework, papers = []) {
   const lines = [];
-  lines.push(`【文献调研结果】共参考 ${papers.length} 篇相关论文（来自 ${[...new Set(papers.map((p) => p.source_db))].join('、')}）`);
+  const paperList = Array.isArray(papers) ? papers : [];
+  const count = framework?.paperCount ?? paperList.length;
+  const sources = framework?.sources_used?.length
+    ? framework.sources_used
+    : [...new Set(paperList.map((p) => p.source_db))];
+  lines.push(`【文献调研结果】共参考 ${count} 篇相关论文（来自 ${sources.filter(Boolean).join('、') || '多源检索'}）`);
   lines.push('');
   lines.push('【主要研究方法】（按出现频率排序）');
-  framework.methods.forEach((m, i) => lines.push(`${i + 1}. ${m}`));
+  (framework?.methods || []).forEach((m, i) => lines.push(`${i + 1}. ${m}`));
   lines.push('');
   lines.push('【主要创新点】');
-  framework.innovations.forEach((m, i) => lines.push(`${i + 1}. ${m}`));
+  (framework?.innovations || []).forEach((m, i) => lines.push(`${i + 1}. ${m}`));
   lines.push('');
   lines.push('【主要结论】');
-  framework.conclusions.forEach((m, i) => lines.push(`${i + 1}. ${m}`));
+  (framework?.conclusions || []).forEach((m, i) => lines.push(`${i + 1}. ${m}`));
   return lines.join('\n');
 }
 
-// ===== 数据借鉴：从论文中提取关键数据，生成图表配置 =====
+// ===== 数据套用：从论文中提取关键数据，生成图表配置 =====
+// 数据源两级：
+//   1. 摘要文本（正则提取性能指标：准确率、F1、IoU、Dice）
+//   2. OA 全文 PDF（下载后解析文本，提取指标与表格行，覆盖摘要不含数据的论文）
+// 重要：数据套用必须标注来源，图表用 chart-renderer 重新绘制（非直接复制原图）
+
+// 常见性能指标匹配模式（摘要与 PDF 全文共用）
+const METRIC_PATTERNS = [
+  { regex: /(?:accuracy|ACC)\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)\s*%/gi, label: '准确率' },
+  // 兼容 "Dice coefficient of 88%" / "Dice系数 0.88" / "DSC: 0.88" 等写法
+  { regex: /(?:dice|DSC|DICE)\s*(?:coefficient)?\s*(?:of|=|:|达到|系数)?\s*(\d+\.?\d*)\s*%?/gi, label: 'Dice' },
+  { regex: /(?:iou|IoU|IOU)\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)/gi, label: 'IoU' },
+  // 兼容 "F1-score of 0.91" 与 "F1 score of 0.91" 两种写法
+  { regex: /(?:f1|F1-score)\s*(?:score)?\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)/gi, label: 'F1' },
+];
+
+// 从一段文本中提取指标（返回 [{label, value}]，value 已归一化为 0-100 或原始比例）
+export function extractMetricsFromText(text) {
+  const metrics = [];
+  for (const { regex, label } of METRIC_PATTERNS) {
+    const matches = [...String(text || '').matchAll(regex)];
+    for (const m of matches) {
+      const val = parseFloat(m[1]);
+      if (val > 0 && val <= 100) {
+        metrics.push({ label, value: val > 1 ? val : val * 100 });
+      }
+    }
+  }
+  return metrics;
+}
+
 // 从摘要中提取性能指标（准确率、F1、IoU等），用于生成对比图表
-// 重要：数据借鉴需标注来源，图表用我们的 chart-renderer 重新生成（非直接复制原图）
 export function extractBenchmarkData(papers) {
   const benchmarks = [];
   for (const p of papers) {
     const text = p.abstract || '';
     if (!text) continue;
-    const metrics = [];
-    // 匹配常见性能指标格式
-    const patterns = [
-      { regex: /(?:accuracy|ACC)\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)\s*%/gi, label: '准确率' },
-      { regex: /(?:dice|DSC|DICE)\s*(?:of|=|:|达到|系数)?\s*(\d+\.?\d*)\s*%?/gi, label: 'Dice' },
-      { regex: /(?:iou|IoU|IOU)\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)/gi, label: 'IoU' },
-      { regex: /(?:f1|F1-score)\s*(?:of|=|:|达到)?\s*(\d+\.?\d*)/gi, label: 'F1' },
-    ];
-    for (const { regex, label } of patterns) {
-      const matches = [...text.matchAll(regex)];
-      for (const m of matches) {
-        const val = parseFloat(m[1]);
-        if (val > 0 && val <= 100) {
-          metrics.push({ label, value: val > 1 ? val : val * 100, source: p.title });
-        }
-      }
-    }
+    const metrics = extractMetricsFromText(text);
     if (metrics.length > 0) {
       benchmarks.push({
         paperTitle: p.title,
@@ -393,6 +433,121 @@ export function extractBenchmarkData(papers) {
     }
   }
   return benchmarks;
+}
+
+// ===== OA PDF 全文数据提取（数据套用引擎第二阶段） =====
+// 限制：PDF ≤ 5MB、最多解析前 15 页、每篇 25s 超时、每次任务最多处理 4 篇、并发 3
+const PDF_MAX_BYTES = 5 * 1024 * 1024;
+const PDF_MAX_PAGES = 15;
+const PDF_MAX_PAPERS = 4;
+const PDF_CONCURRENCY = 3;
+
+// 按 y 坐标聚类重建 PDF 文本行（表格行的数值列才能保持对齐）
+function rebuildLines(items) {
+  const rows = new Map();
+  for (const it of items || []) {
+    if (!it.str || !it.str.trim()) continue;
+    const y = Math.round((it.transform ? it.transform[5] : 0) / 3) * 3; // 3pt 聚类容差
+    if (!rows.has(y)) rows.set(y, []);
+    rows.get(y).push(it);
+  }
+  return [...rows.entries()]
+    .sort((a, b) => b[0] - a[0]) // PDF 坐标系 y 向下递增 → 文本从上到下
+    .map(([, its]) => its
+      .sort((a, b) => (a.transform ? a.transform[4] : 0) - (b.transform ? b.transform[4] : 0))
+      .map((i) => i.str)
+      .join(' '));
+}
+
+// 下载并解析 OA PDF，返回重建后的文本行（超限/失败抛错，由调用方降级）
+async function extractPdfLines(url) {
+  const getDocument = await loadPdfjs();
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const declared = Number(resp.headers.get('content-length') || 0);
+  if (declared && declared > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
+  const buf = Buffer.from(await resp.arrayBuffer());
+  if (buf.length > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
+  const doc = await getDocument({ data: new Uint8Array(buf), isEvalSupported: false, useSystemFonts: true }).promise;
+  const lines = [];
+  try {
+    for (let i = 1; i <= Math.min(doc.numPages, PDF_MAX_PAGES); i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      lines.push(...rebuildLines(tc.items));
+      page.cleanup?.();
+    }
+  } finally {
+    await doc.destroy().catch(() => {});
+  }
+  return lines;
+}
+
+// 从重建行中提取数据表：连续出现 ≥3 个数值 token 的行视为表格行
+export function extractDataTables(lines, paper, maxTables = 3) {
+  const tables = [];
+  let current = null;
+  const flush = () => {
+    if (current && current.rows.length >= 3) tables.push(current);
+    current = null;
+    return tables.length >= maxTables;
+  };
+  for (const line of lines) {
+    if (line.length > 200) continue; // 跳过正文长句
+    const tokens = line.split(/\s{2,}|\t/).map((s) => s.trim()).filter(Boolean);
+    const numericCount = tokens.filter((t) => /^-?\d+(\.\d+)?%?$/.test(t)).length;
+    if (numericCount >= 3 && tokens.length >= 3) {
+      if (!current) current = { title: null, rows: [] };
+      // 首行若含非数值单元格视为表头
+      current.rows.push(tokens.slice(0, 8));
+      if (current.rows.length >= 12 && flush()) break;
+    } else if (current) {
+      if (flush()) break;
+    }
+  }
+  if (current && tables.length < maxTables && current.rows.length >= 3) flush();
+  return tables.map((t) => ({
+    source: paper.title,
+    year: paper.year,
+    source_url: paper.source_url,
+    source_db: paper.source_db,
+    rows: t.rows,
+  }));
+}
+
+// 富集数据源：对带 OA PDF 的论文下载全文提取指标与表格（失败静默降级）
+// 返回 { benchmarks（含 PDF 提取合并结果）, tables }
+export async function enrichSourcesFromOpenAccess(papers, benchmarks = []) {
+  const merged = Array.isArray(benchmarks) ? benchmarks.map((b) => ({ ...b })) : [];
+  const tables = [];
+  const candidates = (papers || []).filter((p) => p?.pdf_url && /^https:\/\//i.test(p.pdf_url)).slice(0, PDF_MAX_PAPERS);
+
+  for (let i = 0; i < candidates.length; i += PDF_CONCURRENCY) {
+    const batch = candidates.slice(i, i + PDF_CONCURRENCY);
+    await Promise.all(batch.map(async (p) => {
+      try {
+        const lines = await extractPdfLines(p.pdf_url);
+        const metrics = extractMetricsFromText(lines.join('\n'));
+        if (metrics.length > 0) {
+          merged.push({
+            paperTitle: p.title,
+            paperYear: p.year,
+            source_db: p.source_db,
+            source_url: p.source_url,
+            metrics: metrics.slice(0, 8),
+            from_fulltext: true,
+          });
+        }
+        tables.push(...extractDataTables(lines, p));
+      } catch (err) {
+        logger.warn('paper-distillation', `OA PDF 数据提取失败（忽略）: ${(p.title || '').slice(0, 40)} - ${err.message}`);
+      }
+    }));
+  }
+  return { benchmarks: merged, tables: tables.slice(0, 3) };
 }
 
 // 将借鉴的数据转为 vega-lite 图表配置

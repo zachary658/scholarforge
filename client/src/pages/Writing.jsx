@@ -23,6 +23,7 @@ export default function Writing() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tool = useTool();
+  const integrity = useAcademicIntegrity(); // 全文生成前强制签署学术诚信承诺书
 
   const [form, setForm] = useState({ type: 'outline', topic: '', field: '计算机科学', template_id: '' });
   const [templates, setTemplates] = useState([]);
@@ -58,6 +59,11 @@ export default function Writing() {
   const run = (orderNo) => {
     if (!form.topic.trim()) {
       tool.setError('请填写论文题目');
+      return;
+    }
+    // 全文生成强制承诺书门禁（与后端 403 needAcademicIntegrity 校验一致）：
+    // 未同意时弹出承诺书，同意后自动重新执行本次生成
+    if (form.type === 'fulltext' && !integrity.ensure(() => run(orderNo))) {
       return;
     }
     tool.run(() => api.writing({
@@ -188,6 +194,15 @@ export default function Writing() {
           {tool.error && (
             <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{tool.error}</div>
           )}
+          {/* 全文生成需要已确认大纲的工作区：给出直达引导 */}
+          {tool.errorData?.needConfirmOutline && (
+            <button
+              onClick={() => navigate('/app/projects')}
+              className="mt-2 w-full rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-600 hover:bg-amber-100"
+            >
+              去论文工作区创建项目并确认大纲 →
+            </button>
+          )}
         </div>
 
         {/* 结果面板 */}
@@ -265,6 +280,10 @@ export default function Writing() {
 
       {tool.needOrder && (
         <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
+      )}
+
+      {integrity.show && (
+        <AcademicIntegrityModal onAgreed={integrity.handleAgreed} onCancel={integrity.close} />
       )}
     </div>
   );

@@ -17,7 +17,7 @@ import {
   invalidatePaymentCache,
   invalidateSiteCache,
 } from '../config-store.js';
-import { hashPassword, revokeAllRefreshTokens } from '../auth.js';
+import { hashPassword, revokeAllRefreshTokens, incrementTokenVersion } from '../auth.js';
 import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
 import { closePendingGraduationOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
 import { parseTemplate } from '../services/template-parser.js';
@@ -81,7 +81,7 @@ const qrcodeUpload = multer({
   },
 });
 
-import { now, assertSafeAiBaseUrl, checkFileSignature, FILE_SIGNATURES } from '../utils.js';
+import { now, assertSafeAiResolvedUrl, checkFileSignature, FILE_SIGNATURES } from '../utils.js';
 
 const today = () => {
   const d = new Date();
@@ -338,7 +338,7 @@ router.post('/orders/:id/quote', (req, res) => {
   }
 });
 
-// 手动标记支付（测试备用）：逻辑与真实回调一致但不验证签名
+// 手动标记支付（测试/线下收款备用）：逻辑与真实回调一致但不验证签名
 router.post('/orders/:id/mark-paid', async (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
   if (!order) return res.status(404).json({ error: '订单不存在' });
@@ -348,6 +348,8 @@ router.post('/orders/:id/mark-paid', async (req, res) => {
       transactionId: `manual_${Date.now()}`,
       channel: 'manual',
     });
+    // 审计留痕：手工标记支付是资金敏感操作，必须记录操作人与订单
+    logger.warn('admin', `管理员手工标记支付: 订单=${order.order_no} 金额=${order.amount} 操作人=${req.user.email} (id=${req.user.id})`);
     res.json({ ok: true, order: result.order });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -388,6 +390,8 @@ router.post('/templates/upload', (req, res) => {
 router.delete('/templates/:id', (req, res) => {
   const t = db.prepare('SELECT * FROM templates WHERE id = ?').get(req.params.id);
   if (!t) return res.status(404).json({ error: '模板不存在' });
+  // 系统预置高校模板（is_preset=1，preset:// 虚拟路径）不可删除，防止误删后无法恢复
+  if (t.is_preset) return res.status(400).json({ error: '系统预置模板不可删除' });
   const filePath = safeTemplatePath(t.file_path);
   if (filePath) {
     try { fs.unlinkSync(filePath); } catch { /* ignore */ }
@@ -424,9 +428,9 @@ router.post('/models/:key/test', async (req, res) => {
   if (!apiKey) {
     return res.json({ ok: false, message: `未配置 ${preset.env_key} 环境变量` });
   }
-  // SSRF 防护：校验 base_url 仅允许 http/https 且非云元数据/回环/链路本地
+  // SSRF 防护：校验 base_url 仅允许 http/https 且非云元数据/回环/链路本地（含 DNS 解析后二次校验）
   try {
-    assertSafeAiBaseUrl(preset.base_url);
+    await assertSafeAiResolvedUrl(preset.base_url);
   } catch (err) {
     return res.json({ ok: false, message: err.message });
   }
@@ -656,14 +660,18 @@ router.post('/users/:id/grant-course', (req, res) => {
 
 router.put('/users/:id', (req, res) => {
   const { status, is_admin, is_support } = req.body || {};
+  // status 枚举校验：仅允许 active/banned/deleted，防止任意状态字符串破坏数据完整性
+  if (status !== undefined && !['active', 'banned', 'deleted'].includes(status)) {
+    return res.status(400).json({ error: '无效的用户状态' });
+  }
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });
   // 防止管理员误禁用/降级自己，导致系统失去可用管理员
-  if (u.id === req.user.id && (status === 'banned' || is_admin === false)) {
+  if (u.id === req.user.id && (status === 'banned' || status === 'deleted' || is_admin === false)) {
     return res.status(400).json({ error: '不可禁用或取消自己的管理员权限' });
   }
   // 超级管理员账号不可被降级或禁用
-  if (u.email === 'admin@scholarforge.com' && (status === 'banned' || is_admin === false)) {
+  if (u.email === 'admin@scholarforge.com' && (status === 'banned' || status === 'deleted' || is_admin === false)) {
     return res.status(400).json({ error: '不可降级或禁用超级管理员' });
   }
   db.prepare(
@@ -678,6 +686,13 @@ router.put('/users/:id', (req, res) => {
     is_support === undefined ? null : (is_support ? 1 : 0),
     u.id
   );
+  // 禁用/删除立即断权：吊销 refresh token + token_version++（与 DELETE 接口一致）
+  if (status === 'banned' || status === 'deleted') {
+    try {
+      revokeAllRefreshTokens(u.id);
+      incrementTokenVersion(u.id);
+    } catch { /* 忽略吊销失败 */ }
+  }
   res.json({ ok: true });
 });
 
@@ -688,9 +703,11 @@ router.delete('/users/:id', (req, res) => {
   if (u.email === 'admin@scholarforge.com') return res.status(400).json({ error: '不可删除超级管理员' });
   // 软删除：仅将状态置为 deleted，保留订单/积分日志等财务记录（原硬删除会级联销毁，破坏对账）
   db.prepare("UPDATE users SET status = 'deleted' WHERE id = ?").run(u.id);
-  // 吊销其所有 refresh token，防止已登录会话继续使用
+  // 立即断权：吊销 refresh token + token_version++（access token 全部失效），
+  // 中间件同时拦截 deleted 状态（此前只拦 banned，被删用户在 access token 有效期内仍可访问）
   try {
     revokeAllRefreshTokens(u.id);
+    incrementTokenVersion(u.id);
   } catch { /* 忽略吊销失败 */ }
   res.json({ ok: true });
 });

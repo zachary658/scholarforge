@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
@@ -306,6 +306,17 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [needPay, setNeedPay] = useState(null);
   const [merging, setMerging] = useState(false);
   const integrity = useAcademicIntegrity();
+  // 轮询定时器：用 ref 管理，防重复创建 interval；组件卸载时清理（此前存在内存泄漏）
+  const pollRef = useRef(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
 
   // 借鉴千笔写作：全流程步骤导航（点击跳转到对应工具，并自动带上 projectId）
   const pipelineSteps = [
@@ -393,17 +404,21 @@ function ProjectDetail({ project, onClose, onEdit }) {
     try {
       await api.generateChapters(project.id, orderNo ? { orderNo } : {});
       await loadChapters();
-      const timer = setInterval(async () => {
+      // 防重入：已有轮询则复用，避免多次点击产生多个并行 interval
+      if (pollRef.current) return;
+      pollRef.current = setInterval(async () => {
         try {
           const d = await api.getChapters(project.id);
           setChapters(d.chapters || []);
           setGenerating(!!d.generating);
-          if (!d.generating) { clearInterval(timer); toast.success('章节生成完成'); }
-        } catch { clearInterval(timer); }
+          if (!d.generating) { stopPolling(); toast.success('章节生成完成'); }
+        } catch { stopPolling(); }
       }, 3000);
     } catch (err) {
-      if (err.needOrder) {
-        setNeedPay({ itemType: err.itemType || 'writing_fulltext', amount: 0 });
+      // 402 契约：后端返回 { error, needOrder, itemType, amount }，api.js 将其放入 err.data
+      const nd = err?.data?.needOrder;
+      if (nd) {
+        setNeedPay({ itemType: err.data.itemType || 'writing_fulltext', amount: Number(err.data.amount || 0) });
       } else {
         toast.error(err.message);
       }
@@ -417,7 +432,8 @@ function ProjectDetail({ project, onClose, onEdit }) {
       await loadChapters();
       toast.success('已提交重新生成');
     } catch (err) {
-      if (err.needOrder) setNeedPay({ itemType: 'writing_fulltext', amount: 0 });
+      const nd = err?.data?.needOrder;
+      if (nd) setNeedPay({ itemType: err.data.itemType || 'writing_fulltext', amount: Number(err.data.amount || 0) });
       else toast.error(err.message);
     }
   };

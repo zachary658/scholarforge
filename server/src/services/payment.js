@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import logger from '../logger.js';
 import db from '../db.js';
-import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice } from '../config-store.js';
+import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice, getDefaultModel } from '../config-store.js';
 import { getFeatureCashPrice } from './billing.js';
 import { computeCourseQuote } from './course-quote.js';
 import { now, datePrefix } from '../utils.js';
@@ -122,10 +122,19 @@ export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMeth
   if (feature.is_unlimited) throw new Error('该功能免费，无需下单');
   if (feature.pricing_mode === 'quote') throw new Error('该功能需人工报价，请提交报价申请');
 
+  // 生产防护：未配置真实 AI 时禁止付费下单（内置模板引擎是演示兜底，不能向用户收费输出模板/虚构内容）
+  if (process.env.NODE_ENV === 'production') {
+    const dm = getDefaultModel();
+    if (!dm || !dm.api_key) throw new Error('AI 模型未配置，付费功能暂不可用，请联系管理员');
+  }
+
   const unitPrice = getFeatureCashPrice(itemType);
   if (unitPrice <= 0) throw new Error('该功能暂未定价，请联系管理员');
 
-  const qty = Math.max(1, parseInt(quantity, 10) || 1);
+  // quantity 语义收紧：当前执行模型为「一个订单 = 一次服务」（完成后 service_status=completed）。
+  // 历史实现按 quantity 计费却只执行一次，会造成"多付少得"；现仅支持单次购买。
+  const qty = parseInt(quantity, 10) || 1;
+  if (qty !== 1) throw new Error('当前仅支持单次购买，如需多次使用请分别下单');
   const amount = Math.round(unitPrice * qty * 100) / 100;
   const useChannel = resolveChannel(paymentMethod);
 
@@ -253,7 +262,7 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
     const r = db.prepare(
       `UPDATE orders SET status = 'paid', paid_at = ?, transaction_id = COALESCE(?, transaction_id),
        payment_channel = COALESCE(?, payment_channel), service_status = ? WHERE order_no = ? AND status NOT IN ('paid', 'completed', 'cancelled')`
-    ).run(now(), transactionId, channel, order.type === 'feature' ? 'processing' : 'pending', orderNo);
+    ).run(now(), transactionId, channel, 'pending', orderNo);
     if (r.changes === 0) {
       throw new Error(`订单状态已变更，当前状态：${getOrder(orderNo).status}`);
     }

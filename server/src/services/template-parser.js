@@ -21,8 +21,9 @@ const SZ_TO_PT = (sz) => sz / 2;
 
 // ZIP 文件 magic number：PK\x03\x04
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
-// 单个条目解压后大小上限（5MB），防 zip bomb
+// 单个条目解压后大小上限（5MB）与全包解压总量上限（30MB），防 zip bomb
 const MAX_ENTRY_SIZE = 5 * 1024 * 1024;
+const MAX_TOTAL_SIZE = 30 * 1024 * 1024;
 
 // 校验文件是否为合法 ZIP（docx 本质是 ZIP）
 function isZipFile(filePath) {
@@ -35,6 +36,34 @@ function isZipFile(filePath) {
   } catch {
     return false;
   }
+}
+
+// zip bomb 预检：在任何解析（含 mammoth 全量解压）之前遍历 zip 条目，
+// 校验每个条目与全包解压后大小上限，防止高压缩比文件撑爆内存/CPU
+function checkZipEntrySizes(filePath) {
+  let zip;
+  try {
+    zip = new AdmZip(filePath);
+  } catch {
+    return { ok: false, error: '无法读取模板文件（ZIP 损坏）' };
+  }
+  const entries = zip.getEntries() || [];
+  if (entries.length > 500) {
+    return { ok: false, error: '模板文件条目过多，疑似异常文件' };
+  }
+  let total = 0;
+  for (const e of entries) {
+    if (e.isDirectory) continue;
+    const size = e.header && Number.isFinite(e.header.size) ? e.header.size : 0;
+    if (size > MAX_ENTRY_SIZE) {
+      return { ok: false, error: `模板条目 ${e.entryName || '(未知)'} 解压后过大，疑似异常文件` };
+    }
+    total += size;
+    if (total > MAX_TOTAL_SIZE) {
+      return { ok: false, error: '模板解压总量过大，疑似异常文件' };
+    }
+  }
+  return { ok: true };
 }
 
 // mammoth styleMap：将英文/中文标题样式名映射为 h1-h4，便于语义识别
@@ -100,6 +129,13 @@ export async function parseTemplate(filePath) {
   // ===== 0. magic number 校验：.docx 本质是 ZIP，拒绝伪装文件 =====
   if (!isZipFile(filePath)) {
     return { ok: false, error: '非法的 docx 文件（非 ZIP 格式）' };
+  }
+
+  // ===== 0.5 zip bomb 预检：在 mammoth 全量解压之前校验条目大小 =====
+  // （此前大小校验在 mammoth 解析之后，高压缩比 document.xml 会先撑爆内存）
+  const sizeCheck = checkZipEntrySizes(filePath);
+  if (!sizeCheck.ok) {
+    return { ok: false, error: sizeCheck.error };
   }
 
   // ===== 1. mammoth 语义解析：识别标题层级与正文结构 =====
