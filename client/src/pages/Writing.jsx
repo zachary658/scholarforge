@@ -337,11 +337,15 @@ export default function Writing() {
       </div>
 
       {tool.needOrder && (
-        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} onClose={() => tool.cancelOrder()} />
       )}
 
       {distill.needOrder && (
-        <FeaturePay needOrder={distill.needOrder} onPaid={(orderNo) => runDistill(orderNo)} />
+        <FeaturePay
+          needOrder={distill.needOrder}
+          onPaid={(orderNo) => runDistill(orderNo)}
+          onClose={() => setDistill((d) => ({ ...d, needOrder: null }))}
+        />
       )}
 
       {integrity.show && (

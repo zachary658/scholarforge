@@ -45,5 +45,11 @@ export function useTool() {
     setLoading(false);
   }, []);
 
-  return { loading, error, errorData, result, needOrder, run, reset, setError };
+  // 仅关闭支付弹窗：清除 needOrder，保留已生成结果（避免误清用户内容）
+  const cancelOrder = useCallback(() => {
+    setNeedOrder(null);
+    setLoading(false);
+  }, []);
+
+  return { loading, error, errorData, result, needOrder, run, reset, cancelOrder, setError };
 }

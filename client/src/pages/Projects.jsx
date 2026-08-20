@@ -760,7 +760,11 @@ function ProjectDetail({ project, onClose, onEdit }) {
                 ))}
               </div>
               {needPay && (
-                <FeaturePay needOrder={needPay} onPaid={(orderNo) => { setNeedPay(null); doGenerate(orderNo); }} />
+                <FeaturePay
+                  needOrder={needPay}
+                  onPaid={(orderNo) => { setNeedPay(null); doGenerate(orderNo); }}
+                  onClose={() => setNeedPay(null)}
+                />
               )}
             </div>
           )}

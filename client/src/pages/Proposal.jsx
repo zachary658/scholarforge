@@ -245,7 +245,7 @@ export default function Proposal() {
       </div>
 
       {tool.needOrder && (
-        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
+        <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} onClose={() => tool.cancelOrder()} />
       )}
     </div>
   );
