@@ -60,6 +60,13 @@ test('parseCnkiResult：文本启发式解析', () => {
   assert.equal(papers[1].authors, '王五');
 });
 
+test('parseCnkiResult：中文标题的 _dedupKey 保留 Unicode（防去重阶段丢弃中文文献的回归）', () => {
+  const papers = parseCnkiResult(JSON.stringify([{ title: '基于深度学习的医学图像分割', authors: '张三' }]), 8);
+  assert.equal(papers.length, 1);
+  assert.ok(papers[0]._dedupKey && papers[0]._dedupKey.length > 0, '中文标题的 _dedupKey 不能为空');
+  assert.ok(papers[0]._dedupKey.includes('基于深度学习的医学图像分割'), '归一化应保留中文字符');
+});
+
 test('searchCnkiViaMCP：mock server 全链路（连接→工具发现→调用→解析）', async () => {
   assert.ok(isCnkiMCPConfigured(), '测试环境应已配置 CNKI_MCP_COMMAND');
   const result = await searchCnkiViaMCP('医学影像分割', 8);

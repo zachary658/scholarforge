@@ -20,6 +20,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import logger from '../logger.js';
+import { dedupKeyOf } from '../utils.js';
 
 const MCP_COMMAND = (process.env.CNKI_MCP_COMMAND || '').trim();
 
@@ -120,7 +121,7 @@ function normalizeCnkiItem(item) {
     source_url: String(item.url || item.link || item.source_url || ''),
     source_db: 'CNKI',
     pdf_url: '',
-    _dedupKey: title.toLowerCase().replace(/[^a-z0-9]/g, ''),
+    _dedupKey: dedupKeyOf(title),
   };
 }
 
@@ -162,7 +163,7 @@ export function parseCnkiResult(text, limit = 8) {
       source_url: '',
       source_db: 'CNKI',
       pdf_url: '',
-      _dedupKey: title.toLowerCase().replace(/[^a-z0-9]/g, ''),
+      _dedupKey: dedupKeyOf(title),
     });
     i += 3;
   }
@@ -198,6 +199,16 @@ export async function searchCnkiViaMCP(query, limit = 8) {
   } catch (err) {
     recordFailure(err.message);
     logger.warn('cnki-mcp', `检索失败（忽略，不影响其他源）: ${err.message}`);
+    // 连接已建立后子进程崩溃：重置连接引用，下次调用重新拉起子进程
+    // （此前旧连接会永久失效，直到整个服务重启）
+    if (clientPromise) {
+      const stale = clientPromise;
+      clientPromise = null;
+      stale.then(({ client, transport }) => {
+        client.close().catch(() => {});
+        transport.close().catch(() => {});
+      }).catch(() => {});
+    }
     return { papers: [], disabled: false, error: err.message };
   }
 }

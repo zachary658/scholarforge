@@ -14,6 +14,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import logger from '../logger.js';
 import { getSetting } from '../config-store.js';
 import { searchCnkiViaMCP } from './mcp-literature-source.js';
+import { dedupKeyOf } from '../utils.js';
 
 // ===== 检索结果缓存（短 TTL，避免同一 query 重复打外部 API）=====
 const SEARCH_CACHE_TTL_MS = 60_000; // 60 秒
@@ -99,7 +100,7 @@ async function searchOpenAlex(query, limit = 8) {
       source_url: sourceUrl,
       source_db: 'OpenAlex',
       pdf_url: bestOa.pdf_url || '', // 开放获取 PDF 入口（数据套用引擎用）
-      _dedupKey: (doi || work.title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+      _dedupKey: dedupKeyOf(doi || work.title),
     };
   });
 }
@@ -132,7 +133,7 @@ async function searchSemanticScholar(query, limit = 8) {
       source_url: sourceUrl,
       source_db: 'Semantic Scholar',
       pdf_url: p.openAccessPdf?.url || '', // 开放获取 PDF 入口（数据套用引擎用）
-      _dedupKey: (doi || p.title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+      _dedupKey: dedupKeyOf(doi || p.title),
     };
   });
 }
@@ -166,7 +167,7 @@ async function searchCrossRef(query, limit = 8) {
       source_url: item.URL || (doi ? `https://doi.org/${doi}` : ''),
       source_db: 'CrossRef',
       pdf_url: '', // CrossRef 无 OA PDF 直链，由 OpenAlex/Semantic Scholar 补
-      _dedupKey: (doi || (item.title || [''])[0] || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+      _dedupKey: dedupKeyOf(doi || (item.title || [''])[0]),
     };
   });
 }
@@ -220,7 +221,7 @@ export function parseArxivAtom(xmlText) {
       source_url: arxivId ? `https://arxiv.org/abs/${arxivId}` : '',
       source_db: 'arXiv',
       pdf_url: pdfUrl || (arxivId ? `https://arxiv.org/pdf/${arxivId}` : ''),
-      _dedupKey: (arxivId || title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+      _dedupKey: dedupKeyOf(arxivId || title),
     });
   }
   return papers;
@@ -242,7 +243,8 @@ async function searchArxiv(query, limit = 8) {
 function dedupeAndMerge(results, limit = 8) {
   const seen = new Map();
   for (const r of results) {
-    const key = r._dedupKey;
+    // 归一化去重键保留 Unicode（中文标题此前会被清空成空串导致中文文献被丢弃）
+    const key = r._dedupKey || dedupKeyOf(r.title);
     if (!key) continue;
     if (seen.has(key)) {
       // 已存在，合并信息（优先保留有摘要的、引用数高的）

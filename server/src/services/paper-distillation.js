@@ -24,6 +24,7 @@
 import { searchMultiSource } from './multi-source-search.js';
 import { runAI } from '../ai-service.js';
 import { getDefaultModel } from '../config-store.js';
+import { dedupKeyOf } from '../utils.js';
 import logger from '../logger.js';
 
 // pdfjs 动态导入（Node 18+ 兼容）；仅在需要解析 OA PDF 时加载，避免拖慢常规路径
@@ -320,7 +321,8 @@ export async function collectWritingSources(topic, field, keywords = '', limit =
 function dedupePapers(papers) {
   const seen = new Map();
   for (const p of papers) {
-    const key = (p._dedupKey || p.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    // 归一化保留 Unicode：中文标题此前被清空成空串导致中文文献被整体丢弃
+    const key = p._dedupKey || dedupKeyOf(p.title);
     if (!key) continue;
     if (seen.has(key)) {
       const ex = seen.get(key);

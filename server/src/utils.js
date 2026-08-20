@@ -17,6 +17,18 @@ export function datePrefix() {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * 归一化去重键：小写 + 去空白/标点/符号，保留 Unicode。
+ * 注意：此前各源用 [^a-z0-9] 归一化，中文标题会被清空成空串，
+ * 导致中文文献（CNKI/中文期刊）在去重阶段被整体丢弃——已修复为保留全部语言字符。
+ */
+export function dedupKeyOf(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .slice(0, 200);
+}
+
 // ===== SSRF 防护：校验出站 AI 服务地址 =====
 // AI base_url 由管理员在后台配置，服务端会据此发起请求。
 // 若管理员账号被攻破，可被用于 SSRF（探测内网 / 云元数据端点）。

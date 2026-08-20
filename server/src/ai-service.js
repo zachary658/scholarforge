@@ -428,9 +428,11 @@ export async function runAI(tool, params, responseFormat = null) {
   // 真实调用
   const systemPrompt = SYSTEM_PROMPTS[tool] || '你是一位学术助手。';
   const userPrompt = buildUserPrompt(tool, params);
-  // 毕业论文全文需要长输出：12000+ 中文字 ≈ 16000-20000 tokens
-  // 默认 2048 tokens 仅能输出约 1500 中文字，严重不足
-  const maxTokensOverride = (tool === 'writing' && params.type === 'fulltext') ? 16000 : null;
+  // 毕业论文全文需要长输出：默认 2048 tokens 仅能输出约 1500 中文字，严重不足。
+  // 按模型目录配置的输出上限覆盖（DeepSeek 等上限 8192，超限会报 Invalid max_tokens）
+  const maxTokensOverride = (tool === 'writing' && params.type === 'fulltext')
+    ? (model.max_tokens || 2048)
+    : null;
   const { content, tokens, promptTokens, completionTokens } = await callOpenAICompatible(model, systemPrompt, userPrompt, { maxTokensOverride, responseFormat });
   return {
     content,
