@@ -219,4 +219,54 @@ async function downloadPdfBytes(url, { maxBytes = 25*1024*1024, timeoutMs = 1000
 - **P0**：H-1 SSRF + 高危依赖（nanoid）→ 已闭环（§8）。
 - **P1**：M-1（设计安全 + 纵深）、M-2（限流增强）、M-3（token 内存化）→ 全部完成（§9.1–9.3）。
 - **P2**：L-2（日志脱敏）、L-3（并发信号量）、L-4（成本硬上限）已落地；L-1 经决策说明收敛；依赖破坏性升级（vite/router）与 image-size 上游 0-day 留作后续工程项（§9.7–9.8）。
-- 整体安全态势：核心业务 + 底线安全框架已较健全；剩余项均为「需破坏性升级 / 上游无补丁 / 多实例基建」类，不阻塞发布，建议纳入后续迭代。
+- **P3**：Docker 化 + CI 门禁 + E2E 冒烟 + 依赖治理自动化 → 全部完成（§11）。
+- 整体安全态势：核心业务 + 底线安全框架 + 工程化交付链路已较健全；剩余项均为「需破坏性升级 / 上游无补丁 / 多实例基建（Redis 限流）」类，不阻塞发布，建议纳入后续迭代。
+
+---
+
+## 11. P3 执行记录（2026-08-20 晚）
+
+### 11.1 Docker 化 ✅
+- 新增根目录 `Dockerfile`（多阶段构建）：
+  - Stage1 `client-build`：构建前端 `client/dist`；
+  - Stage2 `server-deps`：安装后端生产依赖（含 better-sqlite3 / sharp 原生模块编译所需的 `python3/make/g++`）；
+  - Stage3 `runtime`：`node:22-slim` + `tini`（保证 SIGTERM 正确传递，触发优雅关闭），挂载 `/app/server/{data,uploads,logs}` 为可变目录。
+- 前端产物放置于 server 预期的 `../../client/dist`（`/app/client/dist`），与 `index.js` 的静态托管路径一致。
+- 新增 `docker-compose.yml`：单服务 + 三个持久化卷（data/uploads/logs），通过 `.env` 注入密钥；`NODE_ENV=production` 下若无真实支付通道会自动拒绝启动（安全自检保留）。
+- 新增 `.dockerignore`、` .env.example`（完整环境变量模板，含 JWT_SECRET / 管理员 / 支付 / AI / SMTP 说明）。
+
+### 11.2 CI 门禁 ✅
+- 新增 `.github/workflows/ci.yml`，三个 job：
+  - `server-test`：`npm ci` → `npm audit --audit-level=high`（**信息性步骤，不阻塞**，原因见下）→ `npm test`；
+  - `client-build`：`npm ci` → `npm run build`；
+  - `docker-build`：`docker build` 校验镜像可构建。
+- 触发：push 到 `master` 与所有 PR。缓存复用 `package-lock.json`。
+- **审计不阻塞说明**：server 的 `image-size` 高危为上游 0-day（无补丁版本）、client 的 `esbuild/vite` 中危仅影响开发服务器，二者均不阻断构建；故审计作为报告项而非硬性门禁，避免 CI 永远失败。PR 中仍可看到告警供评审。
+
+### 11.3 E2E 冒烟测试 ✅
+- 新增 `server/test/e2e-smoke.test.js`：真实 `spawn` 启动 server 子进程（dev 模式 + 临时 DB），验证完整闭环：
+  - `/api/health` 200；
+  - 注册 → 返回 `accessToken`；
+  - 带 token 访问 `/api/auth/me` 200 且用户正确；
+  - 登录 → 返回 `accessToken`；
+  - 非法 / 缺失 token 一律 401。
+- 纳入 `node --test`，成为 CI 门禁一部分；无需浏览器 / 真实 AI Key。
+- **验证**：服务端测试由 28/28 升至 **29/29 通过**（含该 E2E）。
+
+### 11.4 依赖治理自动化 ✅
+- 新增 `.github/dependabot.yml`：对 `server`、`client` 的 npm 依赖与 `github-actions` 按周自动开 PR（`open-pull-requests-limit: 10`，分组避免碎片化），降低供应链风险、保持补丁及时性。
+
+### 11.5 验证
+- 服务端 `node --test`：**29/29 通过**（零回归，新增 E2E 1 项）。
+- 客户端 `npm run build`：**构建成功**。
+- Docker：本机环境无 docker 守护进程，未能本地构建；镜像构建交由 CI `docker-build` job 校验（Dockerfile 已按标准多阶段写法编写并通过路径核对）。
+- `npm ci` 所需 lockfile（`server/package-lock.json`、`client/package-lock.json`）均已存在。
+
+---
+
+## 12. 后续迭代建议（非阻塞）
+1. **限流多实例**：将 `rateLimit.js` 的 `store` 接入 Redis（代码已留注入点），消除进程内存限流在多副本下的失效。
+2. **react-router v7 迁移**：评估大版本升级，消除 moderate 开放重定向类告警（需配套路由回归测试）。
+3. **image-size 上游补丁跟进**：持续监控 GHSA-5p2g-fcmc-qvqq，发布后第一时间升级；过渡期维持 §8.3 的缓解（图片格式白名单 + 超时隔离 + sharp 替代）。
+4. **E2E 增强**：在具备真实 AI Key / 支付沙箱后，补充「文献检索 → 章节生成 → 导出」业务级 E2E，覆盖核心付费链路。
+5. **发布加固**：为镜像打语义化 tag + 签名（cosign），并补充容器运行时只读根文件系统 / 非 root 用户（可选进一步加固）。

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  server-test:
+    name: Server (install / audit / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      # 依赖审计：作为信息性步骤输出（不强退）。
+      # 原因：server 的 image-size 高危存在上游 0-day（GHSA-5p2g-fcmc-qvqq，无补丁版本）；
+      # client 的 esbuild/vite 中危仅影响开发服务器。二者均不阻塞构建，详见 SECURITY_AND_QUALITY_AUDIT.md。
+      - name: npm audit (informational)
+        run: npm audit --audit-level=high || true
+      - run: npm test
+
+  client-build:
+    name: Client (install / build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  docker-build:
+    name: Docker image build (validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t scholarforge:ci .

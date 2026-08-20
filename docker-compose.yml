@@ -1,0 +1,39 @@
+# ScholarForge 本地编排：单服务容器 + 持久化卷
+# 用法：
+#   cp .env.example .env   # 编辑填入真实密钥
+#   docker compose up --build
+#
+# 注意：默认 NODE_ENV=production 时，容器要求配置真实支付通道，否则会拒绝启动（安全自检）。
+# 仅本地体验可设 NODE_ENV=development 启用 mock 支付。
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scholarforge:latest
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      PORT: "3001"
+      # 必填（production）：JWT 密钥（>=32 字符）、管理员凭据
+      JWT_SECRET: "${JWT_SECRET:-}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@example.com}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-changeme123}"
+      # 支付：production 必须设置为 alipay/wechat/mixed 并填写对应密钥（见 .env.example）
+      PAYMENT_MODE: "${PAYMENT_MODE:-mock}"
+      # 可选：AI 模型、MinerU、SMTP、CORS、TRUST_PROXY 等
+      CORS_ALLOW_ORIGINS: "${CORS_ALLOW_ORIGINS:-http://localhost:3001}"
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+    env_file:
+      - .env
+    volumes:
+      - sf-data:/app/server/data
+      - sf-uploads:/app/server/uploads
+      - sf-logs:/app/server/logs
+    restart: unless-stopped
+
+volumes:
+  sf-data:
+  sf-uploads:
+  sf-logs:

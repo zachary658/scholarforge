@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+client/dist
+server/data
+server/logs
+server/uploads
+.git
+.github
+.env
+.env.*
+*.log
+*.md
+!SECURITY_AND_QUALITY_AUDIT.md
