@@ -436,11 +436,17 @@ export function extractBenchmarkData(papers) {
 }
 
 // ===== OA PDF 全文数据提取（数据套用引擎第二阶段） =====
-// 限制：PDF ≤ 5MB、最多解析前 15 页、每篇 25s 超时、每次任务最多处理 4 篇、并发 3
+// 双通道设计：
+//   1. MinerU（优先，MINERU_API_URL 配置后启用）：表格/公式/双栏解析质量远高于纯文本提取，
+//      适合"图表数据套用"的高质量场景（https://github.com/opendatalab/MinerU）
+//   2. 内置 pdfjs（兜底）：轻量、零部署依赖，按坐标重建文本行
+// 限制：PDF ≤ 5MB、最多解析前 15 页、每篇超时、每次任务最多处理 4 篇、并发 3
 const PDF_MAX_BYTES = 5 * 1024 * 1024;
 const PDF_MAX_PAGES = 15;
 const PDF_MAX_PAPERS = 4;
 const PDF_CONCURRENCY = 3;
+const MINERU_API_URL = (process.env.MINERU_API_URL || '').replace(/\/+$/, '');
+const MINERU_TIMEOUT_MS = Number(process.env.MINERU_TIMEOUT || 60000);
 
 // 按 y 坐标聚类重建 PDF 文本行（表格行的数值列才能保持对齐）
 function rebuildLines(items) {
@@ -459,9 +465,8 @@ function rebuildLines(items) {
       .join(' '));
 }
 
-// 下载并解析 OA PDF，返回重建后的文本行（超限/失败抛错，由调用方降级）
-async function extractPdfLines(url) {
-  const getDocument = await loadPdfjs();
+// 下载 OA PDF（大小限制 + 超时；失败抛错由调用方降级）
+async function downloadPdfBytes(url) {
   const resp = await fetch(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
     signal: AbortSignal.timeout(25000),
@@ -471,7 +476,60 @@ async function extractPdfLines(url) {
   if (declared && declared > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
   const buf = Buffer.from(await resp.arrayBuffer());
   if (buf.length > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
-  const doc = await getDocument({ data: new Uint8Array(buf), isEvalSupported: false, useSystemFonts: true }).promise;
+  return buf;
+}
+
+// ===== 通道一：MinerU（高质量，可选） =====
+// 调用 MinerU FastAPI 版接口（POST /file_parse，multipart 上传），解析响应中的
+// markdown 与 content_list（含结构化表格）。响应格式按版本存在差异，做宽容解析。
+async function parsePdfViaMinerU(pdfBytes) {
+  const form = new FormData();
+  form.append('files', new Blob([pdfBytes], { type: 'application/pdf' }), 'paper.pdf');
+  form.append('parse_method', 'auto');
+  const resp = await fetch(`${MINERU_API_URL}/file_parse`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(MINERU_TIMEOUT_MS),
+  });
+  if (!resp.ok) throw new Error(`MinerU HTTP ${resp.status}`);
+  const data = await resp.json();
+  const markdown = data?.results?.markdown || data?.markdown || '';
+  if (!markdown && !data?.results?.content_list && !data?.content_list) {
+    throw new Error('MinerU 响应缺少可解析内容');
+  }
+  return { markdown, data };
+}
+
+// 从 MinerU 响应的 content_list 中提取结构化表格（table_body 为 HTML 表格）
+export function tablesFromMinerUData(data) {
+  const contentList = data?.results?.content_list || data?.content_list || [];
+  const tables = [];
+  for (const item of contentList) {
+    if (item && item.type === 'table' && item.table_body) {
+      const rows = htmlTableToRows(item.table_body);
+      if (rows.length >= 2) tables.push(rows);
+    }
+  }
+  return tables;
+}
+
+// HTML 表格 → 二维数组（宽容解析：单元格内标签剥离）
+export function htmlTableToRows(html) {
+  const rows = [];
+  const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m;
+  while ((m = trRe.exec(String(html || ''))) !== null) {
+    const cells = [...m[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+      .map((c) => c[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim());
+    if (cells.length > 0) rows.push(cells);
+  }
+  return rows;
+}
+
+// ===== 通道二：内置 pdfjs（兜底） =====
+async function parsePdfViaPdfjs(pdfBytes) {
+  const getDocument = await loadPdfjs();
+  const doc = await getDocument({ data: new Uint8Array(pdfBytes), isEvalSupported: false, useSystemFonts: true }).promise;
   const lines = [];
   try {
     for (let i = 1; i <= Math.min(doc.numPages, PDF_MAX_PAGES); i++) {
@@ -484,6 +542,19 @@ async function extractPdfLines(url) {
     await doc.destroy().catch(() => {});
   }
   return lines;
+}
+
+// 统一入口：下载 PDF 后走 MinerU（若配置）或 pdfjs 通道
+// 返回 { lines, mineruTables }；MinerU 通道失败会由调用方捕获后回退 pdfjs
+async function extractPdfText(url) {
+  const buf = await downloadPdfBytes(url);
+  if (MINERU_API_URL) {
+    const { markdown, data } = await parsePdfViaMinerU(buf);
+    const lines = markdown.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (lines.length === 0) throw new Error('MinerU 返回空内容');
+    return { lines, mineruTables: tablesFromMinerUData(data) };
+  }
+  return { lines: await parsePdfViaPdfjs(buf), mineruTables: [] };
 }
 
 // 从重建行中提取数据表：连续出现 ≥3 个数值 token 的行视为表格行
@@ -519,6 +590,7 @@ export function extractDataTables(lines, paper, maxTables = 3) {
 }
 
 // 富集数据源：对带 OA PDF 的论文下载全文提取指标与表格（失败静默降级）
+// MinerU 通道优先（若配置）；MinerU 调用失败自动回退内置 pdfjs 通道
 // 返回 { benchmarks（含 PDF 提取合并结果）, tables }
 export async function enrichSourcesFromOpenAccess(papers, benchmarks = []) {
   const merged = Array.isArray(benchmarks) ? benchmarks.map((b) => ({ ...b })) : [];
@@ -528,22 +600,51 @@ export async function enrichSourcesFromOpenAccess(papers, benchmarks = []) {
   for (let i = 0; i < candidates.length; i += PDF_CONCURRENCY) {
     const batch = candidates.slice(i, i + PDF_CONCURRENCY);
     await Promise.all(batch.map(async (p) => {
+      let extracted = null;
       try {
-        const lines = await extractPdfLines(p.pdf_url);
-        const metrics = extractMetricsFromText(lines.join('\n'));
-        if (metrics.length > 0) {
-          merged.push({
-            paperTitle: p.title,
-            paperYear: p.year,
-            source_db: p.source_db,
+        extracted = await extractPdfText(p.pdf_url);
+      } catch (err) {
+        // MinerU 通道失败（或 PDF 下载失败）时，回退内置 pdfjs 通道再试一次
+        if (MINERU_API_URL) {
+          try {
+            const buf = await downloadPdfBytes(p.pdf_url);
+            extracted = { lines: await parsePdfViaPdfjs(buf), mineruTables: [] };
+            logger.warn('paper-distillation', `MinerU 解析失败，已回退 pdfjs: ${(p.title || '').slice(0, 40)} - ${err.message}`);
+          } catch (err2) {
+            logger.warn('paper-distillation', `OA PDF 数据提取失败（忽略）: ${(p.title || '').slice(0, 40)} - ${err2.message}`);
+          }
+        } else {
+          logger.warn('paper-distillation', `OA PDF 数据提取失败（忽略）: ${(p.title || '').slice(0, 40)} - ${err.message}`);
+        }
+      }
+      if (!extracted) return;
+      const { lines, mineruTables } = extracted;
+
+      const metrics = extractMetricsFromText(lines.join('\n'));
+      if (metrics.length > 0) {
+        merged.push({
+          paperTitle: p.title,
+          paperYear: p.year,
+          source_db: p.source_db,
+          source_url: p.source_url,
+          metrics: metrics.slice(0, 8),
+          from_fulltext: true,
+        });
+      }
+      if (mineruTables.length > 0) {
+        // MinerU 结构化表格：质量高，优先采用（保留来源标注）
+        for (const rows of mineruTables) {
+          tables.push({
+            source: p.title,
+            year: p.year,
             source_url: p.source_url,
-            metrics: metrics.slice(0, 8),
-            from_fulltext: true,
+            source_db: p.source_db,
+            rows: rows.slice(0, 12).map((r) => r.slice(0, 8)),
+            from_mineru: true,
           });
         }
+      } else {
         tables.push(...extractDataTables(lines, p));
-      } catch (err) {
-        logger.warn('paper-distillation', `OA PDF 数据提取失败（忽略）: ${(p.title || '').slice(0, 40)} - ${err.message}`);
       }
     }));
   }

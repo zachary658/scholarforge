@@ -1,6 +1,6 @@
 /**
  * 多源文献检索聚合服务
- * 聚合 OpenAlex + Semantic Scholar + CrossRef 三个免费学术数据库
+ * 聚合 OpenAlex + Semantic Scholar + CrossRef + arXiv 四个免费学术数据库
  * 统一返回格式，去重合并，按引用数排序
  *
  * 设计目标：
@@ -10,6 +10,7 @@
  *   - 控制返回数量（默认8篇，平衡覆盖度与token成本）
  *   - 熔断机制：连续失败超过阈值后，短时间内不再请求该源
  */
+import { DOMParser } from '@xmldom/xmldom';
 import logger from '../logger.js';
 import { getSetting } from '../config-store.js';
 
@@ -169,6 +170,73 @@ async function searchCrossRef(query, limit = 8) {
   });
 }
 
+// ===== arXiv =====
+// 免费 API，预印本全量覆盖（物理/数学/CS/AI 等理工科），ATOM XML 格式
+// 文档：https://info.arxiv.org/help/api/index.html
+function arxivTextOf(node, tag) {
+  const els = node.getElementsByTagName(tag);
+  return els && els.length ? els[0].textContent || '' : '';
+}
+
+function cleanArxivText(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim();
+}
+
+// 解析 arXiv ATOM XML 为统一 paper 结构（导出供单元测试使用）
+export function parseArxivAtom(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const entries = doc.getElementsByTagName('entry');
+  const papers = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const id = arxivTextOf(e, 'id') || '';
+    const arxivId = id.split('/abs/').pop() || '';
+    const title = cleanArxivText(arxivTextOf(e, 'title'));
+    const summary = cleanArxivText(arxivTextOf(e, 'summary'));
+    const published = arxivTextOf(e, 'published') || '';
+    const year = published.slice(0, 4);
+    const authors = [];
+    const authorEls = e.getElementsByTagName('author');
+    for (let j = 0; j < authorEls.length; j++) {
+      const name = cleanArxivText(arxivTextOf(authorEls[j], 'name'));
+      if (name) authors.push(name);
+    }
+    let pdfUrl = '';
+    const links = e.getElementsByTagName('link');
+    for (let j = 0; j < links.length; j++) {
+      if (links[j].getAttribute && links[j].getAttribute('title') === 'pdf') {
+        pdfUrl = links[j].getAttribute('href') || '';
+      }
+    }
+    papers.push({
+      title: title || '(无标题)',
+      authors: authors.join(', ') || '佚名',
+      year: year || '',
+      journal: 'arXiv',
+      doi: '',
+      abstract: summary,
+      cited_by_count: 0, // arXiv API 无引用数
+      source_url: arxivId ? `https://arxiv.org/abs/${arxivId}` : '',
+      source_db: 'arXiv',
+      pdf_url: pdfUrl || (arxivId ? `https://arxiv.org/pdf/${arxivId}` : ''),
+      _dedupKey: (arxivId || title || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+    });
+  }
+  return papers;
+}
+
+async function searchArxiv(query, limit = 8) {
+  const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${limit}`;
+  const resp = await fetch(url, {
+    // arXiv API 强制要求 User-Agent，否则返回 403
+    headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!resp.ok) throw new Error(`arXiv ${resp.status}`);
+  const xmlText = await resp.text();
+  return parseArxivAtom(xmlText);
+}
+
 // ===== 跨源去重 + 合并排序 =====
 function dedupeAndMerge(results, limit = 8) {
   const seen = new Map();
@@ -204,7 +272,7 @@ function dedupeAndMerge(results, limit = 8) {
  */
 export async function searchMultiSource(query, opts = {}) {
   const limit = opts.limit || 8;
-  const sources = opts.sources || ['openalex', 'semantic', 'crossref'];
+  const sources = opts.sources || ['openalex', 'semantic', 'crossref', 'arxiv'];
   // 短 TTL 缓存：同一 query 在 60s 内复用结果，避免重复打外部 API
   const cacheKey = `${(query || '').trim().toLowerCase()}|${limit}|${[...sources].sort().join(',')}`;
   const cached = searchCache.get(cacheKey);
@@ -247,6 +315,17 @@ export async function searchMultiSource(query, opts = {}) {
         searchCrossRef(query, limit)
           .then((r) => { recordSuccess('CrossRef'); sources_used.push('CrossRef'); allResults.push(...r); })
           .catch((e) => { recordFailure('CrossRef'); errors.push(`CrossRef: ${e.message}`); })
+      );
+    }
+  }
+  if (sources.includes('arxiv')) {
+    if (isCircuitOpen('arXiv')) {
+      errors.push('arXiv: 熔断中（连续失败过多，暂时跳过）');
+    } else {
+      tasks.push(
+        searchArxiv(query, limit)
+          .then((r) => { recordSuccess('arXiv'); sources_used.push('arXiv'); allResults.push(...r); })
+          .catch((e) => { recordFailure('arXiv'); errors.push(`arXiv: ${e.message}`); })
       );
     }
   }

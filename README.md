@@ -8,7 +8,8 @@ AI 驱动的学术论文辅助写作平台，集成论文写作、分章节生�
 - **前端**：React 18 + Vite + TailwindCSS + React Router
 - **AI**：支持 DeepSeek / OpenAI 兼容协议（未配置时使用内置模板）
 - **文档生成**：docx + latex-to-omml（原生可编辑公式）+ vega-lite/mermaid（图表）
-- **文献检索**：OpenAlex + Semantic Scholar + CrossRef 多源聚合
+- **文献检索**：OpenAlex + Semantic Scholar + CrossRef + arXiv 四源聚合
+- **数据套用**：摘要指标 + OA 全文 PDF 提取（可选 MinerU 高质量解析通道，未配置时用内置 pdfjs 兜底）
 - **内容安全**：本地敏感词过滤兜底 + 可配置阿里云内容安全 / 网易易盾
 
 ## 目录结构
