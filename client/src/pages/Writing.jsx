@@ -5,9 +5,10 @@ import { useTool } from '../lib/useTool.js';
 import { FIELDS } from '../lib/constants.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
+import SmartWritingResult from '../components/SmartWritingResult.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
-  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck,
+  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck, Brain,
 } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 
@@ -30,6 +31,8 @@ export default function Writing() {
   const [copied, setCopied] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const copyTimerRef = useRef(null);
+  // 深度蒸馏（大纲生成后的付费升级）：多视角检索 → 蒸馏框架/文献/数据
+  const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
 
   useEffect(() => {
     api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
@@ -82,6 +85,27 @@ export default function Writing() {
       copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       toast.error('复制失败，请手动复制');
+    }
+  };
+
+  // 深度蒸馏：大纲生成后的付费升级（需已支付的 literature_review 订单）
+  const runDistill = async (orderNo) => {
+    if (!form.topic.trim()) return;
+    setDistill({ loading: true, error: '', result: null, needOrder: null });
+    try {
+      const data = await api.smartWriting({
+        topic: form.topic.trim(),
+        field: form.field,
+        projectId: projectId || undefined,
+        orderNo: orderNo || undefined,
+      });
+      if (data.needOrder) {
+        setDistill({ loading: false, error: '', result: null, needOrder: { itemType: data.itemType, amount: data.amount } });
+      } else {
+        setDistill({ loading: false, error: '', result: data, needOrder: null });
+      }
+    } catch (err) {
+      setDistill({ loading: false, error: err.message || '深度蒸馏失败', result: null, needOrder: null });
     }
   };
 
@@ -264,6 +288,40 @@ export default function Writing() {
                 ) : (
                   <p className="text-sm text-slate-400">内容已生成</p>
                 )}
+
+                {/* ===== 大纲生成后的「深度蒸馏」升级（单页面递进式） ===== */}
+                {form.type === 'outline' && result && !distill.result && (
+                  <div className="mt-5 rounded-xl border border-accent/25 bg-accent-50/40 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent">
+                        <Brain className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-ink">深度蒸馏（付费升级）</div>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                          拆分 3-5 个研究视角深度检索真实论文，蒸馏出研究方法/创新点/结论、真实文献清单与可套用的实验数据表格，
+                          覆盖到工作区供分章节生成自动引用
+                        </p>
+                      </div>
+                      <button onClick={() => runDistill()} disabled={distill.loading} className="btn-primary shrink-0 px-3 py-2 text-xs">
+                        {distill.loading ? (
+                          <><Refresh className="h-3.5 w-3.5 animate-spin" /> 蒸馏中…（约 1 分钟）</>
+                        ) : (
+                          <><Brain className="h-3.5 w-3.5" /> 开始深度蒸馏</>
+                        )}
+                      </button>
+                    </div>
+                    {distill.error && (
+                      <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{distill.error}</div>
+                    )}
+                  </div>
+                )}
+
+                {form.type === 'outline' && distill.result && (
+                  <div className="mt-5 rounded-xl border border-accent/30">
+                    <SmartWritingResult result={distill.result} />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center">
@@ -280,6 +338,10 @@ export default function Writing() {
 
       {tool.needOrder && (
         <FeaturePay needOrder={tool.needOrder} onPaid={(orderNo) => run(orderNo)} />
+      )}
+
+      {distill.needOrder && (
+        <FeaturePay needOrder={distill.needOrder} onPaid={(orderNo) => runDistill(orderNo)} />
       )}
 
       {integrity.show && (

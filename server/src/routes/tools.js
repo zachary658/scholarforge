@@ -7,7 +7,7 @@ import logger from '../logger.js';
 import { getFeaturePrice } from '../config-store.js';
 import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, saveProjectSources, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
@@ -308,6 +308,25 @@ router.post('/writing', authRequired, async (req, res) => {
         sourceBenchmarks = benchmarks;
       } catch (err) {
         logger.warn('tools', `写作检索失败（忽略，改用无文献生成）: ${err.message}`);
+      }
+    }
+    // 大纲生成（免费快速版）：把检索到的真实文献/数据持久化到工作区，
+    // 供后续章节/全文生成复用；已有深度蒸馏产物（framework 非空）时保留不覆盖
+    if (type === 'outline' && projectId && sourceRefs?.length) {
+      try {
+        const existing = getProject(projectId, req.user.id)?.sources || {};
+        if (!existing.framework) {
+          saveProjectSources(projectId, req.user.id, {
+            framework: existing.framework || null,
+            references: sourceRefs,
+            benchmarks: sourceBenchmarks || [],
+            tables: existing.tables || [],
+            sources_used: existing.sources_used || [],
+            saved_at: Math.floor(Date.now() / 1000),
+          });
+        }
+      } catch (err) {
+        logger.warn('tools', `大纲来源持久化失败（忽略）: ${err.message}`);
       }
     }
   }

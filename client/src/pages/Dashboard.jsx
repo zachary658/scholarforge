@@ -5,12 +5,11 @@ import { useAuth } from '../lib/auth.jsx';
 import { PageSkeleton } from '../components/Skeleton.jsx';
 import {
   Pen, Globe, Book, FileWord, ArrowRight, Plus, Receipt,
-  FileText, Shield, Refresh, Layers, Activity, Brain,
+  FileText, Shield, Refresh, Layers, Activity,
 } from '../components/Icons.jsx';
 
 const tools = [
-  { to: '/app/smart-writing', icon: Brain, title: '智能写作', desc: '多视角检索蒸馏真实论文，生成文献扎实的大纲', color: 'bg-accent-50 text-accent' },
-  { to: '/app/writing', icon: Pen, title: 'AI 论文写作', desc: '大纲 / 段落 / 摘要 / 全文，输出 Word', color: 'bg-sky-50 text-sky-600' },
+  { to: '/app/writing', icon: Pen, title: 'AI 论文写作', desc: '大纲 / 段落 / 摘要 / 全文，支持深度蒸馏升级', color: 'bg-accent-50 text-accent' },
   { to: '/app/proposal', icon: FileWord, title: '开题报告', desc: '填写研究要素，生成开题报告 Word', color: 'bg-violet-50 text-violet-600' },
   { to: '/app/literature-review', icon: Book, title: '文献综述', desc: '主题分类梳理，含文献引用', color: 'bg-indigo-50 text-indigo-600' },
   { to: '/app/task-book', icon: FileText, title: '任务书', desc: '毕业论文任务书，含进度安排', color: 'bg-teal-50 text-teal-600' },
