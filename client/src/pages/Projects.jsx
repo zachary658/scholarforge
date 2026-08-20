@@ -371,11 +371,23 @@ function ProjectDetail({ project, onClose, onEdit }) {
     }
   }, [project.id]);
 
+  // 刷新工作区大纲：大纲生成/深度调研后自动写入结构化大纲，进入此 tab 时拉取最新
+  const loadProject = useCallback(async () => {
+    try {
+      const d = await api.getProject(project.id);
+      setOutline(d.project?.outline || []);
+      if (d.project?.outline_confirmed_at) setConfirmedAt(d.project.outline_confirmed_at);
+    } catch (err) {
+      toast.error('加载大纲失败：' + err.message);
+    }
+  }, [project.id]);
+
   useEffect(() => {
     if (tab === 'tasks') loadTasks();
     if (tab === 'context') loadContext();
     if (tab === 'chapters') loadChapters();
-  }, [tab, loadTasks, loadContext, loadChapters]);
+    if (tab === 'outline') loadProject();
+  }, [tab, loadTasks, loadContext, loadChapters, loadProject]);
 
   const handleSaveOutline = async () => {
     setSavingOutline(true);

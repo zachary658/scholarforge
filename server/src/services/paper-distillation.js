@@ -467,6 +467,81 @@ export async function smartWriting(params) {
   };
 }
 
+// ===== 大纲结构化：大纲文本 → 工作区结构化大纲 =====
+// 兼容三种大纲格式（AI markdown / 内置模板中文序号 / 数字编号），
+// 输出 [{chapter, sections:[{title}]}]，供工作区展示、确认与分章节生成消费。
+
+// 清理章节名（去掉 markdown 标记与多余空格，保留完整名称）
+function cleanName(s) {
+  return String(s || '').replace(/[*_`#]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+export function outlineTextToStructure(text) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const chapters = [];
+  let cur = null;
+
+  for (const line of lines) {
+    // 一级标题（论文题目）跳过；文末参考文献等附属标题跳过
+    if (/^#\s/.test(line)) continue;
+    if (/^(参考文献|致谢|附录|References|Acknowledg).*$/.test(line)) continue;
+
+    // 1) markdown 二级标题：## 第一章 绪论
+    let m = line.match(/^#{2}\s+(.+)$/);
+    if (m) {
+      cur = { chapter: cleanName(m[1]), sections: [] };
+      chapters.push(cur);
+      continue;
+    }
+
+    // 2) markdown 三级标题：### 1.1 小节
+    m = line.match(/^#{3}\s+(.+)$/);
+    if (m) {
+      if (cur) cur.sections.push({ title: cleanName(m[1]) });
+      continue;
+    }
+
+    // 3) 中文序号章节：一、引言 / 二、相关理论（仅当不以下级数字开头）
+    m = line.match(/^[一二三四五六七八九十]+[、.．]\s*(.+)$/);
+    if (m && !/^\d/.test(m[1])) {
+      cur = { chapter: cleanName(line), sections: [] };
+      chapters.push(cur);
+      continue;
+    }
+
+    // 4) 「第X章」章节：第一章 绪论 / 第1章 绪论
+    m = line.match(/^第[一二三四五六七八九十\d]+章[\s、.．]*(.*)$/);
+    if (m) {
+      cur = { chapter: cleanName(line), sections: [] };
+      chapters.push(cur);
+      continue;
+    }
+
+    // 5) 纯数字章节（无二级点号）：1 引言 / 1. 引言 / 1、引言
+    m = line.match(/^([1-9]\d?)[、.．]\s*(.+)$/);
+    if (m && !/^\d/.test(m[2])) {
+      cur = { chapter: cleanName(line), sections: [] };
+      chapters.push(cur);
+      continue;
+    }
+
+    // 6) 小节：1.1 xxx / 1.1.1 xxx（保留编号）与 （1）xxx
+    m = line.match(/^(\d+\.\d+(?:\.\d+)?)[.．、\s]*(.+)$/);
+    if (m) {
+      if (cur) cur.sections.push({ title: cleanName(`${m[1]} ${m[2]}`) });
+      continue;
+    }
+    m = line.match(/^[（(]\d+[)）]\s*(.+)$/);
+    if (m) {
+      if (cur) cur.sections.push({ title: cleanName(line) });
+      continue;
+    }
+  }
+
+  // 过滤空章节；无任何小节时保留章节本身（用户可继续编辑）
+  return chapters.filter((c) => c.chapter).map((c) => ({ chapter: c.chapter, sections: c.sections || [] }));
+}
+
 // 构建框架上下文（注入到AI生成的context中）
 // papers 可选：仅用于统计来源数据库；持久化场景下可由 framework.paperCount / sources_used 提供
 export function buildFrameworkContext(framework, papers = []) {

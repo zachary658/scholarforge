@@ -263,6 +263,16 @@ export function saveProjectSources(projectId, userId, sources) {
   return r.changes > 0;
 }
 
+// 保存结构化大纲到工作区（大纲生成/深度调研后自动写入，供工作区展示与确认）
+// 注意：不自动置 outline_confirmed_at——按产品流程用户仍需手动确认大纲后方可生成全文
+export function saveProjectOutline(projectId, userId, outline) {
+  if (!projectId || !userId || !Array.isArray(outline) || outline.length === 0) return false;
+  const r = db.prepare(
+    'UPDATE projects SET outline_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
+  ).run(JSON.stringify(outline), now(), projectId, userId);
+  return r.changes > 0;
+}
+
 // ========== 上下文组装 ==========
 
 // 从论文工作区提取上下文，注入到 AI 调用的 prompt 中

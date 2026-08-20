@@ -16,6 +16,7 @@ const {
   benchmarksToChartConfig,
   buildFrameworkContext,
   discoverPerspectives,
+  outlineTextToStructure,
 } = await import('../src/services/paper-distillation.js');
 
 test('extractMetricsFromText：识别中英文指标并归一化 0-100', () => {
@@ -85,4 +86,51 @@ test('buildFrameworkContext：包含视角分组展示', () => {
 test('discoverPerspectives：无真实 AI 时返回默认视角列表', async () => {
   const views = await discoverPerspectives('测试主题', '计算机科学', { promptTokens: 0, completionTokens: 0 });
   assert.ok(Array.isArray(views) && views.length >= 3, '应返回至少 3 个默认视角');
+});
+
+test('outlineTextToStructure：markdown 格式（## 章节 + ### 小节）', () => {
+  const md = [
+    '# 论文题目',
+    '## 第一章 绪论',
+    '### 1.1 研究背景与意义',
+    '### 1.2 国内外研究现状',
+    '## 第二章 研究方法',
+    '### 2.1 模型设计',
+    '参考文献',
+  ].join('\n');
+  const s = outlineTextToStructure(md);
+  assert.equal(s.length, 2, '应解析出 2 章');
+  assert.equal(s[0].chapter, '第一章 绪论');
+  assert.equal(s[0].sections.length, 2);
+  assert.equal(s[0].sections[0].title, '1.1 研究背景与意义');
+});
+
+test('outlineTextToStructure：内置模板格式（一、章节 + 缩进数字小节）', () => {
+  const tpl = [
+    '一、引言',
+    '  1.1 深度学习的研究背景与意义',
+    '  1.2 国内外研究现状综述',
+    '',
+    '二、相关理论与技术基础',
+    '  2.1 核心概念界定',
+  ].join('\n');
+  const s = outlineTextToStructure(tpl);
+  assert.equal(s.length, 2, '应解析出 2 章');
+  assert.equal(s[0].chapter, '一、引言');
+  assert.equal(s[0].sections.length, 2);
+  assert.equal(s[1].chapter, '二、相关理论与技术基础');
+});
+
+test('outlineTextToStructure：第X章格式与（1）小节', () => {
+  const t = [
+    '第一章 绪论',
+    '1.1 背景',
+    '（2）意义',
+    '第二章 方法',
+    '2.1 模型',
+  ].join('\n');
+  const s = outlineTextToStructure(t);
+  assert.equal(s.length, 2);
+  assert.equal(s[0].sections.length, 2, '（2）应解析为小节');
+  assert.equal(s[0].sections[1].title, '（2）意义');
 });

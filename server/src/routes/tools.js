@@ -7,7 +7,7 @@ import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
 import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, saveProjectSources, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
@@ -407,6 +407,19 @@ router.post('/writing', authRequired, async (req, res) => {
       }
     }
 
+    // 大纲生成：解析为结构化大纲并写入工作区（此前只返回文本，工作区看不到大纲、无法进入全文写作）
+    if (type === 'outline' && result.projectId && result.content) {
+      try {
+        const { outlineTextToStructure } = await import('../services/paper-distillation.js');
+        const structure = outlineTextToStructure(result.content);
+        if (structure.length > 0) {
+          saveProjectOutline(result.projectId, req.user.id, structure);
+        }
+      } catch (err) {
+        logger.warn('tools', `大纲结构化写入失败（忽略，仅影响工作区大纲展示）: ${err.message}`);
+      }
+    }
+
     res.json({
       content: result.content,
       type,
@@ -487,6 +500,17 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       });
     } catch (err) {
       logger.warn('tools', `蒸馏产物持久化失败（忽略，本次仍可使用）: ${err.message}`);
+    }
+
+    // 深度调研大纲同步写入工作区结构化大纲：工作区可直接查看/确认/进入全文写作
+    try {
+      const { outlineTextToStructure } = await import('../services/paper-distillation.js');
+      const structure = outlineTextToStructure(result.outline);
+      if (structure.length > 0) {
+        saveProjectOutline(effectiveProjectId, req.user.id, structure);
+      }
+    } catch (err) {
+      logger.warn('tools', `深度调研大纲结构化写入失败（忽略）: ${err.message}`);
     }
 
     const taskId = saveTask({
