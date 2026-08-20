@@ -7,7 +7,7 @@ import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
 import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, saveProjectSources, ensureDefaultProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, saveProjectSources, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
@@ -77,6 +77,14 @@ function claimOrderExecution(order) {
   return r.changes === 1;
 }
 
+// 推断自动工作区标题：论文类工具按题目建区；无题目的文本优化类统一归「文本优化」区
+function inferAutoProjectTitle(params) {
+  if (params && typeof params === 'object' && params.topic) {
+    return String(params.topic).trim().slice(0, 100) || '未命名工作区';
+  }
+  return '文本优化';
+}
+
 // 通用：执行 AI 调用 + 失败时退款/取消订单
 // projectId: 可选，关联论文工作区，用于注入上下文
 // inputText: 可选，保存到任务记录的输入摘要文本
@@ -115,11 +123,11 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   let amount = bill.order ? bill.order.amount : 0;
   const order = bill.order || null;
 
-  // 未指定工作区时自动创建/复用「我的论文工作区」：内容自动归档，防止散落丢失
+  // 未指定工作区时按题目自动创建/复用自动工作区：内容自动归档，防止散落丢失
   // （放在付费检查之后：未付费的 needOrder 引导不产生工作区副作用）
   let autoProject = false;
   if (!projectId) {
-    projectId = ensureDefaultProject(userId);
+    projectId = ensureAutoProject(userId, inferAutoProjectTitle(params));
     autoProject = true;
   }
 
@@ -256,7 +264,7 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     projectId: projectId || null,
     // 自动归档提示：本次内容已自动保存到工作区（前端 toast 提示用户）
     autoProject,
-    autoProjectTitle: autoProject ? '我的论文工作区' : null,
+    autoProjectTitle: autoProject ? inferAutoProjectTitle(params) : null,
     retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
     orderNo: order?.order_no || null,
   };
@@ -415,6 +423,9 @@ router.post('/writing', authRequired, async (req, res) => {
       autoProject: result.autoProject,
       autoProjectTitle: result.autoProjectTitle,
       retention_days: result.retention_days,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -446,11 +457,11 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   }
   const order = bill.order || null;
 
-  // 未指定工作区时自动创建/复用「我的论文工作区」：蒸馏产物自动归档，防止丢失
+  // 未指定工作区时按题目自动创建/复用自动工作区：蒸馏产物自动归档，防止丢失
   let autoProject = false;
   let effectiveProjectId = projectId;
   if (!effectiveProjectId) {
-    effectiveProjectId = ensureDefaultProject(req.user.id);
+    effectiveProjectId = ensureAutoProject(req.user.id, String(topic).trim().slice(0, 100));
     autoProject = true;
   }
 
@@ -511,7 +522,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       taskId,
       projectId: effectiveProjectId,
       autoProject,
-      autoProjectTitle: autoProject ? '我的论文工作区' : null,
+      autoProjectTitle: autoProject ? String(topic).trim().slice(0, 100) : null,
       retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
       chargeType: order ? 'paid' : 'unlimited',
       amount: order ? order.amount : 0,
@@ -612,6 +623,9 @@ router.post('/polish', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -651,6 +665,9 @@ router.post('/translate', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -697,6 +714,9 @@ router.post('/grammar', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -752,6 +772,9 @@ router.post('/rewrite', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -793,6 +816,9 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -912,6 +938,9 @@ router.post('/literature-review', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -960,6 +989,9 @@ router.post('/task-book', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -1002,6 +1034,9 @@ router.post('/defense', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -1050,6 +1085,9 @@ router.post('/journal', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {

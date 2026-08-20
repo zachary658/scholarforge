@@ -167,18 +167,19 @@ export function cleanupOldDocs() {
 
 // ========== 论文工作区 ==========
 
-// 确保用户存在"自动工作区"：首次生成内容时自动创建（auto_created=1），
-// 未显式指定工作区的 AI 生成内容统一挂入，防止内容散落丢失。
-// 每个用户仅一个自动工作区（后续生成复用），标题固定为「我的论文工作区」。
-export function ensureDefaultProject(userId) {
+// 确保用户存在对应题目的"自动工作区"：首次生成该题目的内容时自动创建（auto_created=1），
+// 未显式指定工作区的 AI 生成内容按题目自动归档，防止内容散落丢失。
+// 同题目重复生成复用同一工作区（按 用户+标题 匹配），不同题目各自建区。
+export function ensureAutoProject(userId, title) {
+  const t = String(title || '').trim().slice(0, 100) || '未命名工作区';
   const existing = db.prepare(
-    "SELECT id FROM projects WHERE user_id = ? AND status = 'active' AND auto_created = 1 ORDER BY id LIMIT 1"
-  ).get(userId);
+    "SELECT id FROM projects WHERE user_id = ? AND status = 'active' AND auto_created = 1 AND title = ? ORDER BY id LIMIT 1"
+  ).get(userId, t);
   if (existing) return existing.id;
   const info = db.prepare(
     `INSERT INTO projects (user_id, title, field, description, writing_requirements, outline_json, auto_created)
-     VALUES (?, '我的论文工作区', '', '系统自动创建：自动保存 AI 生成的内容，方便随时回看', '', '[]', 1)`
-  ).run(userId);
+     VALUES (?, ?, '', ?, '', '[]', 1)`
+  ).run(userId, t, `系统自动创建：自动保存「${t}」相关的 AI 生成内容，方便随时回看`);
   return info.lastInsertRowid;
 }
 
