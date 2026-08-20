@@ -71,7 +71,7 @@ function formatLog(level, module, message, data) {
 // 敏感字段脱敏：日志可能包含 token / 邮箱 / 手机号 / 密码 / API Key / Cookie 等，
 // 在输出或落盘前统一掩码，避免凭据泄露到日志文件（L-2 加固）。
 const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|cookie|phone|mobile|id[_-]?card|email|mail)/i;
-function redact(value, seen = new WeakSet()) {
+export function redact(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
     // JWT / Bearer 令牌

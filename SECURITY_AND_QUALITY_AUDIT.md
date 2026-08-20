@@ -270,3 +270,64 @@ async function downloadPdfBytes(url, { maxBytes = 25*1024*1024, timeoutMs = 1000
 3. **image-size 上游补丁跟进**：持续监控 GHSA-5p2g-fcmc-qvqq，发布后第一时间升级；过渡期维持 §8.3 的缓解（图片格式白名单 + 超时隔离 + sharp 替代）。
 4. **E2E 增强**：在具备真实 AI Key / 支付沙箱后，补充「文献检索 → 章节生成 → 导出」业务级 E2E，覆盖核心付费链路。
 5. **发布加固**：为镜像打语义化 tag + 签名（cosign），并补充容器运行时只读根文件系统 / 非 root 用户（可选进一步加固）。
+
+---
+
+## 13. 第二轮深度测试与综合评估（2026-08-20 晚）
+
+> 上一轮（第 1–12 节）完成 P0–P3 全部修复并推送到 `master`。本轮在已加固基线之上，**继续做安全测试、功能与逻辑测试**，并给出综合专业评估与改进建议。本轮所有新增测试均纳入 `node --test` 门禁。
+
+### 13.1 测试方法
+- 复用既有单测（MCP 解析、多源检索、文献蒸馏、paper-utils、E2E 冒烟）。
+- 新增两个测试文件：
+  - `server/test/security-regression.test.js`（**21 用例**）：纯函数级安全基元断言 + 支付/鉴权逻辑断言。
+  - `server/test/security-live.test.js`（**1 集成用例**）：真实启动 server 子进程，验证认证闭环、订单鉴权、限流 429。
+- 为提升可测性，将 `sanitizeSvg`（chart-renderer.js）与 `redact`（logger.js）以 `export` 暴露；并将 `makeLimiter` 的 IP 分桶改用 `express-rate-limit` 官方 `ipKeyGenerator`（修复 IPv6 绕过告警，见 §13.3-A）。
+- **全量结果：`node --test` 51/51 通过（原 29 + 新增 22），零回归。**
+
+### 13.2 实测通过的安全控制（证据）
+| 控制项 | 测试证据 | 结论 |
+|--------|----------|------|
+| SSRF 出站防护（含 `::ffff:169.254.169.254` 云元数据 IPv4 映射绕过） | 17 类恶意 URL 探针（`allowPrivate:false`）全部 `rejects` | ✅ 拒绝回环/链路本地/云元数据/私网/重绑定域名 |
+| 私网兼容 + 回环始终拒绝 | `allowPrivate:true` 放行 `10.x` 但拒绝 `127.0.0.1`/元数据 | ✅ 业务兼容且不松口核心防护 |
+| 日志脱敏 `redact` | 密码/API Key/Authorization/邮箱/手机/嵌套 token 全掩码 | ✅ 凭据不出日志 |
+| SVG 净化 `sanitizeSvg` | `<script>`/`onload`/`onclick`/`javascript:` 均被剥离 | ✅ 渲染管道无注入面 |
+| 并发信号量 | 20 并发任务、上限 3，峰值恒等于 3 | ✅ 不会打满连接/CPU |
+| 限流（IP 维度） | 注册接口单 IP 越阈值后实测返回 **429** | ✅ 防批量注册/枚举 |
+| 支付金额服务端计算 | 订单 `amount` 恒等于服务端定价（客户端无金额字段） | ✅ 防金额篡改 |
+| 单次购买约束 | `quantity>1` 被拒 | ✅ 防「多付少得」 |
+| 订单归属鉴权（IDOR） | 跨用户访问订单返回 403 | ✅ 防越权读他人订单 |
+| 认证闭环 | 无 token / 非法 token → 401；refresh 轮换+吊销；bcrypt；HS256 显式 | ✅ 鉴权健壮 |
+
+### 13.3 本轮新发现与改进点
+- **A. 限流 IPv6 绕过（已修复，低风险）**：原 `makeLimiter` 自定义 `keyGenerator` 直接读取 `req.ip`，`express-rate-limit@8.6.2` 在构造期抛出 `ERR_ERL_KEY_GEN_IPV6` 校验告警——IPv6 客户端可通过轮换地址绕过 per-IP 限流。已改用官方 `ipKeyGenerator`（IPv6 归入 /56 子网）。实际影响面有限：`aiToolLimiter`/`paymentLimiter` 按 **user** 维度，`auth` 限流用库默认（已安全）；但已统一加固。
+- **B. image-size 0-day（无上游补丁，需工程缓解）**：server 经 `pptxgenjs` 传递依赖 `image-size`，存在 ICNS/JXL/HEIF 解析无限循环 DoS（GHSA-5p2g-fcmc-qvqq，**Patched=None**）。无法升级。建议：① 该解析仅在「导出 PPTX」路径触发，不上传解析，攻击面有限；② 导出时加超时 + 独立 worker 隔离；③ 监控上游修复后升级。
+- **C. 前端依赖（esbuild / vite / react-router）**：共 4 项（3 moderate + 1 high），升级均需破坏性（vite 8 / react-router 7）。esbuild 仅影响本地 dev server；react-router 的开放重定向 / 反序列化注入仅在特定 SSR/hydration 场景。建议评估后择机升级，并用 CSP 兜底。
+- **D. 限流多实例共享**：当前为内存 `MemoryStore`，水平扩展/集群时计数不共享，限流可被绕过。代码已预留 `store` 注入点，建议接入 Redis。
+- **E. allowPrivate 默认 true（有意设计）**：PDF 等用户可控外站出站已显式 `allowPrivate:false`；AI `base_url` 默认放行私网以兼容内网模型（vLLM/Ollama）。属业务需要，记录备查。
+- **F. 观察（非阻塞，正向）**：注册与管理员建用户密码强度一致；金额全程以「分」整数累加规避浮点误差；幂等支付 + 交易号唯一 + 报价变更作废待支付订单，资金流健壮；管理员自我防护（不可禁用/降级自己与超级管理员）；图表渲染为自实现 SVG + 净化，无浏览器 mermaid 的 XSS 面；模板/二维码上传含 magic-byte 校验 + 扩展名白名单 + 路径遍历防护。
+
+### 13.4 功能与逻辑测试结论
+- **订单状态机 / 支付幂等 / 归属鉴权 / 金额计算 / 单次购买约束**：逻辑正确，单测 + 集成双覆盖。
+- **认证 / 鉴权 / 限流**：集成实测通过。
+- **数据导入与渲染**：xlsx/csv 解析、vega-lite 生成、SVG 净化路径完整。
+- 未做（受环境限制，已在 §12.4 列为后续）：需真实 AI Key / 支付沙箱的业务级 E2E（检索→生成→导出付费链路）。
+
+### 13.5 综合专业评估
+整体安全成熟度**显著高于同类个人 / 小团队 SaaS**：纵深防御意识强、密钥管理规范（env 注入、不落库、log 脱敏）、资金流严谨、测试文化到位、并已具备 Docker + CI + Dependabot 工程化基线。
+剩余风险集中在两层，均**非代码逻辑缺陷**：
+1. **供应链 0-day（无补丁）**：`image-size`（server）、`vite/react-router/esbuild`（client）——只能靠缓解 + 跟进上游。
+2. **部署 / 运营层**：多实例限流共享、容器非 root/只读根、密钥轮换策略、第三方渗透测试。
+
+### 13.6 优先级改进建议
+- **P0（建议）**：① `image-size` 缓解（PPTX 导出加超时 + 独立 worker 隔离，必要时禁用 JXL/HEIF 解析）；② 多实例限流接入 Redis（消除集群下限流失效）。
+- **P1**：① 评估升级 client 依赖（vite/react-router/esbuild），配套路由回归测试；② 生产启用严格 CSP + COOP/COEP。
+- **P2**：① 建立「依赖告警 → 评估 → 热修」安全响应流程；② 密钥定期轮换策略；③ 定期第三方渗透测试；④ 为 `redact` 增加结构化日志采样以便排障。
+- **可选**：发布 `v1.0.0-security` 标签固化当前安全基线（及镜像 cosign 签名）。
+
+### 13.7 本轮改动清单（未推送，待确认）
+- 新增 `server/test/security-regression.test.js`、`server/test/security-live.test.js`（22 用例）。
+- `server/src/middleware/rateLimit.js`：`makeLimiter` IP 分桶改用 `ipKeyGenerator`（`/56` 子网归一，修复 IPv6 限流绕过）。
+- `server/src/services/chart-renderer.js`：`sanitizeSvg` 改为 `export`（仅提升可测性，行为不变）。
+- `server/src/logger.js`：`redact` 改为 `export`（仅提升可测性，行为不变）。
+- 测试基线：29 → **51/51 通过**。

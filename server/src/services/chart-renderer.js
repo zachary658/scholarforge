@@ -37,7 +37,7 @@ async function ensureSharp() {
  */
 // 出站 SVG 净化（纵深防御）：剥离 <script>、事件处理器（on\w+）与 javascript: 伪协议，
 // 即便上游生成逻辑被绕过，也不会向渲染管道 / 客户端注入可执行内容（M-1 加固）。
-function sanitizeSvg(input) {
+export function sanitizeSvg(input) {
   if (typeof input !== 'string') return input;
   return input
     .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
