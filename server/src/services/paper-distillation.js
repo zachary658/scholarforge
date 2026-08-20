@@ -138,15 +138,52 @@ async function extractFramework(paper, tokenAcc) {
   };
 }
 
+// ===== 多视角发现（STORM 式蒸馏阶段 0） =====
+// 将研究主题拆分为 3-5 个互补检索视角：真实 AI 用 JSON 模式生成，否则用默认视角
+const DEFAULT_PERSPECTIVES = [
+  '研究方法与模型设计',
+  '数据集与实验基准',
+  '应用场景与实践',
+  '挑战与未来方向',
+];
+
+export async function discoverPerspectives(topic, field, tokenAcc) {
+  if (hasRealAI()) {
+    try {
+      const result = await runAI('perspective_extract', { topic, field }, { type: 'json_object' });
+      if (tokenAcc) {
+        tokenAcc.promptTokens += result.promptTokens || 0;
+        tokenAcc.completionTokens += result.completionTokens || 0;
+      }
+      const parsed = JSON.parse(result.content);
+      const views = Array.isArray(parsed.perspectives) ? parsed.perspectives.map(String).filter(Boolean) : [];
+      if (views.length >= 2) return views.slice(0, 5);
+    } catch (err) {
+      logger.warn('paper-distillation', `多视角发现失败，回退默认视角: ${err.message}`);
+    }
+  }
+  return DEFAULT_PERSPECTIVES;
+}
+
 // ===== Reduce 阶段：多框架融合 =====
 // 合并多篇论文的框架，去重，按出现频率排序，生成最优结构
+// 保留视角维度：perspectiveMap[视角] = { methods, innovations }，供大纲生成按视角组织
 function mergeFrameworks(frameworks) {
   // 合并并去重方法
   const methodCount = new Map();
+  const perspectiveMap = new Map();
   for (const f of frameworks) {
+    const view = f.perspective || '综合';
+    if (!perspectiveMap.has(view)) perspectiveMap.set(view, { methods: new Map(), innovations: new Map() });
+    const pm = perspectiveMap.get(view);
     for (const m of f.methods) {
       const key = m.toLowerCase().slice(0, 50);
       methodCount.set(key, (methodCount.get(key) || 0) + 1);
+      pm.methods.set(key, (pm.methods.get(key) || 0) + 1);
+    }
+    for (const i of f.innovations) {
+      const key = i.toLowerCase().slice(0, 50);
+      pm.innovations.set(key, (pm.innovations.get(key) || 0) + 1);
     }
   }
   const methods = [...methodCount.entries()]
@@ -183,7 +220,14 @@ function mergeFrameworks(frameworks) {
   // 生成融合结构大纲（基于学术论文标准结构 + 借鉴的方法）
   const structure = generateMergedStructure(methods, innovations);
 
-  return { methods, innovations, conclusions, structure, paperCount: frameworks.length };
+  // 视角分组（可序列化）
+  const perspectives = [...perspectiveMap.entries()].map(([view, maps]) => ({
+    view,
+    methods: [...maps.methods.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k),
+    innovations: [...maps.innovations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k),
+  }));
+
+  return { methods, innovations, conclusions, structure, paperCount: frameworks.length, perspectives };
 }
 
 // 检索失败时的通用大纲生成（降级方案）
@@ -264,19 +308,57 @@ export async function collectWritingSources(topic, field, keywords = '', limit =
   return { papers, references, benchmarks, sources_used, errors };
 }
 
-// ===== 主流程：智能写作（检索→蒸馏→生成）=====
+// ===== 主流程：智能写作（多视角检索 → 蒸馏 → 生成，借鉴 STORM 架构）=====
+// 与单轮 MapReduce 的区别：先拆分 3-5 个研究视角，分视角检索蒸馏，
+// 跨视角去重融合后生成大纲——覆盖维度更全，避免单查询检索偏差。
 /**
  * @param {object} params { topic, field, keywords, projectId, userId }
  * @returns {Promise<{outline, references, framework, tokens, content}>}
  */
+
+// 跨视角去重合并：按 _dedupKey/title 归一，优先保留有摘要、引用数高、有 PDF 的记录
+function dedupePapers(papers) {
+  const seen = new Map();
+  for (const p of papers) {
+    const key = (p._dedupKey || p.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!key) continue;
+    if (seen.has(key)) {
+      const ex = seen.get(key);
+      if (!ex.abstract && p.abstract) ex.abstract = p.abstract;
+      if (p.cited_by_count > ex.cited_by_count) ex.cited_by_count = p.cited_by_count;
+      if (!ex.pdf_url && p.pdf_url) ex.pdf_url = p.pdf_url;
+    } else {
+      seen.set(key, { ...p });
+    }
+  }
+  return [...seen.values()].sort((a, b) => b.cited_by_count - a.cited_by_count);
+}
+
 export async function smartWriting(params) {
   const { topic, field, keywords } = params;
+  const tokenAcc = { promptTokens: 0, completionTokens: 0 };
 
-  // 1. 多源检索 + 构建真实文献/数据
-  const { papers, references, benchmarks, sources_used, errors } = await collectWritingSources(topic, field, keywords);
+  // 0. 多视角发现（真实 AI 生成视角，否则默认视角）
+  const perspectives = await discoverPerspectives(topic, field, tokenAcc);
 
-  // 检索失败降级：所有源都失败时，使用通用模板生成（不抛错，保证用户体验）
-  if (papers.length === 0) {
+  // 1. 分视角并行检索（每视角 4 篇，任一视角失败不影响整体）
+  const perView = await Promise.all(perspectives.map(async (view) => {
+    const query = `${topic} ${view}${keywords ? ' ' + keywords : ''}`;
+    try {
+      const { results, sources_used, errors } = await searchMultiSource(query, { limit: 4 });
+      return { view, papers: results, sources_used, errors };
+    } catch (err) {
+      return { view, papers: [], sources_used: [], errors: [String(err.message || err)] };
+    }
+  }));
+
+  // 2. 跨视角去重合并（Map 成本控制：最多 12 篇入池、8 篇蒸馏）
+  const mergedPapers = dedupePapers(perView.flatMap((v) => v.papers.map((p) => ({ ...p, _view: v.view })))).slice(0, 12);
+  const errors = [...new Set(perView.flatMap((v) => v.errors))];
+  const sources_used = [...new Set(perView.flatMap((v) => v.sources_used))];
+
+  // 检索失败降级：所有视角都失败时，使用通用模板生成（不抛错，保证用户体验）
+  if (mergedPapers.length === 0) {
     logger.warn('paper-distillation', `所有检索源失败或返回空结果，降级为通用模板生成。错误: ${errors.join('; ')}`);
     const fallbackOutline = generateFallbackOutline(topic, field);
     return {
@@ -287,6 +369,8 @@ export async function smartWriting(params) {
         innovations: [],
         conclusions: [],
         structure: generateMergedStructure([], []),
+        perspectives: [],
+        perspectives_used: perspectives,
         paperCount: 0,
         sources_used,
         search_errors: errors,
@@ -295,43 +379,60 @@ export async function smartWriting(params) {
       benchmarks: null,
       tables: [],
       degraded: true,
-      tokens: { promptTokens: 0, completionTokens: 0 },
+      tokens: { promptTokens: tokenAcc.promptTokens, completionTokens: tokenAcc.completionTokens },
     };
   }
 
-  // 1.5 数据套用富集：OA 全文 PDF 提取指标与表格（失败静默降级，不阻断主流程）
+  // 3. 构建真实文献/数据
+  const references = mergedPapers.slice(0, 8).map((p) => ({
+    title: p.title,
+    authors: p.authors,
+    year: p.year,
+    journal: p.journal,
+    doi: p.doi,
+    source_url: p.source_url,
+    source_db: p.source_db,
+    cited_by_count: p.cited_by_count,
+  }));
+  const benchmarks = extractBenchmarkData(mergedPapers);
+
+  // 3.5 数据套用富集：OA 全文 PDF 提取指标与表格（失败静默降级，不阻断主流程）
   let enrichedBenchmarks = benchmarks;
   let dataTables = [];
   try {
-    const enriched = await enrichSourcesFromOpenAccess(papers, benchmarks);
+    const enriched = await enrichSourcesFromOpenAccess(mergedPapers, benchmarks);
     enrichedBenchmarks = enriched.benchmarks;
     dataTables = enriched.tables;
   } catch (err) {
     logger.warn('paper-distillation', `OA PDF 富集阶段失败（忽略，仅用摘要数据）: ${err.message}`);
   }
 
-  // 2. Map 阶段：提取每篇论文框架（并行，但限制并发数避免API限流）
-  const tokenAcc = { promptTokens: 0, completionTokens: 0 };
+  // 4. Map 阶段：提取每篇论文框架（并行限流；每篇标记来源视角）
   const frameworks = [];
   const batchSize = 4; // 并发4个，平衡速度与API限流
-  for (let i = 0; i < papers.length; i += batchSize) {
-    const batch = papers.slice(i, i + batchSize);
-    const batchFrameworks = await Promise.all(batch.map((p) => extractFramework(p, tokenAcc).catch(() => null)));
+  const papersForMap = mergedPapers.slice(0, 8); // 蒸馏成本控制：最多 8 篇
+  for (let i = 0; i < papersForMap.length; i += batchSize) {
+    const batch = papersForMap.slice(i, i + batchSize);
+    const batchFrameworks = await Promise.all(batch.map(async (p) => {
+      const f = await extractFramework(p, tokenAcc).catch(() => null);
+      if (f) f.perspective = p._view || '综合';
+      return f;
+    }));
     frameworks.push(...batchFrameworks.filter(Boolean));
   }
 
-  // 3. Reduce 阶段：融合框架
+  // 5. Reduce 阶段：融合框架（含视角分组）
   const mergedFramework = mergeFrameworks(frameworks);
 
-  // 4. 真实 benchmark 图表配置（真实文献/数据已在 collectWritingSources 构建）
+  // 6. 真实 benchmark 图表配置
   const benchmarkChart = benchmarksToChartConfig(enrichedBenchmarks, '准确率') || benchmarksToChartConfig(enrichedBenchmarks, 'Dice');
 
-  // 5. 生成大纲（基于融合框架 + 真实文献 + 真实数据，禁止编造引用与数据）
+  // 7. 生成大纲（基于融合框架 + 真实文献 + 真实数据，禁止编造引用与数据）
   const outlineResult = await runAI('writing', {
     type: 'outline',
     topic,
     field,
-    context: buildFrameworkContext(mergedFramework, papers),
+    context: buildFrameworkContext(mergedFramework, mergedPapers),
     references,
     benchmarks: enrichedBenchmarks,
   });
@@ -347,6 +448,8 @@ export async function smartWriting(params) {
       innovations: mergedFramework.innovations,
       conclusions: mergedFramework.conclusions,
       structure: mergedFramework.structure,
+      perspectives: mergedFramework.perspectives,
+      perspectives_used: perspectives,
       paperCount: mergedFramework.paperCount,
       sources_used,
       search_errors: errors,
@@ -373,6 +476,16 @@ export function buildFrameworkContext(framework, papers = []) {
     : [...new Set(paperList.map((p) => p.source_db))];
   lines.push(`【文献调研结果】共参考 ${count} 篇相关论文（来自 ${sources.filter(Boolean).join('、') || '多源检索'}）`);
   lines.push('');
+  // 视角分组（STORM 式多视角蒸馏产物）：按视角展示方法，便于大纲按维度组织
+  const perspectives = Array.isArray(framework?.perspectives) ? framework.perspectives : [];
+  if (perspectives.length > 0) {
+    lines.push('【研究视角与方法分布】');
+    for (const p of perspectives) {
+      const viewMethods = (p.methods || []).slice(0, 3).join('；');
+      lines.push(`- ${p.view}${viewMethods ? '：' + viewMethods : ''}`);
+    }
+    lines.push('');
+  }
   lines.push('【主要研究方法】（按出现频率排序）');
   (framework?.methods || []).forEach((m, i) => lines.push(`${i + 1}. ${m}`));
   lines.push('');

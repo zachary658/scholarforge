@@ -13,6 +13,7 @@
 import { DOMParser } from '@xmldom/xmldom';
 import logger from '../logger.js';
 import { getSetting } from '../config-store.js';
+import { searchCnkiViaMCP } from './mcp-literature-source.js';
 
 // ===== 检索结果缓存（短 TTL，避免同一 query 重复打外部 API）=====
 const SEARCH_CACHE_TTL_MS = 60_000; // 60 秒
@@ -272,7 +273,7 @@ function dedupeAndMerge(results, limit = 8) {
  */
 export async function searchMultiSource(query, opts = {}) {
   const limit = opts.limit || 8;
-  const sources = opts.sources || ['openalex', 'semantic', 'crossref', 'arxiv'];
+  const sources = opts.sources || ['openalex', 'semantic', 'crossref', 'arxiv', 'cnki'];
   // 短 TTL 缓存：同一 query 在 60s 内复用结果，避免重复打外部 API
   const cacheKey = `${(query || '').trim().toLowerCase()}|${limit}|${[...sources].sort().join(',')}`;
   const cached = searchCache.get(cacheKey);
@@ -328,6 +329,21 @@ export async function searchMultiSource(query, opts = {}) {
           .catch((e) => { recordFailure('arXiv'); errors.push(`arXiv: ${e.message}`); })
       );
     }
+  }
+  // CNKI（知网）通道：可选 MCP 插件（CNKI_MCP_COMMAND 配置后启用），未配置时静默跳过
+  if (sources.includes('cnki')) {
+    tasks.push(
+      searchCnkiViaMCP(query, limit).then((r) => {
+        if (r.disabled) return; // 未配置，静默跳过
+        if (r.circuitOpen) { errors.push('CNKI: 熔断中（连续失败过多，暂时跳过）'); return; }
+        if (r.papers && r.papers.length > 0) {
+          sources_used.push('CNKI');
+          allResults.push(...r.papers);
+        } else if (r.error) {
+          errors.push(`CNKI: ${r.error}`);
+        }
+      })
+    );
   }
   await Promise.all(tasks);
 

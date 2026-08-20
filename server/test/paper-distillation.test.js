@@ -15,6 +15,7 @@ const {
   extractBenchmarkData,
   benchmarksToChartConfig,
   buildFrameworkContext,
+  discoverPerspectives,
 } = await import('../src/services/paper-distillation.js');
 
 test('extractMetricsFromText：识别中英文指标并归一化 0-100', () => {
@@ -65,4 +66,23 @@ test('buildFrameworkContext：兼容持久化 framework（无 papers 数组）',
   assert.ok(ctx.includes('共参考 8 篇'), '应包含论文数量');
   assert.ok(ctx.includes('OpenAlex'), '应包含数据源');
   assert.ok(ctx.includes('方法A'), '应包含研究方法');
+});
+
+test('buildFrameworkContext：包含视角分组展示', () => {
+  const framework = {
+    methods: ['方法A'],
+    innovations: [],
+    conclusions: [],
+    paperCount: 4,
+    sources_used: ['arXiv'],
+    perspectives: [{ view: '数据集与实验基准', methods: ['基准数据集'], innovations: [] }],
+  };
+  const ctx = buildFrameworkContext(framework, []);
+  assert.ok(ctx.includes('研究视角与方法分布'), '应包含视角分组标题');
+  assert.ok(ctx.includes('数据集与实验基准'), '应包含视角名称');
+});
+
+test('discoverPerspectives：无真实 AI 时返回默认视角列表', async () => {
+  const views = await discoverPerspectives('测试主题', '计算机科学', { promptTokens: 0, completionTokens: 0 });
+  assert.ok(Array.isArray(views) && views.length >= 3, '应返回至少 3 个默认视角');
 });

@@ -1,5 +1,6 @@
 // 冒烟测试：核心链路运行时验证（开发环境 + mock 支付）
-const BASE = 'http://127.0.0.1:3101';
+// 用法：先 npm start（默认 3001），再 node scripts/smoke.mjs（可用 SMOKE_BASE 覆盖地址）
+const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:3001';
 let token = '';
 let cookie = '';
 
