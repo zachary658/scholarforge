@@ -105,7 +105,9 @@ export function listTasks({ userId, projectId = null, toolType = null, keyword =
      LIMIT ? OFFSET ?`
   ).all(...params, size, offset);
 
-  return { tasks, total, page, size, pages: Math.ceil(total / size) };
+  // 内容保留天数（供前端提示用户及时下载）
+  const retention_days = parseInt(getSetting('doc_retention_days', '30'), 10) || 30;
+  return { tasks, total, page, size, pages: Math.ceil(total / size), retention_days };
 }
 
 // 获取任务详情（含完整输入输出）
@@ -128,9 +130,10 @@ export function deleteTask(taskId, userId) {
   return r.changes > 0;
 }
 
-// 清理过期任务（90 天前）
+// 清理过期任务（与文档保留期一致，默认 30 天，由 doc_retention_days 配置控制）
 export function cleanupOldTasks() {
-  const expireAt = now() - 90 * 86400;
+  const days = parseInt(getSetting('doc_retention_days', '30'), 10) || 30;
+  const expireAt = now() - days * 86400;
   const r = db.prepare('DELETE FROM ai_tasks WHERE created_at < ?').run(expireAt);
   return r.changes;
 }
@@ -163,6 +166,21 @@ export function cleanupOldDocs() {
 }
 
 // ========== 论文工作区 ==========
+
+// 确保用户存在"自动工作区"：首次生成内容时自动创建（auto_created=1），
+// 未显式指定工作区的 AI 生成内容统一挂入，防止内容散落丢失。
+// 每个用户仅一个自动工作区（后续生成复用），标题固定为「我的论文工作区」。
+export function ensureDefaultProject(userId) {
+  const existing = db.prepare(
+    "SELECT id FROM projects WHERE user_id = ? AND status = 'active' AND auto_created = 1 ORDER BY id LIMIT 1"
+  ).get(userId);
+  if (existing) return existing.id;
+  const info = db.prepare(
+    `INSERT INTO projects (user_id, title, field, description, writing_requirements, outline_json, auto_created)
+     VALUES (?, '我的论文工作区', '', '系统自动创建：自动保存 AI 生成的内容，方便随时回看', '', '[]', 1)`
+  ).run(userId);
+  return info.lastInsertRowid;
+}
 
 export function createProject({ userId, title, field = '', description = '', writingRequirements = '', outline = [] }) {
   const info = db.prepare(

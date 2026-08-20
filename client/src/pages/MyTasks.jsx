@@ -6,7 +6,7 @@ import { TOOL_LABEL, TOOL_COLOR, CHARGE_LABEL } from '../lib/constants.js';
 import {
   Refresh, Search, Trash, Eye, Download, Filter, ChevronLeft, ChevronRight,
   FileText, Edit, SpellCheck, Languages, Copy, Layers,
-  Book, FileWord,
+  Book, FileWord, AlertCircle,
 } from '../components/Icons.jsx';
 
 const TOOL_ICON = {
@@ -35,6 +35,7 @@ export default function MyTasks() {
   const [keyword, setKeyword] = useState('');
   const [toolType, setToolType] = useState('');
   const [detail, setDetail] = useState(null); // 查看详情的任务
+  const [retentionDays, setRetentionDays] = useState(30);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,6 +47,7 @@ export default function MyTasks() {
       setTasks(d.tasks || []);
       setPages(d.pages || 1);
       setTotal(d.total || 0);
+      if (d.retention_days) setRetentionDays(d.retention_days);
     } catch (err) {
       toast.error('加载失败：' + err.message);
     } finally {
@@ -102,12 +104,20 @@ export default function MyTasks() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">我的任务历史</h1>
-          <p className="mt-1 text-sm text-slate-500">所有 AI 调用记录均保存在此，可随时回看（保留 90 天）</p>
+          <p className="mt-1 text-sm text-slate-500">所有 AI 生成记录均保存在此，可随时回看</p>
         </div>
         <button onClick={load} disabled={loading} className="btn-ghost text-sm">
           <Refresh className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           刷新
         </button>
+      </div>
+
+      {/* 保留期提醒：内容到期自动清理，提醒用户及时下载保存 */}
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          任务记录保留 <strong>{retentionDays} 天</strong>，到期后自动清理，请及时下载 Word 文档保存到本地，避免内容丢失。
+        </span>
       </div>
 
       {/* 搜索筛选 */}

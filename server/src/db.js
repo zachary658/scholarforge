@@ -340,6 +340,8 @@ addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
 // sources_json 结构：{ framework, references, benchmarks, tables, sources_used, saved_at }
 // 分章节生成与全文生成统一消费，保证蒸馏产物贯通到正文
 addColumnIfMissing('projects', 'sources_json', "TEXT DEFAULT '{}'");
+// ===== 自动工作区：用户首次生成内容时系统自动创建（auto_created=1），防止内容散落丢失 =====
+addColumnIfMissing('projects', 'auto_created', 'INTEGER NOT NULL DEFAULT 0');
 db.exec(`
   CREATE TABLE IF NOT EXISTS charts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -655,8 +657,8 @@ export function cleanupStaleData(docRetentionDays = 30) {
     }
     const r5 = db.prepare('DELETE FROM generated_docs WHERE created_at < ?').run(docCutoff);
     results.deleted_old_docs = r5.changes;
-    // 6. 清理旧任务记录（保留 90 天）
-    const taskCutoff = now - 90 * 86400;
+    // 6. 清理旧任务记录（与文档保留期一致，默认 30 天）
+    const taskCutoff = now - docRetentionDays * 86400;
     const r6 = db.prepare('DELETE FROM ai_tasks WHERE created_at < ?').run(taskCutoff);
     results.deleted_old_tasks = r6.changes;
     // 7. 清理旧使用日志（保留 180 天）

@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'path';
 import fs from 'fs';
 import { authRequired } from '../middleware.js';
 import db from '../db.js';
+import { getSetting } from '../config-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(__dirname, '..', '..', 'uploads', 'docs');
@@ -29,11 +30,14 @@ router.get('/', authRequired, (req, res) => {
      WHERE user_id = ?
      ORDER BY id DESC LIMIT 200`
   ).all(req.user.id);
+  // 文档保留天数（供前端提示用户及时下载）
+  const retention_days = parseInt(getSetting('doc_retention_days', '30'), 10) || 30;
   res.json({
     docs: items.map((d) => ({
       ...d,
       download_url: `/api/docs/download/${d.id}`,
     })),
+    retention_days,
   });
 });
 

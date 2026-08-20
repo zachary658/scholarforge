@@ -4,10 +4,10 @@ import { runAI } from '../ai-service.js';
 import { formatReference, rewriteText } from '../ai.js';
 import { logUsage } from '../usage.js';
 import logger from '../logger.js';
-import { getFeaturePrice } from '../config-store.js';
+import { getFeaturePrice, getSetting } from '../config-store.js';
 import { isFreeUnlimitedFeature } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, saveProjectSources, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, saveProjectSources, ensureDefaultProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import db from '../db.js';
@@ -114,6 +114,14 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   let chargeType = bill.mode === 'unlimited' ? 'unlimited' : 'paid';
   let amount = bill.order ? bill.order.amount : 0;
   const order = bill.order || null;
+
+  // 未指定工作区时自动创建/复用「我的论文工作区」：内容自动归档，防止散落丢失
+  // （放在付费检查之后：未付费的 needOrder 引导不产生工作区副作用）
+  let autoProject = false;
+  if (!projectId) {
+    projectId = ensureDefaultProject(userId);
+    autoProject = true;
+  }
 
   // 原子抢占订单执行权：pending/failed → processing；processing 表示已有请求正在执行。
   // 防并发重放同一 orderNo 造成一次付费多次生成（AI 调用期间订单保持 processing）。
@@ -246,6 +254,10 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     orderId: order?.id || null,
     taskId,
     projectId: projectId || null,
+    // 自动归档提示：本次内容已自动保存到工作区（前端 toast 提示用户）
+    autoProject,
+    autoProjectTitle: autoProject ? '我的论文工作区' : null,
+    retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
     orderNo: order?.order_no || null,
   };
 }
@@ -400,6 +412,9 @@ router.post('/writing', authRequired, async (req, res) => {
       orderId: result.orderId,
       taskId: result.taskId,
       projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {
@@ -431,6 +446,14 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   }
   const order = bill.order || null;
 
+  // 未指定工作区时自动创建/复用「我的论文工作区」：蒸馏产物自动归档，防止丢失
+  let autoProject = false;
+  let effectiveProjectId = projectId;
+  if (!effectiveProjectId) {
+    effectiveProjectId = ensureDefaultProject(req.user.id);
+    autoProject = true;
+  }
+
   // 原子抢占：防同一订单并发重复执行（检索+蒸馏耗时数十秒）
   if (order && !claimOrderExecution(order)) {
     return res.status(400).json({ error: '订单正在处理中，请勿重复提交' });
@@ -438,28 +461,26 @@ router.post('/smart-writing', authRequired, async (req, res) => {
 
   try {
     const { smartWriting } = await import('../services/paper-distillation.js');
-    const result = await smartWriting({ topic, field, keywords, projectId, userId: req.user.id });
+    const result = await smartWriting({ topic, field, keywords, projectId: effectiveProjectId, userId: req.user.id });
 
     // 蒸馏产物持久化到工作区：分章节生成/全文生成统一消费（框架/文献/数据/表格）
-    if (projectId) {
-      try {
-        const { saveProjectSources } = await import('../services/task-store.js');
-        saveProjectSources(projectId, req.user.id, {
-          framework: result.framework || null,
-          references: result.references || [],
-          benchmarks: Array.isArray(result.benchmarks?.data) ? result.benchmarks.data : [],
-          tables: result.tables || [],
-          sources_used: result.framework?.sources_used || [],
-          saved_at: Math.floor(Date.now() / 1000),
-        });
-      } catch (err) {
-        logger.warn('tools', `蒸馏产物持久化失败（忽略，本次仍可使用）: ${err.message}`);
-      }
+    try {
+      const { saveProjectSources } = await import('../services/task-store.js');
+      saveProjectSources(effectiveProjectId, req.user.id, {
+        framework: result.framework || null,
+        references: result.references || [],
+        benchmarks: Array.isArray(result.benchmarks?.data) ? result.benchmarks.data : [],
+        tables: result.tables || [],
+        sources_used: result.framework?.sources_used || [],
+        saved_at: Math.floor(Date.now() / 1000),
+      });
+    } catch (err) {
+      logger.warn('tools', `蒸馏产物持久化失败（忽略，本次仍可使用）: ${err.message}`);
     }
 
     const taskId = saveTask({
       userId: req.user.id,
-      projectId: projectId || null,
+      projectId: effectiveProjectId,
       toolType: 'smart-writing',
       action: 'search-distill',
       title: `智能写作框架提取：${topic}`,
@@ -488,6 +509,10 @@ router.post('/smart-writing', authRequired, async (req, res) => {
       tables: result.tables || [],
       degraded: result.degraded,
       taskId,
+      projectId: effectiveProjectId,
+      autoProject,
+      autoProjectTitle: autoProject ? '我的论文工作区' : null,
+      retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
       chargeType: order ? 'paid' : 'unlimited',
       amount: order ? order.amount : 0,
       orderNo: order?.order_no || null,

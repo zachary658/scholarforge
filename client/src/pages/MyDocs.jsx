@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, downloadDocFile } from '../lib/api.js';
-import { FileWord, Download, Trash, Refresh, FileText } from '../components/Icons.jsx';
+import { FileWord, Download, Trash, Refresh, FileText, AlertCircle } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
 
@@ -24,6 +24,7 @@ export default function MyDocs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [downloadingId, setDownloadingId] = useState(null);
+  const [retentionDays, setRetentionDays] = useState(30);
 
   const confirm = useConfirm();
 
@@ -33,6 +34,7 @@ export default function MyDocs() {
     try {
       const data = await api.listDocs();
       setDocs(data.docs || []);
+      if (data.retention_days) setRetentionDays(data.retention_days);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -77,6 +79,14 @@ export default function MyDocs() {
         <button onClick={load} className="btn-ghost text-xs">
           <Refresh className="h-4 w-4" /> 刷新
         </button>
+      </div>
+
+      {/* 保留期提醒：文档到期自动清理，提醒用户及时下载保存 */}
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          文档保留 <strong>{retentionDays} 天</strong>，到期后自动清理，请及时下载保存到本地，避免内容丢失。
+        </span>
       </div>
 
       {error && (

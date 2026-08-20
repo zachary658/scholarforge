@@ -1,8 +1,12 @@
 import { useState, useCallback } from 'react';
+import { toast } from '../components/Toast.jsx';
 
 // 通用工具调用 + 现金直付计费流程封装
 // 各工具页面共用：调用后端工具接口，收费功能若未关联订单则返回 needOrder，
 // 供页面渲染「先下单支付→再生成」引导；免费功能（大纲/文献检索/格式化）直接放行。
+//
+// 自动归档提示：后端返回 autoProject 时（未指定工作区自动创建「我的论文工作区」），
+// toast 提示用户内容已保存与保留期限，防止内容丢失。
 //
 // 用法：
 //   const tool = useTool();
@@ -29,6 +33,14 @@ export function useTool() {
         return;
       }
       setResult(data);
+      // 自动归档提示：内容已保存到论文工作区，提醒保留期限与及时下载
+      if (data?.autoProject) {
+        const days = data.retention_days || 30;
+        toast.success(
+          `内容已自动保存到论文工作区「${data.autoProjectTitle || '我的论文工作区'}」，可在工作区随时回看；内容保留 ${days} 天，请及时下载 Word 保存`,
+          7000
+        );
+      }
     } catch (err) {
       setError(err.message || '调用失败');
       setErrorData(err.data || null);

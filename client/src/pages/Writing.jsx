@@ -103,6 +103,12 @@ export default function Writing() {
         setDistill({ loading: false, error: '', result: null, needOrder: { itemType: data.itemType, amount: data.amount } });
       } else {
         setDistill({ loading: false, error: '', result: data, needOrder: null });
+        if (data.autoProject) {
+          toast.success(
+            `深度调研结果已自动保存到论文工作区「${data.autoProjectTitle || '我的论文工作区'}」；内容保留 ${data.retention_days || 30} 天，请及时下载 Word 保存`,
+            7000
+          );
+        }
       }
     } catch (err) {
       setDistill({ loading: false, error: err.message || '深度调研失败', result: null, needOrder: null });
