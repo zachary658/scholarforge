@@ -408,3 +408,11 @@ export const Wechat = (p) => (
     <path d="M7.3 9.2h.01M11.7 9.2h.01M17.5 13.5h.01M20.5 13.5h.01" />
   </svg>
 );
+
+// 表格图标（数据套用/三线表展示用）
+export const Table = (p) => (
+  <svg {...base(p)}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 9h18M3 14h18M9 4v16M15 4v16" />
+  </svg>
+);

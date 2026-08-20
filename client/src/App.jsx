@@ -13,6 +13,7 @@ import Layout from './components/Layout.jsx';
 
 // 代码分割：工作台与管理后台页面按需加载，减小首屏体积
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
+const SmartWriting = lazy(() => import('./pages/SmartWriting.jsx'));
 const Writing = lazy(() => import('./pages/Writing.jsx'));
 const Proposal = lazy(() => import('./pages/Proposal.jsx'));
 const Polish = lazy(() => import('./pages/Polish.jsx'));
@@ -106,6 +107,7 @@ export default function App() {
         }
       >
         <Route index element={<Suspense fallback={<PageFallback />}><Dashboard /></Suspense>} />
+        <Route path="smart-writing" element={<Suspense fallback={<PageFallback />}><SmartWriting /></Suspense>} />
         <Route path="writing" element={<Suspense fallback={<PageFallback />}><Writing /></Suspense>} />
         <Route path="proposal" element={<Suspense fallback={<PageFallback />}><Proposal /></Suspense>} />
         <Route path="literature-review" element={<Suspense fallback={<PageFallback />}><LiteratureReview /></Suspense>} />

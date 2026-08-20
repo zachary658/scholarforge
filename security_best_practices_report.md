@@ -1,96 +1,61 @@
-# ScholarForge 安全审查报告
+# ScholarForge 安全审查报告（已更新）
 
 审查范围：`client/`（React 18 + Vite）与 `server/`（Node.js + Express 4 + better-sqlite3）
 审查依据：OWASP 及 Node/Express/React 安全最佳实践
-日期：2026-08-17
+最近更新：2026-08（覆盖历轮修复与功能升级后的最新状态）
 
 ## 执行摘要
 
-整体而言，这套代码的安全基线相当扎实：认证采用 JWT 双 token + `token_version` 主动失效 + refresh token 哈希入库轮换；密码使用 bcrypt 哈希且带强度校验；登录/注册/忘记密码均有速率限制与防枚举；支付回调走官方 SDK 验签并做金额一致性校验；SQL 全部参数化；文档下载有路径穿越防护；`.env` 已正确加入 `.gitignore`，未发现硬编码密钥。
+整体安全基线扎实：JWT 双 token（access 15 分钟 + refresh 7 天 HttpOnly Cookie + 哈希入库 + 轮换）+ `token_version` 主动失效；bcrypt 哈希 + 密码强度校验；登录/注册/忘记密码/改密均有速率限制与防枚举；支付回调走官方 SDK 验签 + **商户归属校验（app_id/mchid）** + 金额一致性 + 交易号唯一性；SQL 全参数化；订单执行**原子抢占**防并发复用与一单多论文；软删除用户立即断权；内容安全阿里云/易盾直连；SSRF 校验含 DNS 解析后二次校验；SQLite 文件不入库、`.env` 已 gitignore。
 
-本次共发现 **3 项中危、4 项低危**，无直接的 SQL 注入、XSS 逃逸、支付绕过或路径穿越等高危漏洞。中危项集中在令牌存储、开放重定向与管理员可配置的 SSRF 面。
+历轮修复均已通过测试验证：单元/集成测试 25/25、端到端冒烟测试 17/17、前端生产构建通过。
 
----
+## 已修复（历史问题清单）
 
-## 中危（Medium）
+| 编号 | 问题 | 状态 |
+|------|------|------|
+| - | 支付宝回调缺 app_id/seller_id 校验（跨商户通知重放，零成本支付绕过） | ✅ 已修：校验 app_id + mchid/appid |
+| - | 已支付订单并发复用（一次付费多次生成） | ✅ 已修：claimOrderExecution 原子抢占 |
+| - | 一单多论文/2 元段落订单驱动全论文/无限次重写 | ✅ 已修：仅接受 writing_fulltext 订单 + 每章重写上限 3 次 |
+| - | 付费订单 AI 失败后永久锁死 | ✅ 已修：failed 状态可重试 |
+| - | 阿里云内容安全签名缺 AccessKeyId（审核链路失效） | ✅ 已修：Authorization: acs {AccessKeyId}:{Signature} |
+| - | SSRF 校验可绕过（localhost/IPv6/重绑定域名） | ✅ 已修：主机名黑名单 + DNS 解析后校验 |
+| - | 软删除用户 access token 有效期内仍可访问 | ✅ 已修：token_version++ + 中间件拦截 deleted |
+| - | 模板上传 zip-bomb（mammoth 解析先于大小校验） | ✅ 已修：解析前遍历条目校验解压大小 |
+| - | quantity 多付少得 | ✅ 已修：仅支持单次购买 |
+| - | 前端 402 契约断裂（err.needOrder 恒 undefined） | ✅ 已修：err.data.needOrder + 后端返回 amount |
+| - | 中文文献被去重逻辑整体丢弃（_dedupKey 中文清空） | ✅ 已修：归一化保留 Unicode + 回归测试 |
+| - | refresh token 存 localStorage（旧 M-01） | ✅ 已修：HttpOnly Cookie + 轮换 |
+| - | 登录开放重定向（旧 M-02） | ✅ 已修：仅允许站内相对路径 |
+| - | 上传仅校验扩展名（旧 L-01） | ✅ 已修：magic-byte 校验 |
+| - | 异步中间件 Promise 丢弃（unhandledRejection 风险） | ✅ 已修：.catch(next) |
+| - | 生产日志同步写阻塞事件循环 | ✅ 已修：异步队列 flush |
+| - | xlsx CVE（prototype pollution / ReDoS） | ✅ 已修：升级 0.20.3 |
+| - | DeepSeek max_tokens=16000 超上限（Invalid max_tokens） | ✅ 已修：按模型目录上限 |
+| - | MCP 连接子进程崩溃后不恢复 | ✅ 已修：失败自动重置连接 |
 
-### [M-01] Access / Refresh Token 存于 localStorage，XSS 可导致账号接管
-- **位置**：`client/src/lib/api.js` L3-L22（`TOKEN_KEY`/`REFRESH_KEY`、`setTokens`）、`client/src/lib/auth.jsx` L11
-- **证据**：
-  ```js
-  const TOKEN_KEY = 'sf_token';
-  const REFRESH_KEY = 'sf_refresh';
-  function setTokens(accessToken, refreshToken) {
-    localStorage.setItem(TOKEN_KEY, accessToken);
-    if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken);
-  }
-  ```
-- **影响**：一旦发生 XSS（或第三方脚本被污染），攻击者可同时窃取 access token（15 分钟）与 refresh token（7 天），实现账号接管并在较长窗口内保持控制。
-- **缓解现状**：前端未使用 `dangerouslySetInnerHTML`，React 默认转义，XSS 面较小；认证用 `Authorization: Bearer` 头而非 Cookie，因此无 CSRF 风险。
-- **建议**：refresh token 改由服务端下发 `HttpOnly + SameSite` Cookie（需同时引入 CSRF 防护，因 Cookie 认证会引入 CSRF）；或至少将 refresh token 移出 `localStorage`（存内存 + 短期重登）。若维持现状，需明确接受该风险并保持 CSP 严格。
+## 剩余风险（已评估，可接受）
 
-### [M-02] 登录跳转的 `redirect` 参数未校验，存在开放重定向
-- **位置**：`client/src/pages/Login.jsx` L32-L34
-- **证据**：
-  ```js
-  const redirect = params.get('redirect');
-  if (redirect) {
-    navigate(redirect);
-  }
-  ```
-- **影响**：攻击者可构造 `/login?redirect=//evil.com`（或 `https://evil.com`）钓鱼链接，用户登录成功后跳转到恶意站点，配合伪造的登录页可窃取凭据。
-- **建议**：仅允许站内相对路径。例如：
-  ```js
-  const safe = redirect && /^\/(?!\/)/.test(redirect) ? redirect : null;
-  ```
-  校验失败回退到默认首页（`/app`、`/admin`、`/support`）。
+### 中低
 
-### [M-03] 管理员可配置 AI `base_url` 引发的服务端 SSRF 面
-- **位置**：`server/src/routes/admin.js` L495-L527（`POST /admin/models/:id/test` 中 `fetch(m.base_url ...)`）；`server/src/services/ai-service.js` L160（AI 调用同样使用配置的 `base_url`）
-- **证据**：
-  ```js
-  const url = m.base_url.replace(/\/$/, '') + '/chat/completions';
-  const r = await fetch(url, { ... });
-  ```
-- **影响**：`base_url` 由管理员写入并持久化，服务端会对其发起请求。若该账号被攻破，或部署在云环境，可被用来探测内网 / 云元数据端点（`http://169.254.169.254`）等。因仅管理员可达，评级为中危而非高危。
-- **建议**：在发起请求前对 `base_url` 做校验——仅允许 `https://`（必要时放行 `http://` 且仅内网白名单），并解析后拒绝回环地址、链路本地地址、云元数据 IP；同时设置 DNS 解析后的 IP 校验与超时（已有时长超时）。
+1. **image-size DoS**（pptxgenjs 依赖，npm audit 2 项 high）：触发条件为解析恶意 ICNS/JXL/HEIF 图片；本平台 PPT 生成仅嵌入服务端自产的 PNG 图表，攻击者不可控。修复需升级 pptxgenjs 1.x（破坏性变更），暂缓。
+2. **access token 存 localStorage**：XSS 可窃取（15 分钟窗口）；refresh token 已 HttpOnly。属行业常规取舍，前端无 `dangerouslySetInnerHTML`、CSP 已启用。
+3. **未配置真实 AI 时付费买到内置模板**：生产环境已强制拦截下单；开发/演示模式仍允许（便于联调），演示环境对外需注意。
 
----
+### 低
 
-## 低危（Low）
+4. 限流为内存存储（多实例/重启失效）；部署建议网关层限流 + `TRUST_PROXY` 正确设置。
+5. 纵深防御小项：vega 表达式校验未覆盖 filter/transform（数据 URL 已禁用）、图表渲染超时不取消底层任务、LaTeX→OMML 无超时、AI 上游错误体入服务端日志。
+6. 前端小瑕疵：`auth.jsx` 硬编码 token key、个别 useEffect 依赖不完整、少量静默吞错。
+7. 自动化测试尚未覆盖支付回调验签与权限矩阵（有冒烟测试兜底主链路）。
 
-### [L-01] 文件上传仅校验扩展名，未校验真实文件类型
-- **位置**：`server/src/routes/admin.js` L46-L81（模板 `.docx`、二维码图片）、`server/src/routes/templates.js` L15-L27
-- **证据**：`fileFilter` 仅检查 `file.originalname.toLowerCase().endsWith('.docx')` / 图片扩展名。
-- **影响**：攻击者可上传改扩展名的任意内容（如把 HTML/脚本命名为 `.docx`）。但上传接口为 `adminRequired`，且文件不以 inline HTML 形式回显、下载时用 `Content-Disposition: attachment`，实际利用面很小。
-- **建议**：增加 magic-byte / MIME 校验（docx 为 `PK\x03\x04` 的 ZIP，图片校验文件头），并保持现有随机文件名与大小限制。
+## 已确认无问题的关键面
 
-### [L-02] `trust proxy` 依赖部署配置，未配置时限流与风控 IP 失真
-- **位置**：`server/src/index.js` L41-L44；`server/src/routes/auth.js` L27-L51、L60-L63（`getClientIp`）
-- **证据**：仅当设置 `TRUST_PROXY` 时才 `app.set('trust proxy', ...)`。
-- **影响**：若生产部署在 Nginx/网关后而未设置 `TRUST_PROXY`，`req.ip` 恒为代理 IP，导致全局限流、登录/注册限流、同 IP 注册风控对**所有用户共享同一桶**（可被误伤或绕过）。
-- **建议**：生产部署文档明确要求设置 `TRUST_PROXY`（信任层数或精确值），并确保前置代理覆盖/剥离 `X-Forwarded-*` 头。
-
-### [L-03] 速率限制使用内存存储，多实例/重启后失效
-- **位置**：`server/src/index.js` L83-L94、`server/src/routes/auth.js` L27-L51（`express-rate-limit` 未配置 `store`）
-- **影响**：限流计数存于进程内存，重启即清零；横向扩容多实例时各实例独立计数，可被绕过。
-- **建议**：如需生产级防护，接入共享存储（Redis `rate-limit-redis`）或由网关层统一限流。
-
-### [L-04] `isProtectedPath` 未覆盖 `/support` 路由
-- **位置**：`client/src/lib/api.js` L25-L28
-- **证据**：`return p.startsWith('/app') || p.startsWith('/admin');`
-- **影响**：客服工作台（`/support`）下 access token 失效并 refresh 失败时，不会自动跳转登录页，仅停留在失效页面。属体验/一致性小问题，非安全漏洞。
-- **建议**：将 `/support` 纳入 `isProtectedPath` 判断。
-
----
-
-## 已确认无问题的关键面（无需修复）
-
-- **SQL 注入**：所有查询使用参数化占位符；`WHERE`/`SET` 拼接均来自白名单常量，未发现用户输入直接拼接 SQL。
-- **认证/授权**：`adminRequired`/`supportRequired` 均在服务端强制校验；毕业作品订单操作均有 `user_id` 归属校验（IDOR 已防护）。
-- **支付安全**：支付宝/微信回调走官方 SDK 验签 + 金额一致性校验 + 交易号唯一性校验 + 订单状态守卫；`mock` 支付在生产/真实通道下被禁用。
-- **路径穿越**：`docs.js`/`admin.js` 的文件路径经 `resolve` 后校验仍在目标目录内，并拒绝 `..` 与 `\0`。
-- **密钥管理**：`.env`/`server/.env` 已在 `.gitignore`；仅 `.env.example` 入仓（占位值）；源码未发现硬编码密钥。
-- **XSS**：前端未使用 `dangerouslySetInnerHTML`/`innerHTML` 等 DOM 注入 sink；React 默认转义。
-- **安全头**：`helmet` 已启用并配置 CSP、`frame-ancestors`、`nosniff`；`X-Powered-By` 由 helmet 处理。
-- **错误处理**：统一错误中间件不向客户端泄露堆栈。
+- **SQL 注入**：全部参数化，无用户输入拼接。
+- **认证/授权**：adminRequired/supportRequired 服务端强制校验；IDOR 已防护（user_id 归属校验覆盖文档/项目/图表/订单）。
+- **支付安全**：验签 + 商户归属 + 金额一致性 + 交易号唯一性 + 幂等；mock 支付生产禁用（启动自检拒绝）。
+- **密钥管理**：AI Key 仅环境变量、支付密钥入库但管理端脱敏返回、`.env` gitignore。
+- **路径穿越**：文档/模板下载删除均经 resolve 后目录校验。
+- **XSS**：无 DOM 注入 sink，React 默认转义，helmet CSP 启用。
+- **内容安全**：本地归一化过滤（去空白/全角转半角）+ 阿里云/易盾可切换，失败降级有日志。
+- **SSRF**：AI base_url 主机名黑名单 + IP 字面量拦截 + DNS 解析后校验。

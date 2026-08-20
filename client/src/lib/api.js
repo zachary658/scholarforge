@@ -162,6 +162,8 @@ export const api = {
 
   // ===== tools =====
   writing: (payload) => request('/tools/writing', { method: 'POST', body: payload }),
+  // 智能写作：多视角检索 → 蒸馏 → 大纲（需已支付的 literature_review 订单）
+  smartWriting: (payload) => request('/tools/smart-writing', { method: 'POST', body: payload }),
   proposal: (payload) => request('/tools/proposal', { method: 'POST', body: payload }),
   polish: (payload) => request('/tools/polish', { method: 'POST', body: payload }),
   translate: (payload) => request('/tools/translate', { method: 'POST', body: payload }),

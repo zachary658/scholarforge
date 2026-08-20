@@ -90,6 +90,67 @@ npm run dev        # 默认端口 5173
 
 打开浏览器访问 `http://localhost:5173`
 
+## 生产部署
+
+### 1. 构建前端
+
+```bash
+cd client
+npm install
+npm run build        # 产物输出到 client/dist
+```
+
+后端启动时会自动托管 `client/dist`（SPA 路由已处理），生产只需跑一个 Node 服务。
+
+### 2. 环境变量（必配）
+
+```bash
+NODE_ENV=production
+JWT_SECRET=<至少32字符强随机值>       # 缺失或过短时拒绝启动
+ADMIN_PASSWORD=<管理员初始密码≥8位>   # 缺失则生成随机密码且无法登录
+PORT=3001
+TRUST_PROXY=1                          # 部署在 Nginx/网关后必须设置，否则限流/风控 IP 全部失真
+CORS_ALLOW_ORIGINS=https://你的域名    # 同域部署时保持默认即可
+FRONTEND_URL=https://你的域名          # 密码重置邮件链接用
+SMTP_URL=smtps://user:pass@host:465    # 生产必须配置（缺失时密码重置邮件被拒绝发送）
+MAIL_FROM=ScholarForge <noreply@你的域名>
+LLM_API_KEY_DEEPSEEK=<key>             # 至少配置一个真实模型，否则付费下单被拒绝
+LOG_TO_FILE=true                       # 建议开启（生产默认写日志）
+```
+
+### 3. 支付（强制校验）
+
+生产环境启动自检：`payment_mode` 必须为非 mock 且至少配置一个真实通道（支付宝/微信），否则**拒绝启动**。商户密钥在管理后台「系统设置」配置（不在环境变量中）。
+
+### 4. Nginx 反代（参考）
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name 你的域名;
+  # ssl_certificate ...; ssl_certificate_key ...;
+  client_max_body_size 10m;
+  location / {
+    proxy_pass http://127.0.0.1:3001;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 300s;   # AI 生成/智能写作耗时较长
+  }
+}
+```
+
+### 5. 数据备份与运维
+
+- 数据文件：`server/data/scholarforge.db`（SQLite，WAL 模式）+ `server/uploads/`（生成文档/图表/模板）
+- 备份：直接复制 db 文件 + uploads 目录（建议每天一次）
+- 日志：`server/logs/`（按天滚动，注意磁盘空间）
+- 可选增强：`MINERU_API_URL`（PDF 高质量解析）、`CNKI_MCP_COMMAND`（知网文献，注意合规）
+
+### 6. 进程守护
+
+使用 pm2 / systemd / Docker 守护 Node 进程，接收 `SIGTERM` 时服务会优雅关闭。
+
 ## 默认账号
 
 首次启动自动创建管理员账号：

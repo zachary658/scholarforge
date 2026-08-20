@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth.jsx';
 import {
   Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Receipt, Layers,
   Logout, Shield, ArrowRight, Menu, X,
-  FileText, Activity, Cpu, Lock, ChartBar,
+  FileText, Activity, Cpu, Lock, ChartBar, Brain,
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 
@@ -27,6 +27,7 @@ const navGroups = [
   {
     label: 'AI 写作',
     items: [
+      { to: '/app/smart-writing', label: '智能写作', icon: Brain, end: false },
       { to: '/app/writing', label: '论文写作', icon: Pen, end: false },
       { to: '/app/proposal', label: '开题报告', icon: FileWord, end: false },
       { to: '/app/literature-review', label: '文献综述', icon: Book, end: false },
