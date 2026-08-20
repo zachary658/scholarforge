@@ -53,16 +53,35 @@ function isBlockedHostname(host) {
   return false;
 }
 
+// 从 IPv4 映射/兼容 IPv6 地址中提取内嵌的 IPv4（还原为点分十进制）。
+// 覆盖 ::ffff:1.2.3.4（点分）与 ::ffff:HHHH:HHHH / 0:0:0:0:0:ffff:HHHH:HHHH（十六进制双字）。
+// 例：URL 解析会把 ::ffff:169.254.169.254 规范化为 ::ffff:a9fe:a9fe，须能还原回 169.254.169.254。
+function extractEmbeddedIpv4(lower) {
+  let m = lower.match(/::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) return `${m[1]}.${m[2]}.${m[3]}.${m[4]}`;
+  m = lower.match(/(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (m) {
+    const pair = (h) => {
+      const n = parseInt(h, 16);
+      return `${(n >> 8) & 255}.${n & 255}`;
+    };
+    return `${pair(m[1])}.${pair(m[2])}`;
+  }
+  return null;
+}
+
 // 判断解析出的 IP 是否不安全（回环/未指定/链路本地，含云元数据地址）
-function isUnsafeIp(ip) {
+// allowPrivate=true（默认）放行 RFC1918 私网，兼容内网模型服务；
+// allowPrivate=false 时额外拒绝 10/8、172.16/12、192.168/16，用于校验用户可控的外站 URL。
+function isUnsafeIp(ip, allowPrivate = true) {
   if (!ip) return true;
   if (ip.includes(':')) {
     const lower = ip.toLowerCase();
     if (lower === '::1' || lower === '::') return true;
-    // IPv4 映射/兼容 IPv6（如 ::ffff:169.254.169.254、::ffff:127.0.0.1）：
-    // 解出内嵌的 IPv4 后按 IPv4 规则校验，拦截云元数据/回环穿透
-    const mapped = lower.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
-    if (mapped) return isUnsafeIp(mapped[1]);
+    // IPv4 映射/兼容 IPv6（如 ::ffff:169.254.169.254、::ffff:a9fe:a9fe、0:0:0:0:0:ffff:a9fe:a9fe）：
+    // 还原内嵌的 IPv4 后按 IPv4 规则校验，拦截云元数据/回环穿透（含十六进制双字形式）
+    const embedded = extractEmbeddedIpv4(lower);
+    if (embedded) return isUnsafeIp(embedded, allowPrivate);
     // 链路本地 fe80::/10（fe80-fe8b 前缀；宽松匹配 fe8/fe9/fea/feb）
     if (/^fe[89ab]/.test(lower)) return true;
     return false;
@@ -70,7 +89,12 @@ function isUnsafeIp(ip) {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
   if (parts[0] === 127 || parts[0] === 0) return true;
-  if (parts[0] === 169 && parts[1] === 254) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true; // 链路本地/云元数据
+  if (!allowPrivate) {
+    if (parts[0] === 10) return true;                                      // 10.0.0.0/8
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
+    if (parts[0] === 192 && parts[1] === 168) return true;                 // 192.168.0.0/16
+  }
   return false;
 }
 
@@ -115,21 +139,23 @@ export function assertSafeAiBaseUrl(rawUrl) {
 
 // 解析后校验：对域名做真实 DNS 解析，拦截解析到回环/链路本地/云元数据的地址（防 DNS 重绑定）
 // 私网地址（10.x / 192.168.x / 172.16-31.x）默认放行，兼容内网部署的模型服务（vLLM/Ollama）
-export async function assertSafeAiResolvedUrl(rawUrl) {
+// allowPrivate=true（默认）：放行私网，兼容内网模型服务；
+// allowPrivate=false：拒绝私网，用于校验用户可控的外站 URL（如文献 PDF 下载），纵深防御 SSRF。
+export async function assertSafeAiResolvedUrl(rawUrl, { allowPrivate = true } = {}) {
   const url = assertSafeAiBaseUrl(rawUrl);
   const host = url.hostname.replace(/^\[|\]$/g, '');
   // IP 字面量也必须过 isUnsafeIp 校验：IPv4 映射 IPv6（如 ::ffff:169.254.169.254）
   // 不会被 assertSafeAiBaseUrl 的 IPv4 字面量检查拦截，须在此二次拦截（防云元数据/回环穿透）
   if (isIP(host)) {
-    if (isUnsafeIp(host)) {
-      throw new Error('AI 服务地址不允许指向本机、回环或链路本地地址');
+    if (isUnsafeIp(host, allowPrivate)) {
+      throw new Error('目标地址不允许指向本机、回环或链路本地地址');
     }
     return url;
   }
   try {
     const { address } = await lookup(host, { verbatim: true });
-    if (isUnsafeIp(address)) {
-      throw new Error('AI 服务地址解析到不安全的目标（回环/链路本地/云元数据），已拒绝');
+    if (isUnsafeIp(address, allowPrivate)) {
+      throw new Error('目标地址解析到不安全的目标（回环/链路本地/云元数据/私网），已拒绝');
     }
   } catch (err) {
     if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN') {

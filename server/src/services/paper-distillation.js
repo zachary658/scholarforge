@@ -24,7 +24,7 @@
 import { searchMultiSource } from './multi-source-search.js';
 import { runAI } from '../ai-service.js';
 import { getDefaultModel } from '../config-store.js';
-import { dedupKeyOf } from '../utils.js';
+import { dedupKeyOf, assertSafeAiResolvedUrl } from '../utils.js';
 import logger from '../logger.js';
 
 // pdfjs 动态导入（Node 18+ 兼容）；仅在需要解析 OA PDF 时加载，避免拖慢常规路径
@@ -653,12 +653,20 @@ function rebuildLines(items) {
       .join(' '));
 }
 
-// 下载 OA PDF（大小限制 + 超时；失败抛错由调用方降级）
+// 下载 OA PDF（SSRF 防护 + 大小限制 + 超时；失败抛错由调用方降级）
+// 安全：所有外站 URL 先经 assertSafeAiResolvedUrl 校验，拒绝回环/链路本地/云元数据/私网；
+// 并禁止重定向（redirect:'manual'）以防攻击者在校验后通过 3xx 跳转到内网/元数据端点。
 async function downloadPdfBytes(url) {
+  await assertSafeAiResolvedUrl(url, { allowPrivate: false });
   const resp = await fetch(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(10000),
+    redirect: 'manual',
   });
+  // 禁止自动跟随重定向：避免通过 3xx 绕过防护跳转到内网/元数据端点
+  if (resp.status >= 300 && resp.status < 400) {
+    throw new Error('PDF 下载不允许重定向');
+  }
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const declared = Number(resp.headers.get('content-length') || 0);
   if (declared && declared > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
