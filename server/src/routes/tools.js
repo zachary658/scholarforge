@@ -408,12 +408,18 @@ router.post('/writing', authRequired, async (req, res) => {
     }
 
     // 大纲生成：解析为结构化大纲并写入工作区（此前只返回文本，工作区看不到大纲、无法进入全文写作）
+    // 防静默覆盖：用户已确认（或已编辑）的大纲不被同题再次免费生成覆盖，避免编辑成果无声丢失
     if (type === 'outline' && result.projectId && result.content) {
       try {
-        const { outlineTextToStructure } = await import('../services/paper-distillation.js');
-        const structure = outlineTextToStructure(result.content);
-        if (structure.length > 0) {
-          saveProjectOutline(result.projectId, req.user.id, structure);
+        const proj = getProject(result.projectId, req.user.id);
+        if (proj && proj.outline_confirmed_at) {
+          logger.warn('tools', `大纲已确认，跳过自动覆盖 project=${result.projectId}`);
+        } else {
+          const { outlineTextToStructure } = await import('../services/paper-distillation.js');
+          const structure = outlineTextToStructure(result.content);
+          if (structure.length > 0) {
+            saveProjectOutline(result.projectId, req.user.id, structure);
+          }
         }
       } catch (err) {
         logger.warn('tools', `大纲结构化写入失败（忽略，仅影响工作区大纲展示）: ${err.message}`);

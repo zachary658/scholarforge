@@ -3,6 +3,7 @@ import db from '../db.js';
 import { authRequired } from '../middleware.js';
 import { formatReference } from '../ai.js';
 import { getSetting } from '../config-store.js';
+import { logUsage } from '../usage.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -11,6 +12,18 @@ const router = Router();
 const searchCache = new Map(); // key -> { data, at }
 const SEARCH_CACHE_TTL = 24 * 3600 * 1000;
 const SEARCH_TIMEOUT = 10000; // 10 秒超时
+
+// 免费不限次功能的每用户每小时调用上限：文献检索调用真实外部 API（OpenAlex），
+// 免费不意味着可被批量注册后无限刷（此前限流只覆盖大纲，ref_search 完全无限制）
+const REF_SEARCH_HOURLY_LIMIT = 30;
+
+function isRefSearchRateLimited(userId) {
+  const cutoff = Math.floor(Date.now() / 1000) - 3600;
+  const cnt = db.prepare(
+    "SELECT COUNT(*) as c FROM usage_logs WHERE user_id = ? AND tool_type = 'ref_search' AND created_at >= ?"
+  ).get(userId, cutoff).c;
+  return cnt >= REF_SEARCH_HOURLY_LIMIT;
+}
 
 // OpenAlex API 邮箱（进入 polite pool，可经配置覆盖；默认使用产品邮箱）
 function getOpenAlexMailto() {
@@ -115,6 +128,11 @@ router.get('/search', authRequired, async (req, res) => {
     return res.json({ ...cached.data, cached: true });
   }
 
+  // 免费不限次限流：命中缓存不计，真实外部 API 调用按用户每小时限流
+  if (isRefSearchRateLimited(req.user.id)) {
+    return res.status(429).json({ error: '检索过于频繁，请 1 小时后再试', results: [], total: 0 });
+  }
+
   const doFetch = () => fetch(url, {
     headers: { 'User-Agent': `ScholarForge/1.0 (mailto:${mailto})` },
     signal: AbortSignal.timeout(SEARCH_TIMEOUT),
@@ -149,6 +167,19 @@ router.get('/search', authRequired, async (req, res) => {
       const firstKey = searchCache.keys().next().value;
       searchCache.delete(firstKey);
     }
+    // 记录本次检索（供每用户每小时限流计数）
+    logUsage({
+      userId: req.user.id,
+      toolType: 'ref_search',
+      action: 'search',
+      model: { name: 'openalex' },
+      inputChars: q.length,
+      outputChars: 0,
+      tokens: 0,
+      status: 'success',
+      chargeType: 'unlimited',
+      amount: 0,
+    });
     return res.json(payload);
   } catch (err) {
     logger.error('references', `OpenAlex 检索失败: ${err && err.message ? err.message : String(err)}`);

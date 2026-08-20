@@ -37,7 +37,11 @@ function parseMCPArgs(raw) {
 }
 
 const MCP_ARGS = parseMCPArgs(process.env.CNKI_MCP_ARGS);
-const MCP_TIMEOUT_MS = Number(process.env.CNKI_MCP_TIMEOUT || 45000);
+// 超时毫秒数：非法（NaN/非正数）时回退默认 45s，否则 setTimeout(NaN) 会立即超时
+const MCP_TIMEOUT_MS = (() => {
+  const n = Number(process.env.CNKI_MCP_TIMEOUT || 45000);
+  return Number.isFinite(n) && n > 0 ? n : 45000;
+})();
 
 // ===== 连接管理（懒启动 + 单例） =====
 let clientPromise = null;
@@ -79,7 +83,10 @@ async function getClient() {
     const transport = new StdioClientTransport({
       command: MCP_COMMAND,
       args: MCP_ARGS,
-      stderr: 'pipe',
+      // 关键：不能用 stderr:'pipe' 而不消费——cnki-mcp 是浏览器自动化，stderr 输出海量，
+      // PassThrough 缓冲超 16KB 后 OS 管道写满，子进程阻塞在 stderr 写入无法处理请求，
+      // 表现为「检索即挂死→熔断→重启→再挂死」永久失效。改为 inherit 直接透传，无缓冲无死锁。
+      stderr: 'inherit',
       env: { ...process.env },
     });
     const client = new Client({ name: 'scholarforge', version: '1.0.0' });
@@ -138,25 +145,32 @@ export function parseCnkiResult(text, limit = 8) {
     }
   } catch { /* 非 JSON，走文本启发式 */ }
 
-  // 2. 文本启发式：按行解析"标题 / 作者 / 来源 年份"块
+  // 2. 文本启发式：严格按「编号标题 / 作者 / 来源 年份」三行块解析。
+  // 必须满足：标题行以数字编号开头 + 来源行含年份，否则跳过。
+  // 此前任意 4-200 字符行都会被当作"文献"（journal 硬标 '知网'），
+  // 连错误提示文本也会变成假参考文献——与"引用真实文献"的承诺冲突。
   const papers = [];
   const lines = text.split('\n').map((s) => s.trim()).filter(Boolean);
   let i = 0;
   while (i < lines.length && papers.length < limit) {
     const line = lines[i];
-    // 行首为数字编号的视为标题行（如 "1. 论文标题"）
-    const titleMatch = line.match(/^(?:\d+[.、)]\s*)?(.{4,200})$/);
+    // 行首必须为数字编号才视为标题行（如 "1. 论文标题"）
+    const titleMatch = line.match(/^\d+[.、)]\s*(.{4,200})$/);
     if (!titleMatch) { i++; continue; }
     const title = titleMatch[1].replace(/^\[|\]$/g, '').trim();
-    const authors = (lines[i + 1] || '').replace(/^作者[:：]\s*/, '').trim();
+    const authorsLine = (lines[i + 1] || '').trim();
+    const authors = authorsLine.replace(/^(作者|Authors?)[:：]\s*/i, '').trim();
     const srcLine = (lines[i + 2] || '').trim();
     const yearMatch = srcLine.match(/(19|20)\d{2}/);
+    // 来源行缺失或无年份：视为非文献内容（错误提示/说明文字），跳过该行
+    if (!srcLine || !yearMatch) { i++; continue; }
     const journal = srcLine.replace(/[（(](19|20)\d{2}[)）].*$/, '').trim();
     papers.push({
       title,
       authors: authors && !/^\d{4}/.test(authors) ? authors : '佚名',
-      year: yearMatch ? yearMatch[0] : '',
-      journal: journal || '知网',
+      year: yearMatch[0],
+      // 未知期刊不硬标 '知网'（知网是数据库名而非刊名），留空由 GB/T 7714 格式化时省略
+      journal: journal || '',
       doi: '',
       abstract: '',
       cited_by_count: 0,
@@ -180,15 +194,24 @@ export async function searchCnkiViaMCP(query, limit = 8) {
     const { tools } = await client.listTools();
     const tool = findSearchTool(tools);
     if (!tool) throw new Error('tools/list 中未发现 search 类工具');
-    // 外层超时兜底（MCP 调用可能因浏览器自动化长时间无响应）
+    // 外层超时兜底（MCP 调用可能因浏览器自动化长时间无响应）。
+    // 定时器在 finally 中清理，避免每次调用泄漏一个未清除的 timer。
     const callPromise = client.callTool({
       name: tool.name,
       arguments: { query, limit, max_results: limit, count: limit },
     });
-    const res = await Promise.race([
-      callPromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('MCP 调用超时')), MCP_TIMEOUT_MS)),
-    ]);
+    let timer = null;
+    let res;
+    try {
+      res = await Promise.race([
+        callPromise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('MCP 调用超时')), MCP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const text = (res?.content || [])
       .filter((c) => c && c.type === 'text')
       .map((c) => c.text)
@@ -199,9 +222,10 @@ export async function searchCnkiViaMCP(query, limit = 8) {
   } catch (err) {
     recordFailure(err.message);
     logger.warn('cnki-mcp', `检索失败（忽略，不影响其他源）: ${err.message}`);
-    // 连接已建立后子进程崩溃：重置连接引用，下次调用重新拉起子进程
-    // （此前旧连接会永久失效，直到整个服务重启）
-    if (clientPromise) {
+    // 连接已建立后子进程崩溃：重置连接引用，下次调用重新拉起子进程。
+    // 超时（浏览器自动化慢）不视为崩溃：不重置共享单例连接，避免并发检索请求互拆连接
+    // （此前超时也会关闭共享连接，导致其他在途请求全部失败）。
+    if (err.message !== 'MCP 调用超时' && clientPromise) {
       const stale = clientPromise;
       clientPromise = null;
       stale.then(({ client, transport }) => {

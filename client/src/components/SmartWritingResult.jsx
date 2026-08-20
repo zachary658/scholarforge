@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Copy, Check, Brain, Book, Layers, Table, BadgeCheck, ArrowRight,
@@ -6,10 +6,18 @@ import {
 
 // 深度文献调研结果展示：状态条 + 四标签（深度调研大纲 / 研究框架 / 文献 / 数据表格）
 // 供 Writing 页大纲生成后"深度文献调研"付费升级复用
-export default function SmartWritingResult({ result, onOutlineChange }) {
+export default function SmartWritingResult({ result }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState('outline');
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef(null);
+
+  // 组件卸载时清理复制反馈定时器，避免内存泄漏
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const framework = result?.framework || null;
   const benchmarks = result?.benchmarks?.data || [];
@@ -21,7 +29,8 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
     try {
       if (navigator.clipboard) await navigator.clipboard.writeText(result.outline);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch { /* 忽略复制失败 */ }
   };
 
@@ -72,11 +81,6 @@ export default function SmartWritingResult({ result, onOutlineChange }) {
                 {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                 {copied ? '已复制' : '复制大纲'}
               </button>
-              {onOutlineChange && (
-                <button onClick={() => onOutlineChange(result.outline)} className="btn-ghost text-xs text-accent">
-                  <Layers className="h-3.5 w-3.5" /> 设为当前大纲
-                </button>
-              )}
             </div>
             {result.outline ? (
               <pre className="whitespace-pre-wrap font-serif text-[14px] leading-[1.85] text-slate-700">{result.outline}</pre>

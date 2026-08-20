@@ -38,6 +38,11 @@ export default function Writing() {
     api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
   }, []);
 
+  // 换题后清空旧调研结果：防止旧题的蒸馏产物错位挂在新题大纲下，且「开始深度调研」按钮被旧结果挡住无法发起新调研
+  useEffect(() => {
+    setDistill({ loading: false, error: '', result: null, needOrder: null });
+  }, [form.topic]);
+
   // 从工作区「全流程」跳转进来时，读取 projectId 与 type，预选写作类型并关联工作区上下文
   useEffect(() => {
     const pid = searchParams.get('projectId');

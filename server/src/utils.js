@@ -59,6 +59,10 @@ function isUnsafeIp(ip) {
   if (ip.includes(':')) {
     const lower = ip.toLowerCase();
     if (lower === '::1' || lower === '::') return true;
+    // IPv4 映射/兼容 IPv6（如 ::ffff:169.254.169.254、::ffff:127.0.0.1）：
+    // 解出内嵌的 IPv4 后按 IPv4 规则校验，拦截云元数据/回环穿透
+    const mapped = lower.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
+    if (mapped) return isUnsafeIp(mapped[1]);
     // 链路本地 fe80::/10（fe80-fe8b 前缀；宽松匹配 fe8/fe9/fea/feb）
     if (/^fe[89ab]/.test(lower)) return true;
     return false;
@@ -114,7 +118,14 @@ export function assertSafeAiBaseUrl(rawUrl) {
 export async function assertSafeAiResolvedUrl(rawUrl) {
   const url = assertSafeAiBaseUrl(rawUrl);
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (isIP(host)) return url; // IP 字面量已在上一步校验
+  // IP 字面量也必须过 isUnsafeIp 校验：IPv4 映射 IPv6（如 ::ffff:169.254.169.254）
+  // 不会被 assertSafeAiBaseUrl 的 IPv4 字面量检查拦截，须在此二次拦截（防云元数据/回环穿透）
+  if (isIP(host)) {
+    if (isUnsafeIp(host)) {
+      throw new Error('AI 服务地址不允许指向本机、回环或链路本地地址');
+    }
+    return url;
+  }
   try {
     const { address } = await lookup(host, { verbatim: true });
     if (isUnsafeIp(address)) {

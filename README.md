@@ -32,7 +32,7 @@ scholarforge/
 │   │       ├── content-safety.js    # 内容安全审核
 │   │       ├── text-optimize.js     # 降重/降AI增强
 │   │       ├── docx-generator.js    # Word 生成（三线表/图表/公式/图表引用校验）
-│   │       ├── paper-distillation.js   # 论文蒸馏
+│   │       ├── paper-distillation.js   # 深度文献调研（检索→框架提取→融合）
 │   │       ├── multi-source-search.js  # 多源检索
 │   │       └── chart-renderer.js       # 图表渲染
 │   ├── data/scholarforge.db # 数据库

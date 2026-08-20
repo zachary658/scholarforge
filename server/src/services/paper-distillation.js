@@ -170,6 +170,14 @@ export async function discoverPerspectives(topic, field, tokenAcc) {
 // 合并多篇论文的框架，去重，按出现频率排序，生成最优结构
 // 保留视角维度：perspectiveMap[视角] = { methods, innovations }，供大纲生成按视角组织
 function mergeFrameworks(frameworks) {
+  // 用归一化 key 计数去重，但输出保留原始字符串（此前直接用 lower+截断的 key 作为输出，导致英文变小写、长文本被截断）
+  const bump = (map, key, original) => {
+    const cur = map.get(key);
+    map.set(key, cur ? { original: cur.original, count: cur.count + 1 } : { original, count: 1 });
+  };
+  const normKey = (s) => s.toLowerCase().slice(0, 50);
+  const topN = (map, n) => [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, n).map(([, v]) => v.original);
+
   // 合并并去重方法
   const methodCount = new Map();
   const perspectiveMap = new Map();
@@ -178,45 +186,33 @@ function mergeFrameworks(frameworks) {
     if (!perspectiveMap.has(view)) perspectiveMap.set(view, { methods: new Map(), innovations: new Map() });
     const pm = perspectiveMap.get(view);
     for (const m of f.methods) {
-      const key = m.toLowerCase().slice(0, 50);
-      methodCount.set(key, (methodCount.get(key) || 0) + 1);
-      pm.methods.set(key, (pm.methods.get(key) || 0) + 1);
+      const key = normKey(m);
+      bump(methodCount, key, m);
+      bump(pm.methods, key, m);
     }
     for (const i of f.innovations) {
-      const key = i.toLowerCase().slice(0, 50);
-      pm.innovations.set(key, (pm.innovations.get(key) || 0) + 1);
+      bump(pm.innovations, normKey(i), i);
     }
   }
-  const methods = [...methodCount.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([k]) => k);
+  const methods = topN(methodCount, 5);
 
   // 合并创新点
   const innovCount = new Map();
   for (const f of frameworks) {
     for (const i of f.innovations) {
-      const key = i.toLowerCase().slice(0, 50);
-      innovCount.set(key, (innovCount.get(key) || 0) + 1);
+      bump(innovCount, normKey(i), i);
     }
   }
-  const innovations = [...innovCount.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([k]) => k);
+  const innovations = topN(innovCount, 3);
 
   // 合并结论
   const conclCount = new Map();
   for (const f of frameworks) {
     for (const c of f.conclusions) {
-      const key = c.toLowerCase().slice(0, 50);
-      conclCount.set(key, (conclCount.get(key) || 0) + 1);
+      bump(conclCount, normKey(c), c);
     }
   }
-  const conclusions = [...conclCount.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([k]) => k);
+  const conclusions = topN(conclCount, 3);
 
   // 生成融合结构大纲（基于学术论文标准结构 + 借鉴的方法）
   const structure = generateMergedStructure(methods, innovations);
@@ -224,8 +220,8 @@ function mergeFrameworks(frameworks) {
   // 视角分组（可序列化）
   const perspectives = [...perspectiveMap.entries()].map(([view, maps]) => ({
     view,
-    methods: [...maps.methods.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k),
-    innovations: [...maps.innovations.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k),
+    methods: topN(maps.methods, 4),
+    innovations: topN(maps.innovations, 3),
   }));
 
   return { methods, innovations, conclusions, structure, paperCount: frameworks.length, perspectives };
@@ -283,6 +279,8 @@ function generateMergedStructure(methods, innovations) {
   // 如果有借鉴的方法，在第三章注入
   if (methods.length > 0) {
     chapters[2].sections.splice(2, 0, '3.3 借鉴方法分析（基于文献调研）');
+    // 注入后重排第三章小节编号，避免出现两个 3.3（此前 splice 后「关键模块设计」仍为 3.3）
+    chapters[2].sections = chapters[2].sections.map((s, i) => s.replace(/^\d+\.\d+[\s.]*/, `3.${i + 1} `));
   }
   return chapters;
 }
@@ -734,10 +732,9 @@ async function parsePdfViaPdfjs(pdfBytes) {
   return lines;
 }
 
-// 统一入口：下载 PDF 后走 MinerU（若配置）或 pdfjs 通道
-// 返回 { lines, mineruTables }；MinerU 通道失败会由调用方捕获后回退 pdfjs
-async function extractPdfText(url) {
-  const buf = await downloadPdfBytes(url);
+// 统一入口：传入已下载的 PDF 字节，走 MinerU（若配置）或 pdfjs 通道
+// 返回 { lines, mineruTables }；MinerU 通道失败会由调用方捕获后回退 pdfjs（复用同一 buffer）
+async function extractPdfText(buf) {
   if (MINERU_API_URL) {
     const { markdown, data } = await parsePdfViaMinerU(buf);
     const lines = markdown.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -791,13 +788,20 @@ export async function enrichSourcesFromOpenAccess(papers, benchmarks = []) {
     const batch = candidates.slice(i, i + PDF_CONCURRENCY);
     await Promise.all(batch.map(async (p) => {
       let extracted = null;
+      let buf = null;
       try {
-        extracted = await extractPdfText(p.pdf_url);
+        // 下载一次 PDF，MinerU 失败回退 pdfjs 时复用同一 buffer，避免重复下载
+        buf = await downloadPdfBytes(p.pdf_url);
       } catch (err) {
-        // MinerU 通道失败（或 PDF 下载失败）时，回退内置 pdfjs 通道再试一次
+        logger.warn('paper-distillation', `OA PDF 下载失败（忽略）: ${(p.title || '').slice(0, 40)} - ${err.message}`);
+        return;
+      }
+      try {
+        extracted = await extractPdfText(buf);
+      } catch (err) {
+        // MinerU 通道失败时，回退内置 pdfjs 通道（复用已下载的 buf，不重复下载）
         if (MINERU_API_URL) {
           try {
-            const buf = await downloadPdfBytes(p.pdf_url);
             extracted = { lines: await parsePdfViaPdfjs(buf), mineruTables: [] };
             logger.warn('paper-distillation', `MinerU 解析失败，已回退 pdfjs: ${(p.title || '').slice(0, 40)} - ${err.message}`);
           } catch (err2) {

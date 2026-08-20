@@ -30,19 +30,26 @@ function isCircuitOpen(sourceName) {
   const state = sourceFailures.get(sourceName);
   if (!state || !state.open) return false;
   if (Date.now() - state.lastFailTime > CIRCUIT_BREAK_COOLDOWN_MS) {
-    // 冷却期已过，半开状态（允许重试）
-    sourceFailures.set(sourceName, { ...state, open: false, failures: 0 });
+    // 冷却期已过，进入半开状态：放行一次探测请求，探测失败则立即重新熔断
+    sourceFailures.set(sourceName, { ...state, open: false, halfOpen: true, failures: 0 });
     return false;
   }
   return true;
 }
 
 function recordFailure(sourceName) {
-  const state = sourceFailures.get(sourceName) || { failures: 0, lastFailTime: 0, open: false };
+  const state = sourceFailures.get(sourceName) || { failures: 0, lastFailTime: 0, open: false, halfOpen: false };
+  // 半开探测失败：立即重新熔断（此前重置 failures=0，需再烧 3 次请求才会重新熔断）
+  if (state.halfOpen) {
+    sourceFailures.set(sourceName, { failures: CIRCUIT_BREAK_THRESHOLD, lastFailTime: Date.now(), open: true, halfOpen: false });
+    logger.warn('search', `熔断 ${sourceName}（半开探测失败，立即重新熔断），${CIRCUIT_BREAK_COOLDOWN_MS / 1000}s 后重试`);
+    return;
+  }
   const newState = {
     failures: state.failures + 1,
     lastFailTime: Date.now(),
     open: state.failures + 1 >= CIRCUIT_BREAK_THRESHOLD,
+    halfOpen: false,
   };
   sourceFailures.set(sourceName, newState);
   if (newState.open) {
@@ -51,7 +58,7 @@ function recordFailure(sourceName) {
 }
 
 function recordSuccess(sourceName) {
-  sourceFailures.set(sourceName, { failures: 0, lastFailTime: 0, open: false });
+  sourceFailures.set(sourceName, { failures: 0, lastFailTime: 0, open: false, halfOpen: false });
 }
 
 // ===== OpenAlex（已有逻辑，提取为独立函数）=====
@@ -193,6 +200,8 @@ export function parseArxivAtom(xmlText) {
     const e = entries[i];
     const id = arxivTextOf(e, 'id') || '';
     const arxivId = id.split('/abs/').pop() || '';
+    // 去重键去掉版本号（v1/v2...）：同一论文不同版本应视为同一篇，且便于与 DOI 键互通去重
+    const arxivIdBase = arxivId.replace(/v\d+$/i, '');
     const title = cleanArxivText(arxivTextOf(e, 'title'));
     const summary = cleanArxivText(arxivTextOf(e, 'summary'));
     const published = arxivTextOf(e, 'published') || '';
@@ -207,7 +216,9 @@ export function parseArxivAtom(xmlText) {
     const links = e.getElementsByTagName('link');
     for (let j = 0; j < links.length; j++) {
       if (links[j].getAttribute && links[j].getAttribute('title') === 'pdf') {
-        pdfUrl = links[j].getAttribute('href') || '';
+        // arXiv ATOM 返回的 pdf 链接为 http，而下游富集阶段 ^https:// 过滤会剔除 http，
+        // 导致 OA 全文提取对主要来源失效；arXiv 完整支持 https，此处归一化为 https
+        pdfUrl = (links[j].getAttribute('href') || '').replace(/^http:\/\//i, 'https://');
       }
     }
     papers.push({
@@ -221,7 +232,7 @@ export function parseArxivAtom(xmlText) {
       source_url: arxivId ? `https://arxiv.org/abs/${arxivId}` : '',
       source_db: 'arXiv',
       pdf_url: pdfUrl || (arxivId ? `https://arxiv.org/pdf/${arxivId}` : ''),
-      _dedupKey: dedupKeyOf(arxivId || title),
+      _dedupKey: dedupKeyOf(arxivIdBase || title),
     });
   }
   return papers;

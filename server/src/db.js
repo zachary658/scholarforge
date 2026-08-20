@@ -294,6 +294,12 @@ addColumnIfMissing('orders', 'quote_note', 'TEXT');
 addColumnIfMissing('orders', 'service_status', "TEXT NOT NULL DEFAULT 'pending'");
 addColumnIfMissing('orders', 'task_id', 'INTEGER');
 addColumnIfMissing('orders', 'params_json', 'TEXT');
+// 分章节生成（writing_fulltext）订单生命周期治理：
+//   - updated_at：记录订单最近一次被抢占（进入 processing）的时间，用于超时抢占，
+//     避免进程崩溃/重启后订单永久卡在 processing（用户永远收到「订单正在生成中」）
+//   - project_id：订单绑定到的论文工作区，防「一单多用」（同订单对多个项目白嫖生成/重写）
+addColumnIfMissing('orders', 'updated_at', 'INTEGER');
+addColumnIfMissing('orders', 'project_id', 'INTEGER');
 // 借鉴千笔写作：新增字段
 addColumnIfMissing('feature_prices', 'is_unlimited', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('feature_prices', 'pricing_mode', "TEXT NOT NULL DEFAULT 'fixed'");

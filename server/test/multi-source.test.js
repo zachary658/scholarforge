@@ -36,7 +36,7 @@ test('parseArxivAtom：解析标题/作者/年份/摘要/PDF 链接', () => {
   assert.ok(p.authors.includes('Alice Zhang'), '应包含作者');
   assert.equal(p.journal, 'arXiv', 'journal 应为 arXiv');
   assert.equal(p.source_db, 'arXiv', 'source_db 应为 arXiv');
-  assert.equal(p.pdf_url, 'http://arxiv.org/pdf/2401.00001v2', '应提取 pdf 链接');
+  assert.equal(p.pdf_url, 'https://arxiv.org/pdf/2401.00001v2', 'pdf 链接应归一化为 https（防下游 ^https:// 过滤剔除 arXiv 主来源）');
   assert.ok(p.source_url.includes('arxiv.org/abs/'), 'source_url 应为 abs 链接');
   assert.ok(p.abstract.includes('95.2%'), '摘要应保留');
 });

@@ -349,9 +349,10 @@ function buildUserPrompt(tool, params) {
       return `${parts.join('\n')}\n\n请撰写一篇符合期刊发表规范的学术论文。${ctx}`;
     }
     case 'framework_extract':
-      return `论文标题：${params.topic}\n\n${params.context || ''}\n\n请提取这篇论文的研究框架，严格输出 JSON 对象。`;
+      // 摘要为外部论文内容（不可信数据），必须用分隔符包裹防注入，与 INJECTION_GUARD 设计保持一致
+      return `论文标题：${wrapUserContent(params.topic)}\n\n${wrapUserContent(params.context || '')}\n\n请提取这篇论文的研究框架，严格输出 JSON 对象。`;
     case 'perspective_extract':
-      return `研究主题：${params.topic}${params.field ? `\n学科领域：${params.field}` : ''}\n\n请将该主题拆分为 3-5 个互补的检索视角，严格输出 JSON 对象。`;
+      return `研究主题：${wrapUserContent(params.topic)}${params.field ? `\n学科领域：${wrapUserContent(params.field)}` : ''}\n\n请将该主题拆分为 3-5 个互补的检索视角，严格输出 JSON 对象。`;
     case 'review':
       return `请审校以下论文内容：\n\n${wrapUserContent(params.text || params.content || '')}${ctx}`;
     default:

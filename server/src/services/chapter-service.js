@@ -58,9 +58,12 @@ function saveChapters(projectId, chapters) {
     .run(JSON.stringify(chapters), now(), projectId);
 }
 
+// 订单执行超时（秒）：进入 processing 超过该时长视为「卡死」（进程崩溃/重启遗留），允许抢占重试
+const ORDER_CLAIM_TIMEOUT_SEC = 30 * 60; // 30 分钟
+
 // 校验章节生成所需订单：需已支付的 writing_fulltext 订单
 // 注意：仅接受"全文生成"订单——写作段落（writing_paragraph）是独立功能，不能驱动整篇论文生成
-function validateOrder(userId, orderNo) {
+function validateOrder(userId, orderNo, projectId) {
   if (!orderNo) return { ok: false, error: '请先下单支付后再生成正文', needOrder: true, itemType: 'writing_fulltext' };
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(orderNo);
   if (!order) return { ok: false, error: '订单不存在', needOrder: true, itemType: 'writing_fulltext' };
@@ -70,15 +73,24 @@ function validateOrder(userId, orderNo) {
   if (order.status !== 'paid') return { ok: false, error: '订单未支付' };
   // failed 允许重试：AI 瞬时失败不应锁死已付费订单
   if (!['pending', 'processing', 'failed'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
+  // 一单多用防护：订单已绑定到其他论文工作区时拒绝（同一订单只能服务一个项目，
+  // 防 A 项目生成期间同订单对 B 项目白嫖生成/重写）
+  if (order.project_id != null && order.project_id !== projectId) {
+    return { ok: false, error: '该订单已绑定其他论文工作区，请重新下单' };
+  }
   return { ok: true, order };
 }
 
-// 原子抢占订单执行权：pending/failed → processing。
-// 防同一订单并发多项目/多请求复用（一次付费生成多篇论文）
-function claimOrderExecution(order) {
+// 原子抢占订单执行权：pending/failed → processing；processing 超时（卡死）也允许抢占。
+// 同时绑定 project_id，防同一订单并发多项目/多请求复用（一次付费生成多篇论文）
+function claimOrderExecution(order, projectId) {
   const r = db.prepare(
-    "UPDATE orders SET service_status = 'processing' WHERE id = ? AND service_status IN ('pending', 'failed')"
-  ).run(order.id);
+    `UPDATE orders
+        SET service_status = 'processing', project_id = ?, updated_at = ?
+      WHERE id = ?
+        AND (service_status IN ('pending', 'failed')
+             OR (service_status = 'processing' AND (updated_at IS NULL OR updated_at < ?)))`
+  ).run(projectId, now(), order.id, now() - ORDER_CLAIM_TIMEOUT_SEC);
   return r.changes === 1;
 }
 
@@ -137,7 +149,7 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
   if (!project.outline_confirmed_at) throw new Error('请先确认大纲再生成正文');
   if ((project.outline || []).length === 0) throw new Error('大纲为空，请先生成并确认大纲');
 
-  const bill = validateOrder(userId, orderNo);
+  const bill = validateOrder(userId, orderNo, projectId);
   if (!bill.ok) {
     const err = new Error(bill.error);
     err.needOrder = bill.needOrder;
@@ -165,7 +177,7 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
 
   // 原子抢占订单执行权：pending/failed → processing。
   // processing（正在生成/已绑定其他项目）→ 拒绝，防一单多论文
-  if (!claimOrderExecution(bill.order)) {
+  if (!claimOrderExecution(bill.order, projectId)) {
     throw new Error('该订单正在生成中或服务已结束，请勿重复提交');
   }
   running.add(projectId);
@@ -208,7 +220,7 @@ const MAX_REGEN_PER_CHAPTER = 3;
 export async function regenerateChapter(userId, projectId, chapterId, orderNo) {
   const project = getProject(projectId, userId);
   if (!project) throw new Error('工作区不存在');
-  const bill = validateOrder(userId, orderNo);
+  const bill = validateOrder(userId, orderNo, projectId);
   if (!bill.ok) {
     const err = new Error(bill.error);
     err.needOrder = bill.needOrder;

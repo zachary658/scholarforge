@@ -185,11 +185,11 @@ const intervalOrders = setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// 定时清理过期任务（每 24 小时，清理 90 天前的任务记录）
+// 定时清理过期任务（每 24 小时，按 doc_retention_days 配置清理，默认 30 天前）
 const intervalTasks = setInterval(() => {
   try {
     const n = cleanupOldTasks();
-    if (n > 0) logger.info('cleanup-tasks', `deleted ${n} expired tasks (>90d)`);
+    if (n > 0) logger.info('cleanup-tasks', `deleted ${n} expired tasks`);
   } catch (err) {
     logger.error('cleanup-tasks', err.message);
   }
