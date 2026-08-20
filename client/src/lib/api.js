@@ -1,19 +1,26 @@
 const BASE = '/api';
 
-// access token 仍存 localStorage（短效 15 分钟，用于 Authorization: Bearer 头）
-// refresh token 已改为 HttpOnly Cookie 下发（见后端 auth.js），前端不再持有
-const TOKEN_KEY = 'sf_token';
+// 安全：access token 改为内存变量存储，不再持久化到 localStorage，降低 XSS 窃取面（M-3）。
+// refresh token 仍为 HttpOnly Cookie，由浏览器自动携带；页面刷新后通过 bootstrapToken() 静默续期。
+let memoryToken = null;
 
 function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return memoryToken;
 }
 
 function setToken(accessToken) {
-  localStorage.setItem(TOKEN_KEY, accessToken);
+  memoryToken = accessToken;
 }
 
-function clearTokens() {
-  localStorage.removeItem(TOKEN_KEY);
+export function clearTokens() {
+  memoryToken = null;
+}
+
+// 页面加载 / 会话恢复时调用：若内存中无 token，尝试用 HttpOnly refresh cookie 静默换取新 access token。
+// 返回是否成功获得可用 token（成功则上层可继续调用 /auth/me 恢复用户态）。
+export async function bootstrapToken() {
+  if (getToken()) return true;
+  return doRefresh();
 }
 
 // 是否处于受保护路径（公开页 401 不强制跳转）

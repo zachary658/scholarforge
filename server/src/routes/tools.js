@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
+import { aiToolLimiter } from '../middleware/rateLimit.js';
 import { runAI } from '../ai-service.js';
 import { formatReference, rewriteText } from '../ai.js';
 import { logUsage } from '../usage.js';
@@ -14,6 +15,12 @@ import { claimOrderExecution } from '../services/order-claim.js';
 import db from '../db.js';
 
 const router = Router();
+
+// AI 工具统一限流：每用户每分钟最多 60 次（覆盖全部 /tools 写操作，防大模型成本被批量刷，M-2）
+router.use((req, res, next) => {
+  if (req.method === 'POST') return aiToolLimiter(req, res, next);
+  next();
+});
 
 // 输入文本长度上限（防超大文本拖垮 AI 调用与数据库写入）
 const MAX_INPUT_CHARS = 50000;

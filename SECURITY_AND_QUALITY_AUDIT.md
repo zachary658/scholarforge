@@ -171,3 +171,52 @@ async function downloadPdfBytes(url, { maxBytes = 25*1024*1024, timeoutMs = 1000
 
 ### 8.4 当前安全态势
 - 最高危且可利用的 SSRF（H-1）已闭环；供应链层面 client 的 high 已消除，剩余 moderate 均为需破坏性升级或 dev-only，已规划 P2；server 的 image-size high 属上游 0-day 类，已给出工程缓解，**不阻塞发布**。
+
+---
+
+## 9. P1 / P2 执行记录（2026-08-20 晚）
+
+### 9.1 M-1 图表渲染 XSS —— 设计安全 + 纵深加固 ✅
+- 核查发现：本项目图表渲染**并非**浏览器端 `mermaid` 库，而是 `server/src/services/chart-renderer.js` 的**自实现 SVG 生成器** `renderFlowchart`（所有节点/边文本均经 `escapeXml` 转义）；vega-lite 走 `assertSafeVegaSpec` + 受限 loader（禁止外部数据源 / 表达式）。原审计担心的「前端 mermaid DOM XSS」在本项目**实际不存在**。
+- 加固：在 `svgToPng` 入口新增 `sanitizeSvg()`，剥离 `<script>`、事件处理器（`on\w+`）、`javascript:` 伪协议，作为纵深防御（即便未来引入第三方 SVG 也不致注入可执行内容）。
+
+### 9.2 M-2 限流增强（Redis 就绪）✅
+- 新增 `server/src/middleware/rateLimit.js`：统一限流工厂 `makeLimiter` + 预置 `aiToolLimiter`（每用户 60/min）、`paymentLimiter`（每用户 30/min）；支持按 user/IP 维度，预留 `store` 注入点（生产切 Redis 的注释示例）。
+- 应用：`/tools/*` 全部 POST 套用 `aiToolLimiter`；`/payment`、`/orders`、`/graduation/orders` 的 POST 套用 `paymentLimiter`。
+- 说明：当前仍为进程内存存储（与既有 `auth.js` 限流同源），多实例需切 Redis（代码注释已给出接法）。
+
+### 9.3 M-3 access token 存储改造 ✅
+- `client/src/lib/api.js`：access token 由 `localStorage` 改为**内存变量**（`memoryToken`），不再持久化，降低 XSS 窃取面。
+- `client/src/lib/auth.jsx`：页面刷新后通过 `bootstrapToken()` 用 HttpOnly refresh cookie **静默续期**，再调用 `/auth/me` 恢复用户态；`clearSession` 改用 `clearTokens()`。
+- 验证：`npm run build` 通过；全仓已无残留 `localStorage` token 读写。
+
+### 9.4 L-2 日志脱敏 ✅
+- `server/src/logger.js` 新增 `redact()`：对日志中的 JWT/Bearer、邮箱，以及含 `token/secret/password/api_key/cookie/phone/email` 等敏感键的值统一掩码为 `***redacted***`（含循环引用保护）。`emit` 在输出 / 落盘前先脱敏。
+
+### 9.5 L-3 并发信号量 ✅
+- `server/src/utils.js` 新增 `createSemaphore(max)`。
+- 应用：`ai-service.js` 的 AI 出站调用并发上限 8（`AI_MAX_CONCURRENCY` 可配）；`paper-distillation.js` 的 PDF 下载 + MinerU 调用并发上限 5（`PDF_MAX_CONCURRENCY` 可配）。
+
+### 9.6 L-4 / 成本熔断 ✅
+- `ai-service.js` 新增单次生成**最大输出 token 硬上限** `AI_MAX_OUTPUT_TOKENS`（默认 16000，可配）：防止单请求失控烧钱。
+- 注：`multi-source-search` 已有按源熔断器；本次未另起全局成本预算器，避免误伤正常长文生成。若需硬性全局成本熔断，建议基于 `usage_logs` 做滚动窗口统计 + 配置阈值。
+
+### 9.7 L-1 私网默认拒绝（决策说明）
+- 维持 `isUnsafeIp` 默认 `allowPrivate=true`：AI `base_url` 由管理员配置，需兼容内网模型（vLLM/Ollama）；但**所有用户可控的外站出站请求**已统一 `allowPrivate=false`（H-1 的 PDF 下载路径已落地）。私网风险已被实际收敛，未强行改默认以避免破坏内网部署。
+
+### 9.8 P2 依赖破坏性升级（vite@8 / react-router-dom@7）—— 本次未强制升级 ⏸️
+- 核查：`esbuild`/`vite` 的 moderate 仅影响**开发服务器**（生产构建不受影响）；`react-router` 的 moderate 修复需升级到 `react-router-dom@7`（大版本，API 有变动），属破坏性升级。
+- 决策：**本次不强制大版本升级**，以免破坏现有构建 / 路由；建议单独排期评估 v7 迁移并配合回归测试。image-size 仍属上游无补丁（见 §8.3），保持缓解措施。
+
+### 9.9 验证
+- 服务端 `node --test`：**28/28 通过**（零回归）。
+- 客户端 `npm run build`：**构建成功**。
+- 启动冒烟：`/api/health` 返回 **200**，新中间件挂载正常。
+
+---
+
+## 10. 最终结论
+- **P0**：H-1 SSRF + 高危依赖（nanoid）→ 已闭环（§8）。
+- **P1**：M-1（设计安全 + 纵深）、M-2（限流增强）、M-3（token 内存化）→ 全部完成（§9.1–9.3）。
+- **P2**：L-2（日志脱敏）、L-3（并发信号量）、L-4（成本硬上限）已落地；L-1 经决策说明收敛；依赖破坏性升级（vite/router）与 image-size 上游 0-day 留作后续工程项（§9.7–9.8）。
+- 整体安全态势：核心业务 + 底线安全框架已较健全；剩余项均为「需破坏性升级 / 上游无补丁 / 多实例基建」类，不阻塞发布，建议纳入后续迭代。

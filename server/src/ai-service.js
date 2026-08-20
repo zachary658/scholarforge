@@ -10,6 +10,12 @@ import {
   rewriteText,
 } from './ai.js';
 import { getDefaultModel } from './config-store.js';
+import { createSemaphore } from './utils.js';
+
+// 出站 AI 调用并发上限：避免单进程对上游模型服务发起过多并发，拖垮连接池或触发上游限流（L-3）。
+const aiOutbound = createSemaphore(Number(process.env.AI_MAX_CONCURRENCY) || 8);
+// 单次生成最大输出 token 硬上限（成本熔断）：防止单请求失控烧钱，可被环境变量覆盖（L-4）。
+const AI_MAX_OUTPUT_TOKENS = Number(process.env.AI_MAX_OUTPUT_TOKENS) || 16000;
 import { genProposalBuiltin, buildProposalUserPrompt, PROPOSAL_SYSTEM_PROMPT } from './services/proposal.js';
 import logger from './logger.js';
 import { assertSafeAiResolvedUrl } from './utils.js';
@@ -159,7 +165,7 @@ async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) 
       { role: 'user', content: userPrompt },
     ],
     temperature: model.temperature ?? 0.7,
-    max_tokens: maxTokensOverride || model.max_tokens || 2048,
+    max_tokens: Math.min(maxTokensOverride || model.max_tokens || 2048, AI_MAX_OUTPUT_TOKENS),
   };
   if (responseFormat) body.response_format = responseFormat;
 
@@ -169,7 +175,7 @@ async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) 
     let res;
     try {
       // 60 秒超时，防止上游慢响应/挂死导致连接耗尽和 DoS
-      res = await fetch(url, {
+      res = await aiOutbound.run(() => fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -177,7 +183,7 @@ async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) 
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(60_000),
-      });
+      }));
     } catch (err) {
       // 网络错误/超时：不重试（可能持续），分类返回
       const isTimeout = err.name === 'TimeoutError' || err.name === 'AbortError';

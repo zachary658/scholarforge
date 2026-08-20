@@ -9,6 +9,7 @@ import logger from '../logger.js';
 // - GET  /payment/order/:orderNo/status：轮询订单状态
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
+import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import {
   createOrder,
@@ -22,6 +23,12 @@ import {
 import { getPaymentConfig, getSetting, getAvailableChannels } from '../config-store.js';
 
 const router = Router();
+
+// 支付动作限流：每用户每分钟最多 30 次（防订单 / 支付接口被刷，M-2）
+router.use((req, res, next) => {
+  if (req.method === 'POST') return paymentLimiter(req, res, next);
+  next();
+});
 
 // 创建订单（通用：用户端直接调，比如"购买课程"）
 router.post('/create-order', authRequired, (req, res) => {

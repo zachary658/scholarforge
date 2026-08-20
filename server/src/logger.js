@@ -68,9 +68,39 @@ function formatLog(level, module, message, data) {
   return base;
 }
 
+// 敏感字段脱敏：日志可能包含 token / 邮箱 / 手机号 / 密码 / API Key / Cookie 等，
+// 在输出或落盘前统一掩码，避免凭据泄露到日志文件（L-2 加固）。
+const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|cookie|phone|mobile|id[_-]?card|email|mail)/i;
+function redact(value, seen = new WeakSet()) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    // JWT / Bearer 令牌
+    if (/^Bearer\s+/i.test(value) || /\b[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}\b/.test(value)) {
+      return '***redacted***';
+    }
+    // 邮箱
+    if (/^[\w.+-]+@[\w.-]+\.\w+$/.test(value)) return value.replace(/(^[\w.+-]{1,3}).*(@.*)$/, '$1***$2');
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, seen));
+  if (typeof value === 'object') {
+    if (seen.has(value)) return '[circular]';
+    seen.add(value);
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = SENSITIVE_KEY_RE.test(k) && v ? '***redacted***' : redact(v, seen);
+    }
+    return out;
+  }
+  return value;
+}
+
 function emit(level, fn, module, message, data) {
   if (!shouldLog(level)) return;
-  const line = formatLog(level, module, message, data);
+  const safeMessage = typeof message === 'string' ? redact(message) : message;
+  const safeData = data !== undefined ? redact(data) : undefined;
+  const line = formatLog(level, module, safeMessage, safeData);
   fn(line);
   writeToFile(line);
 }

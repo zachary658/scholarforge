@@ -1,10 +1,17 @@
 // 毕业作品指导制作路由
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
+import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { createOrder } from '../services/payment.js';
 
 const router = Router();
+
+// 订单 / 支付动作限流：每用户每分钟最多 30 次（M-2）
+router.use((req, res, next) => {
+  if (req.method === 'POST') return paymentLimiter(req, res, next);
+  next();
+});
 
 // 分类列表（预定义，供前端展示分组）
 const CATEGORIES = [

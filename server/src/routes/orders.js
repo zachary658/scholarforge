@@ -1,10 +1,17 @@
 // 用户订单路由（现金直付：功能固定价 + 人工报价）
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
+import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { createFeatureOrder, requestQuoteOrder, initiateOrderPayment } from '../services/payment.js';
 
 const router = Router();
+
+// 订单 / 支付动作限流：每用户每分钟最多 30 次（M-2）
+router.use((req, res, next) => {
+  if (req.method === 'POST') return paymentLimiter(req, res, next);
+  next();
+});
 
 // 固定价格功能订单
 router.post('/', authRequired, (req, res) => {

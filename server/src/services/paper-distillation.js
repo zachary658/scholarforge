@@ -24,7 +24,10 @@
 import { searchMultiSource } from './multi-source-search.js';
 import { runAI } from '../ai-service.js';
 import { getDefaultModel } from '../config-store.js';
-import { dedupKeyOf, assertSafeAiResolvedUrl } from '../utils.js';
+import { dedupKeyOf, assertSafeAiResolvedUrl, createSemaphore } from '../utils.js';
+
+// 出站 PDF 下载并发上限：防止大量并发外站请求拖垮出网带宽 / 触发目标站限流（L-3）
+const pdfDownloadSem = createSemaphore(Number(process.env.PDF_MAX_CONCURRENCY) || 5);
 import logger from '../logger.js';
 
 // pdfjs 动态导入（Node 18+ 兼容）；仅在需要解析 OA PDF 时加载，避免拖慢常规路径
@@ -658,11 +661,11 @@ function rebuildLines(items) {
 // 并禁止重定向（redirect:'manual'）以防攻击者在校验后通过 3xx 跳转到内网/元数据端点。
 async function downloadPdfBytes(url) {
   await assertSafeAiResolvedUrl(url, { allowPrivate: false });
-  const resp = await fetch(url, {
+  const resp = await pdfDownloadSem.run(() => fetch(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
     signal: AbortSignal.timeout(10000),
     redirect: 'manual',
-  });
+  }));
   // 禁止自动跟随重定向：避免通过 3xx 绕过防护跳转到内网/元数据端点
   if (resp.status >= 300 && resp.status < 400) {
     throw new Error('PDF 下载不允许重定向');
@@ -682,11 +685,11 @@ async function parsePdfViaMinerU(pdfBytes) {
   const form = new FormData();
   form.append('files', new Blob([pdfBytes], { type: 'application/pdf' }), 'paper.pdf');
   form.append('parse_method', 'auto');
-  const resp = await fetch(`${MINERU_API_URL}/file_parse`, {
+  const resp = await pdfDownloadSem.run(() => fetch(`${MINERU_API_URL}/file_parse`, {
     method: 'POST',
     body: form,
     signal: AbortSignal.timeout(MINERU_TIMEOUT_MS),
-  });
+  }));
   if (!resp.ok) throw new Error(`MinerU HTTP ${resp.status}`);
   const data = await resp.json();
   const markdown = data?.results?.markdown || data?.markdown || '';

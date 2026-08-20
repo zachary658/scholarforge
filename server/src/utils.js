@@ -192,3 +192,34 @@ export const FILE_SIGNATURES = {
   // WEBP（RIFF 容器头，扩展名已限制为 .webp，前缀校验足以排除 HTML/SVG 等）
   webp: Buffer.from('RIFF', 'ascii'),
 };
+
+// 并发信号量：限制同时进行的异步任务数量（如出站 HTTP、AI 调用、PDF 下载），
+// 防止单用户 / 单进程打满连接或 CPU（L-3 加固）。
+// run(fn) 在获得许可时执行 fn，结束后自动释放许可给等待队列。
+export function createSemaphore(maxConcurrent) {
+  const max = Math.max(1, maxConcurrent | 0);
+  let active = 0;
+  const queue = [];
+  return {
+    async run(fn) {
+      if (active < max) {
+        active++;
+      } else {
+        await new Promise((resolve) => queue.push(resolve));
+        active++;
+      }
+      try {
+        return await fn();
+      } finally {
+        active--;
+        if (queue.length > 0) {
+          const next = queue.shift();
+          next();
+        }
+      }
+    },
+    get active() {
+      return active;
+    },
+  };
+}

@@ -35,7 +35,18 @@ async function ensureSharp() {
  * @param {number} scale 缩放倍数（2 = 2倍清晰度，适配 Word 打印）
  * @returns {Promise<{buffer: Buffer, width: number, height: number}>}
  */
+// 出站 SVG 净化（纵深防御）：剥离 <script>、事件处理器（on\w+）与 javascript: 伪协议，
+// 即便上游生成逻辑被绕过，也不会向渲染管道 / 客户端注入可执行内容（M-1 加固）。
+function sanitizeSvg(input) {
+  if (typeof input !== 'string') return input;
+  return input
+    .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
+    .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|xlink:href)\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi, '$1="#"');
+}
+
 export async function svgToPng(svg, scale = 2) {
+  svg = sanitizeSvg(svg);
   const sharp = await ensureSharp();
   // 修复 mathjax 等 SVG 缺少 xlink 命名空间声明的问题（sharp/libxml2 严格校验）
   if (svg.includes('xlink:') && !svg.includes('xmlns:xlink')) {

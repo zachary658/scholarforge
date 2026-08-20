@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { api } from './api.js';
+import { api, clearTokens, bootstrapToken } from './api.js';
 
 const AuthContext = createContext(null);
 
@@ -8,8 +8,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
-    const token = localStorage.getItem('sf_token');
-    if (!token) {
+    // 内存中无 token 时，尝试用 refresh cookie 静默续期（避免每次刷新页面都登出）
+    const ok = await bootstrapToken();
+    if (!ok) {
       setUser(null);
       setLoading(false);
       return;
@@ -49,7 +50,7 @@ export function AuthProvider({ children }) {
 
   // 清除本地会话（不触发网络请求）：用于修改密码后强制重新登录
   const clearSession = useCallback(() => {
-    localStorage.removeItem('sf_token');
+    clearTokens();
     setUser(null);
   }, []);
 
