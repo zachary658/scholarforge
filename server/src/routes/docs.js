@@ -1,7 +1,7 @@
 // 用户生成文档路由：列表 / 下载 / 删除
 import { Router } from 'express';
 import { fileURLToPath } from 'url';
-import { dirname, join, resolve } from 'path';
+import { dirname, join, resolve, relative, isAbsolute } from 'path';
 import fs from 'fs';
 import { authRequired } from '../middleware.js';
 import db from '../db.js';
@@ -18,7 +18,9 @@ function safeFilePath(storedPath) {
   if (!storedPath || typeof storedPath !== 'string') return null;
   if (storedPath.includes('..') || storedPath.includes('\0')) return null;
   const abs = resolve(join(docsDir, storedPath));
-  if (abs !== docsRoot && !abs.startsWith(docsRoot + '/')) return null;
+  // relative() 跨平台处理 Windows \\ 与 Linux / 分隔符；避免硬编码 '/' 导致 Windows 下载全部失败。
+  const rel = relative(docsRoot, abs);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
   return abs;
 }
 
