@@ -320,13 +320,19 @@ function buildUserPrompt(tool, params) {
         : `请将以下英文翻译为中文：\n\n${wrapUserContent(params.text)}${ctx}`;
     case 'grammar':
       return `请检查以下文本的语法问题：\n\n${wrapUserContent(params.text)}${ctx}`;
-    case 'rewrite':
-      return `请对以下文本进行降重改写，保持原意但变换表达方式：\n\n${wrapUserContent(params.text)}${ctx}`;
+    case 'rewrite': {
+      const batched = /\[\d+\]/.test(params.text || '');
+      const guide = batched ? '文本按 [1] [2] 编号分为了多个段落，请逐段改写，输出时保持对应编号（如"[1] 改写后的段落"），不要合并或删除段落。' : '';
+      return `请对以下文本进行降重改写，保持原意但变换表达方式。${guide}\n\n${wrapUserContent(params.text)}${ctx}`;
+    }
     case 'proposal':
       return buildProposalUserPrompt(params) + ctx;
     // ===== 借鉴千笔写作新增 =====
-    case 'ai_reduce':
-      return `请对以下文本执行降AI率改写：先依据系统提示中的 AI-isms 清单完成首轮改写，再对改写结果做二次审计——逐项排查残留的 AI 痕迹，若有则进行第二轮改写。最终只输出人类化后的文本，不要附加解释或标注：\n\n${wrapUserContent(params.text)}${ctx}`;
+    case 'ai_reduce': {
+      const batched = /\[\d+\]/.test(params.text || '');
+      const guide = batched ? '文本按 [1] [2] 编号分为了多个段落，请逐段改写，输出时保持对应编号（如"[1] 改写后的段落"），不要合并或删除段落。' : '';
+      return `请对以下文本执行降AI率改写：先依据系统提示中的 AI-isms 清单完成首轮改写，再对改写结果做二次审计——逐项排查残留的 AI 痕迹，若有则进行第二轮改写。最终只输出人类化后的文本，不要附加解释或标注：${guide}\n\n${wrapUserContent(params.text)}${ctx}`;
+    }
     case 'ai_reduce_versions':
       return `请对以下文本执行降AI率改写，输出 3 个不同版本，每个版本之间用单独一行 "---VERSION---" 分隔：\n\n${wrapUserContent(params.text)}${ctx}`;
     case 'defense': {

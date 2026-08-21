@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import FeaturePay from '../components/FeaturePay.jsx';
+import DocRewritePanel from '../components/DocRewritePanel.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { toast } from '../components/Toast.jsx';
@@ -17,6 +18,7 @@ export default function AiReduce() {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
   const [mode, setMode] = useState('single');
+  const [viewMode, setViewMode] = useState('text'); // text=文本模式 / doc=整篇文档模式
   const copyTimerRef = useRef(null);
   const integrity = useAcademicIntegrity();
 
@@ -74,8 +76,26 @@ export default function AiReduce() {
           <h1 className="text-xl font-bold text-ink">降AI率</h1>
           <p className="mt-1 text-sm text-slate-500">智能改写消除 AI 痕迹，让文本读起来更像人类写作，同时保留原意与学术性</p>
         </div>
+        <div className="flex gap-1 rounded-lg border border-slate-200 p-1">
+          <button
+            onClick={() => setViewMode('text')}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${viewMode === 'text' ? 'bg-accent text-white' : 'text-slate-500 hover:text-ink'}`}
+          >
+            文本模式
+          </button>
+          <button
+            onClick={() => setViewMode('doc')}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${viewMode === 'doc' ? 'bg-accent text-white' : 'text-slate-500 hover:text-ink'}`}
+          >
+            整篇文档模式
+          </button>
+        </div>
       </div>
 
+      {viewMode === 'doc' ? (
+        <DocRewritePanel mode="ai_reduce" />
+      ) : (
+        <>
       <div className="grid flex-1 gap-4 lg:grid-cols-2">
         {/* 原文输入 */}
         <div className="card flex flex-col overflow-hidden">
@@ -170,6 +190,8 @@ export default function AiReduce() {
 
       {integrity.show && (
         <AcademicIntegrityModal onAgreed={integrity.handleAgreed} onCancel={integrity.close} />
+      )}
+        </>
       )}
     </div>
   );

@@ -204,6 +204,18 @@ export const api = {
   createPublicationOrder: (payload) => request('/publication/orders', { method: 'POST', body: payload }),
   payPublicationOrder: (id) => request(`/publication/orders/${id}/pay`, { method: 'POST' }),
 
+  // ===== 整篇文档改写（降重 / 降AI率：上传 docx，保留格式与图表） =====
+  rewriteDoc: (file, orderNo) => {
+    const fields = {};
+    if (orderNo) fields.orderNo = orderNo;
+    return upload('/tools/rewrite-doc', file, fields);
+  },
+  aiReduceDoc: (file, orderNo) => {
+    const fields = {};
+    if (orderNo) fields.orderNo = orderNo;
+    return upload('/tools/ai-reduce-doc', file, fields);
+  },
+
   // ===== 文档（旧 documents 表，文本草稿） =====
   listDocuments: () => request('/documents'),
   saveDocument: (payload) => request('/documents', { method: 'POST', body: payload }),

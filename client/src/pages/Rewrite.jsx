@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import FeaturePay from '../components/FeaturePay.jsx';
+import DocRewritePanel from '../components/DocRewritePanel.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { toast } from '../components/Toast.jsx';
@@ -21,6 +22,7 @@ export default function Rewrite() {
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef(null);
   const integrity = useAcademicIntegrity();
+  const [mode, setMode] = useState('text'); // text=文本模式 / doc=整篇文档模式
 
   useEffect(() => {
     return () => {
@@ -75,8 +77,26 @@ export default function Rewrite() {
           <h1 className="text-xl font-bold text-ink">论文降重</h1>
           <p className="mt-1 text-sm text-slate-500">通过同义词替换、句式变换与表达调整降低文本重复率，保持原意与学术性</p>
         </div>
+        <div className="flex gap-1 rounded-lg border border-slate-200 p-1">
+          <button
+            onClick={() => setMode('text')}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${mode === 'text' ? 'bg-accent text-white' : 'text-slate-500 hover:text-ink'}`}
+          >
+            文本模式
+          </button>
+          <button
+            onClick={() => setMode('doc')}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${mode === 'doc' ? 'bg-accent text-white' : 'text-slate-500 hover:text-ink'}`}
+          >
+            整篇文档模式
+          </button>
+        </div>
       </div>
 
+      {mode === 'doc' ? (
+        <DocRewritePanel mode="rewrite" />
+      ) : (
+        <>
       <div className="grid flex-1 gap-4 lg:grid-cols-2">
         {/* 原文输入 */}
         <div className="card flex flex-col overflow-hidden">
@@ -187,6 +207,8 @@ export default function Rewrite() {
 
       {integrity.show && (
         <AcademicIntegrityModal onAgreed={integrity.handleAgreed} onCancel={integrity.close} />
+      )}
+        </>
       )}
     </div>
   );
