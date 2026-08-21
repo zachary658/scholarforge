@@ -1123,4 +1123,100 @@ router.post('/journal', authRequired, async (req, res) => {
   }
 });
 
+// ========== 专利申请辅助：专利技术交底书撰写（输出 Word） ==========
+router.post('/patent-draft', authRequired, async (req, res) => {
+  const { title, tech_description, template_id, projectId, orderNo } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: '请填写发明名称' });
+  const lenErr = checkTextLen(title, MAX_TOPIC_CHARS, '发明名称') || checkTextLen(tech_description, MAX_INPUT_CHARS, '技术方案');
+  if (lenErr) return res.status(400).json({ error: lenErr });
+
+  let template = null;
+  if (template_id) {
+    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
+  }
+
+  try {
+    const result = await executeWithBilling({
+      userId: req.user.id,
+      featureKey: 'patent_draft',
+      toolType: 'patent_draft',
+      action: 'patent_draft',
+      params: { title: String(title).trim(), text: tech_description || '' },
+      projectId: projectId || null,
+      inputText: `【专利交底书】发明名称：${title}`,
+      generateDocxOptions: { title: `${title}专利技术交底书`, template },
+      orderNo: orderNo || null,
+    });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+    }
+    res.json({
+      content: result.content,
+      title: `${title}专利技术交底书`,
+      model: result.model,
+      tokens: result.tokens,
+      doc: result.doc,
+      chargeType: result.chargeType,
+      amount: result.amount,
+      orderId: result.orderId,
+      taskId: result.taskId,
+      projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
+      orderNo: result.orderNo,
+    });
+  } catch (err) {
+    res.status(500).json({ error: '专利交底书生成失败：' + err.message });
+  }
+});
+
+// ========== 期刊发表辅助：审稿意见回复（输出 Word） ==========
+router.post('/review-reply', authRequired, async (req, res) => {
+  const { paper_title, field, review_comments, template_id, projectId, orderNo } = req.body || {};
+  if (!paper_title || !String(paper_title).trim()) return res.status(400).json({ error: '请填写论文标题' });
+  const lenErr = checkTextLen(paper_title, MAX_TOPIC_CHARS, '论文标题') || checkTextLen(review_comments, MAX_INPUT_CHARS, '审稿意见');
+  if (lenErr) return res.status(400).json({ error: lenErr });
+
+  let template = null;
+  if (template_id) {
+    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
+  }
+
+  try {
+    const result = await executeWithBilling({
+      userId: req.user.id,
+      featureKey: 'review_reply',
+      toolType: 'review_reply',
+      action: 'review_reply',
+      params: { title: String(paper_title).trim(), field: field || '', text: review_comments || '' },
+      projectId: projectId || null,
+      inputText: `【审稿意见回复】论文标题：${paper_title}`,
+      generateDocxOptions: { title: `审稿意见回复信-${paper_title}`, template },
+      orderNo: orderNo || null,
+    });
+    if (result.needOrder) {
+      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+    }
+    res.json({
+      content: result.content,
+      title: `审稿意见回复信-${paper_title}`,
+      model: result.model,
+      tokens: result.tokens,
+      doc: result.doc,
+      chargeType: result.chargeType,
+      amount: result.amount,
+      orderId: result.orderId,
+      taskId: result.taskId,
+      projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
+      orderNo: result.orderNo,
+    });
+  } catch (err) {
+    res.status(500).json({ error: '审稿意见回复生成失败：' + err.message });
+  }
+});
+
 export default router;

@@ -156,7 +156,7 @@ router.put('/graduation-orders/:id/contact-status', (req, res) => {
 // 获取某订单的备注列表
 router.get('/notes', (req, res) => {
   const { order_type, order_ref_id } = req.query;
-  if (!['course', 'graduation'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
+  if (!['course', 'graduation', 'patent', 'publication'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
   const refId = parseInt(order_ref_id, 10);
   if (!refId) return res.status(400).json({ error: '缺少订单 ID' });
   const notes = db.prepare(
@@ -168,7 +168,7 @@ router.get('/notes', (req, res) => {
 // 添加跟进备注
 router.post('/notes', (req, res) => {
   const { order_type, order_ref_id, content } = req.body || {};
-  if (!['course', 'graduation'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
+  if (!['course', 'graduation', 'patent', 'publication'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
   const refId = parseInt(order_ref_id, 10);
   if (!refId) return res.status(400).json({ error: '缺少订单 ID' });
   const text = String(content || '').trim().slice(0, 2000);
@@ -196,5 +196,79 @@ router.post('/graduation-orders/:id/quote', (req, res) => {
   closePendingGraduationOrders(row.id);
   res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'pending' });
 });
+
+// ========== 专利申请 / 期刊发表：客服对接与报价 ==========
+
+// 通用：客服服务订单列表（patent / publication；titleCol 为标题列名，两表列名不同）
+function listServiceOrders(req, res, table, titleCol) {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const size = Math.min(100, Math.max(10, parseInt(req.query.size) || 20));
+  const status = (req.query.status || '').toString();
+  const q = (req.query.q || '').toString().trim();
+  const offset = (page - 1) * size;
+  let where = 'WHERE 1=1';
+  const params = [];
+  if (['pending', 'contacted', 'completed'].includes(status)) {
+    where += ' AND t.contact_status = ?';
+    params.push(status);
+  }
+  if (q) {
+    where += ` AND (u.email LIKE ? OR u.name LIKE ? OR t.${titleCol} LIKE ?)`;
+    const like = `%${q}%`;
+    params.push(like, like, like);
+  }
+  const total = db.prepare(
+    `SELECT COUNT(*) as c FROM ${table} t JOIN users u ON u.id = t.user_id ${where}`
+  ).get(...params).c;
+  // 两表列结构不同：按表拼接特有列（占位列统一输出结构）
+  const extraCols = table === 'patent_orders'
+    ? `t.patent_type, t.tech_description, NULL AS paper_title, NULL AS field, NULL AS journal_level, NULL AS requirements`
+    : `NULL AS patent_type, NULL AS tech_description, t.paper_title, t.field, t.journal_level, t.requirements`;
+  const rows = db.prepare(
+    `SELECT t.id, t.${titleCol} AS title, t.status, t.contact_status, t.quote_status, t.quoted_price,
+            ${extraCols}, t.created_at,
+            u.name AS user_name, u.email AS user_email,
+            o.order_no, o.amount
+     FROM ${table} t
+     JOIN users u ON u.id = t.user_id
+     LEFT JOIN orders o ON o.id = t.order_id
+     ${where}
+     ORDER BY t.id DESC LIMIT ? OFFSET ?`
+  ).all(...params, size, offset);
+  res.json({ items: rows, total, page, size, pages: Math.ceil(total / size) });
+}
+
+// 通用：客服标记对接状态
+function updateContactStatus(req, res, table) {
+  const { status } = req.body || {};
+  if (!['pending', 'contacted', 'completed'].includes(status)) return res.status(400).json({ error: '无效的对接状态' });
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  db.prepare(`UPDATE ${table} SET contact_status = ? WHERE id = ?`).run(status, row.id);
+  res.json({ ok: true, id: row.id, contact_status: status });
+}
+
+// 通用：客服报价（进入待审批，需管理员审批通过才生效）
+function quoteServiceOrder(req, res, table) {
+  const { quoted_price } = req.body || {};
+  const price = Number(quoted_price);
+  if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: '报价金额无效' });
+  if (price > 1000000) return res.status(400).json({ error: '报价金额超出上限（100万元）' });
+  const row = db.prepare(`SELECT id, status FROM ${table} WHERE id = ?`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  if (row.status !== 'pending') return res.status(400).json({ error: '订单已支付，不能重新报价' });
+  db.prepare(`UPDATE ${table} SET quoted_price = ?, quote_status = ? WHERE id = ?`).run(price, 'pending', row.id);
+  res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'pending' });
+}
+
+// 专利申请：客服侧
+router.get('/patent-orders', (req, res) => listServiceOrders(req, res, 'patent_orders', 'title'));
+router.put('/patent-orders/:id/contact-status', (req, res) => updateContactStatus(req, res, 'patent_orders'));
+router.post('/patent-orders/:id/quote', (req, res) => quoteServiceOrder(req, res, 'patent_orders'));
+
+// 期刊发表：客服侧
+router.get('/publication-orders', (req, res) => listServiceOrders(req, res, 'publication_orders', 'paper_title'));
+router.put('/publication-orders/:id/contact-status', (req, res) => updateContactStatus(req, res, 'publication_orders'));
+router.post('/publication-orders/:id/quote', (req, res) => quoteServiceOrder(req, res, 'publication_orders'));
 
 export default router;

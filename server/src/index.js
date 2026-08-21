@@ -25,6 +25,8 @@ import projectsRoutes from './routes/projects.js';
 import tasksRoutes from './routes/tasks.js';
 import graduationRoutes from './routes/graduation.js';
 import chartsRoutes from './routes/charts.js';
+import patentRoutes from './routes/patent.js';
+import publicationRoutes from './routes/publication.js';
 import { closeExpiredOrders } from './services/payment.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
@@ -150,6 +152,8 @@ app.use('/api/projects', projectsRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/graduation', graduationRoutes);
 app.use('/api/charts', chartsRoutes);
+app.use('/api/patent', patentRoutes);
+app.use('/api/publication', publicationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
 

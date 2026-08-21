@@ -1000,4 +1000,71 @@ router.put('/graduation-orders/:id/quote-status', (req, res) => {
   res.json({ ok: true, id: row.id, quote_status: status });
 });
 
+// ========== 专利申请 / 期刊发表：管理端 ==========
+
+// 通用：管理端服务订单列表
+function listServiceOrdersAdmin(req, res, table, titleCol) {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const size = Math.min(100, Math.max(10, parseInt(req.query.size) || 20));
+  const status = (req.query.status || '').toString();
+  const offset = (page - 1) * size;
+  let where = 'WHERE 1=1';
+  const params = [];
+  if (['pending', 'contacted', 'completed'].includes(status)) {
+    where += ' AND t.contact_status = ?';
+    params.push(status);
+  }
+  const total = db.prepare(
+    `SELECT COUNT(*) as c FROM ${table} t JOIN users u ON u.id = t.user_id ${where}`
+  ).get(...params).c;
+  const extraCols = table === 'patent_orders'
+    ? `t.patent_type, t.tech_description, NULL AS paper_title, NULL AS field, NULL AS journal_level, NULL AS requirements`
+    : `NULL AS patent_type, NULL AS tech_description, t.paper_title, t.field, t.journal_level, t.requirements`;
+  const rows = db.prepare(
+    `SELECT t.id, t.${titleCol} AS title, t.status, t.contact_status, t.quote_status, t.quoted_price,
+            ${extraCols}, t.created_at,
+            u.name AS user_name, u.email AS user_email,
+            o.order_no, o.amount
+     FROM ${table} t
+     JOIN users u ON u.id = t.user_id
+     LEFT JOIN orders o ON o.id = t.order_id
+     ${where}
+     ORDER BY t.id DESC LIMIT ? OFFSET ?`
+  ).all(...params, size, offset);
+  res.json({ items: rows, total, page, size, pages: Math.ceil(total / size) });
+}
+
+// 通用：管理端对接状态
+function updateServiceContactAdmin(req, res, table) {
+  const { status } = req.body || {};
+  if (!['pending', 'contacted', 'completed'].includes(status)) return res.status(400).json({ error: '无效的对接状态' });
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  db.prepare(`UPDATE ${table} SET contact_status = ? WHERE id = ?`).run(status, row.id);
+  res.json({ ok: true, id: row.id, contact_status: status });
+}
+
+// 通用：管理端报价审批（通过/驳回）
+function approveServiceQuote(req, res, table) {
+  const { status } = req.body || {};
+  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: '无效的审批操作' });
+  const row = db.prepare(`SELECT id, quoted_price FROM ${table} WHERE id = ?`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: '订单不存在' });
+  if (status === 'approved' && (row.quoted_price == null || row.quoted_price <= 0)) {
+    return res.status(400).json({ error: '无有效报价，无法通过审批' });
+  }
+  db.prepare(`UPDATE ${table} SET quote_status = ? WHERE id = ?`).run(status, row.id);
+  res.json({ ok: true, id: row.id, quote_status: status });
+}
+
+// 专利申请：管理端
+router.get('/patent-orders', (req, res) => listServiceOrdersAdmin(req, res, 'patent_orders', 'title'));
+router.put('/patent-orders/:id/contact-status', (req, res) => updateServiceContactAdmin(req, res, 'patent_orders'));
+router.put('/patent-orders/:id/quote-status', (req, res) => approveServiceQuote(req, res, 'patent_orders'));
+
+// 期刊发表：管理端
+router.get('/publication-orders', (req, res) => listServiceOrdersAdmin(req, res, 'publication_orders', 'paper_title'));
+router.put('/publication-orders/:id/contact-status', (req, res) => updateServiceContactAdmin(req, res, 'publication_orders'));
+router.put('/publication-orders/:id/quote-status', (req, res) => approveServiceQuote(req, res, 'publication_orders'));
+
 export default router;

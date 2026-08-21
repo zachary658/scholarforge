@@ -33,6 +33,8 @@ const Journal = lazy(() => import('./pages/Journal.jsx'));
 const Charts = lazy(() => import('./pages/Charts.jsx'));
 const GraduationProjects = lazy(() => import('./pages/GraduationProjects.jsx'));
 const MyGraduationOrders = lazy(() => import('./pages/MyGraduationOrders.jsx'));
+const Patent = lazy(() => import('./pages/Patent.jsx'));
+const Publication = lazy(() => import('./pages/Publication.jsx'));
 
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.jsx'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview.jsx'));
@@ -49,12 +51,16 @@ const AdminLogs = lazy(() => import('./pages/admin/AdminLogs.jsx'));
 const AdminFinance = lazy(() => import('./pages/admin/AdminFinance.jsx'));
 const AdminGraduation = lazy(() => import('./pages/admin/AdminGraduation.jsx'));
 const AdminGraduationOrders = lazy(() => import('./pages/admin/AdminGraduationOrders.jsx'));
+const AdminPatentOrders = lazy(() => import('./pages/admin/AdminPatentOrders.jsx'));
+const AdminPublicationOrders = lazy(() => import('./pages/admin/AdminPublicationOrders.jsx'));
 
 const SupportLayout = lazy(() => import('./pages/support/SupportLayout.jsx'));
 const SupportDashboard = lazy(() => import('./pages/support/SupportDashboard.jsx'));
 const SupportCourseOrders = lazy(() => import('./pages/support/SupportCourseOrders.jsx'));
 const SupportCourses = lazy(() => import('./pages/support/SupportCourses.jsx'));
 const SupportGraduationOrders = lazy(() => import('./pages/support/SupportGraduationOrders.jsx'));
+const SupportPatentOrders = lazy(() => import('./pages/support/SupportPatentOrders.jsx'));
+const SupportPublicationOrders = lazy(() => import('./pages/support/SupportPublicationOrders.jsx'));
 
 function PageFallback() {
   return (
@@ -128,6 +134,8 @@ export default function App() {
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><MyOrders /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><GraduationProjects /></Suspense>} />
         <Route path="graduation-orders" element={<Suspense fallback={<PageFallback />}><MyGraduationOrders /></Suspense>} />
+        <Route path="patent" element={<Suspense fallback={<PageFallback />}><Patent /></Suspense>} />
+        <Route path="publication" element={<Suspense fallback={<PageFallback />}><Publication /></Suspense>} />
       </Route>
       <Route
         path="/admin"
@@ -151,6 +159,8 @@ export default function App() {
         <Route path="finance" element={<Suspense fallback={<PageFallback />}><AdminFinance /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><AdminGraduation /></Suspense>} />
         <Route path="graduation-orders" element={<Suspense fallback={<PageFallback />}><AdminGraduationOrders /></Suspense>} />
+        <Route path="patent-orders" element={<Suspense fallback={<PageFallback />}><AdminPatentOrders /></Suspense>} />
+        <Route path="publication-orders" element={<Suspense fallback={<PageFallback />}><AdminPublicationOrders /></Suspense>} />
       </Route>
       <Route
         path="/support"
@@ -164,6 +174,8 @@ export default function App() {
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><SupportCourseOrders /></Suspense>} />
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><SupportCourses /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><SupportGraduationOrders /></Suspense>} />
+        <Route path="patent" element={<Suspense fallback={<PageFallback />}><SupportPatentOrders /></Suspense>} />
+        <Route path="publication" element={<Suspense fallback={<PageFallback />}><SupportPublicationOrders /></Suspense>} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

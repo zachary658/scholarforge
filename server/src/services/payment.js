@@ -97,6 +97,26 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     amount = gpOrder.quoted_price;
     targetName = `毕业作品：${gpOrder.title}`;
     metadata = { gp_order_id: gpOrder.id, project_title: gpOrder.title };
+  } else if (type === 'patent' || type === 'publication') {
+    // 专利申请 / 期刊发表服务订单：人工报价（客服报价 → 管理员审批通过后用户方可支付）
+    const table = type === 'patent' ? 'patent_orders' : 'publication_orders';
+    const titleCol = type === 'patent' ? 'title' : 'paper_title';
+    const label = type === 'patent' ? '专利申请' : '期刊发表';
+    const svc = db.prepare(
+      `SELECT id, user_id, quoted_price, quote_status, status, ${titleCol} AS title
+       FROM ${table} WHERE id = ?`
+    ).get(parseInt(target, 10));
+    if (!svc) throw new Error(`${label}服务订单不存在`);
+    if (svc.user_id !== userId) throw new Error('无权操作该订单');
+    if (svc.status !== 'pending') throw new Error(`订单状态 ${svc.status}，不能支付`);
+    if (svc.quote_status === 'pending') throw new Error('报价待管理员审批，请稍后再试');
+    if (svc.quote_status === 'rejected') throw new Error('报价已被驳回，请联系客服重新报价');
+    if (svc.quote_status !== 'approved' || svc.quoted_price == null || svc.quoted_price <= 0) {
+      throw new Error('订单尚未报价，请联系客服报价后再支付');
+    }
+    amount = svc.quoted_price;
+    targetName = `${label}：${svc.title || '(未命名)'}`;
+    metadata = type === 'patent' ? { patent_order_id: svc.id } : { publication_order_id: svc.id };
   } else {
     throw new Error('未知的订单类型');
   }
@@ -296,6 +316,24 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
           throw new Error('报价已变更，请重新发起支付');
         }
         db.prepare('UPDATE graduation_project_orders SET status = ?, order_id = ? WHERE id = ?').run('paid', order.id, meta.gp_order_id);
+      }
+    }
+    // 专利申请 / 期刊发表订单 → 标记已支付并关联支付订单
+    if (order.type === 'patent' || order.type === 'publication') {
+      const meta = JSON.parse(order.metadata || '{}');
+      const refId = order.type === 'patent' ? meta.patent_order_id : meta.publication_order_id;
+      const table = order.type === 'patent' ? 'patent_orders' : 'publication_orders';
+      const label = order.type === 'patent' ? '专利申请' : '期刊发表';
+      if (refId) {
+        const svc = db.prepare(`SELECT user_id, status, quote_status, quoted_price FROM ${table} WHERE id = ?`).get(refId);
+        if (!svc) throw new Error(`${label}服务订单不存在，支付已取消`);
+        if (svc.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
+        if (svc.status !== 'pending') throw new Error(`${label}订单状态 ${svc.status}，不能支付`);
+        if (svc.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
+        if (svc.quoted_price == null || Number(svc.quoted_price) !== Number(order.amount)) {
+          throw new Error('报价已变更，请重新发起支付');
+        }
+        db.prepare(`UPDATE ${table} SET status = ?, order_id = ? WHERE id = ?`).run('paid', order.id, refId);
       }
     }
   });

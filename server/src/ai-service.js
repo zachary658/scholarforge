@@ -119,6 +119,9 @@ const SYSTEM_PROMPTS = {
   literature_review: '你是一位文献综述撰写专家。请根据用户给定的研究主题、学科领域和关键词，撰写一篇结构化的文献综述（约2000-3000字）：1) 引言（研究背景与意义）；2) 主题分类梳理（按研究方向分2-4个主题，每个主题引用3-5篇代表性文献）；3) 研究述评（已有成果与不足）；4) 研究展望。引用文献使用「(作者, 年份)」格式标注，文末列出参考文献。使用 Markdown 格式。',
   task_book: '你是一位毕业论文任务书撰写专家。请根据用户给定的论文题目、学生信息、学科领域，生成一份规范的毕业论文（设计）任务书，包含：1) 课题背景与意义；2) 研究内容与范围；3) 研究方法与技术路线；4) 预期成果与考核指标；5) 进度安排（按周次）；6) 主要参考文献（8-12条）。使用 Markdown 格式，语言严谨规范。',
   journal: '你是一位学术期刊论文写作专家。请根据用户给定的题目、学科、研究内容，撰写一篇符合期刊发表规范的学术论文（约4000-6000字）：1) 中文摘要+关键词；2) 英文摘要+Keywords；3) 引言；4) 文献综述；5) 研究方法；6) 研究结果与分析；7) 讨论与结论；8) 参考文献。要求学术规范、逻辑严密、引用规范。使用 Markdown 格式。',
+  // ===== 专利申请 / 期刊发表辅助 =====
+  patent_draft: '你是一位资深的专利代理师。请根据用户提供的技术方案，撰写一份规范的专利技术交底书，包含以下部分：1) 发明名称；2) 技术领域；3) 背景技术（现有技术的不足）；4) 发明内容（要解决的技术问题、技术方案、有益效果）；5) 具体实施方式（至少 2 个实施例，含步骤细节）；6) 附图说明（用文字描述附图内容）。要求：用语符合专利法规范、技术方案描述清楚完整、突出新颖性与创造性、不夸大效果。使用 Markdown 格式。',
+  review_reply: '你是一位资深的学术论文发表顾问。请根据用户提供的审稿意见与论文信息，撰写一份礼貌、专业的审稿意见回复信（Response to Reviewers）：1) 开头致谢；2) 逐条回复（每条意见原文引用 → 回复：修改说明 + 修改位置标注"已在文中第X部分修改"）；3) 结尾总结。要求：态度谦逊、回复有据、逐条对应不遗漏。使用 Markdown 格式。',
   // 论文框架提取（结构化输出）：从摘要中提取方法/创新点/结论/结构，配合 JSON 模式使用
   framework_extract: '你是一位学术论文框架分析专家。请从给定的论文摘要中提取研究框架信息，并严格输出 JSON 对象（不要输出 JSON 以外的任何内容、不要用代码块包裹）。输出的 JSON 必须包含且仅包含以下四个字段：{"methods":["研究方法1","研究方法2"],"innovations":["创新点1"],"conclusions":["结论1"],"structure":["章节结构1"]}。methods/innovations/conclusions/structure 均为字符串数组；若某项信息在摘要中缺失，对应字段输出空数组 []。',
   // 多视角发现（STORM 式蒸馏）：将研究主题拆分为多个检索视角，配合 JSON 模式使用
@@ -357,6 +360,10 @@ function buildUserPrompt(tool, params) {
     case 'framework_extract':
       // 摘要为外部论文内容（不可信数据），必须用分隔符包裹防注入，与 INJECTION_GUARD 设计保持一致
       return `论文标题：${wrapUserContent(params.topic)}\n\n${wrapUserContent(params.context || '')}\n\n请提取这篇论文的研究框架，严格输出 JSON 对象。`;
+    case 'patent_draft':
+      return `发明名称：${params.title || params.topic || ''}\n\n技术方案描述：\n${wrapUserContent(params.text || params.tech_description || '')}\n\n请撰写专利技术交底书。`;
+    case 'review_reply':
+      return `论文标题：${params.title || params.topic || ''}${params.field ? `\n学科领域：${params.field}` : ''}\n\n审稿意见：\n${wrapUserContent(params.text || '')}\n\n请撰写审稿意见回复信。`;
     case 'perspective_extract':
       return `研究主题：${wrapUserContent(params.topic)}${params.field ? `\n学科领域：${wrapUserContent(params.field)}` : ''}\n\n请将该主题拆分为 3-5 个互补的检索视角，严格输出 JSON 对象。`;
     case 'review':
@@ -417,6 +424,13 @@ export async function runAI(tool, params, responseFormat = null) {
         // 无真实 AI 时不会走到这里（框架提取仅在真实 AI 下调用），兜底返回空框架 JSON
         content = '{"methods":[],"innovations":[],"conclusions":[],"structure":[]}';
         break;
+      // ===== 专利申请 / 期刊发表辅助（模板回退） =====
+      case 'patent_draft':
+        content = builtinPatentDraft(params);
+        break;
+      case 'review_reply':
+        content = builtinReviewReply(params);
+        break;
       case 'review':
         // 无真实 AI 时不审校，返回空（调用方需判断 usedRealAI）
         content = '';
@@ -453,6 +467,62 @@ export async function runAI(tool, params, responseFormat = null) {
 
 // ========== 借鉴千笔写作新增工具的模板回退实现 ==========
 // 仅作为未配置真实 AI 时的演示兜底，输出结构化但内容较简单
+
+// 专利交底书模板回退
+function builtinPatentDraft(params) {
+  const title = params.title || params.topic || '一种新型技术方案';
+  const desc = String(params.text || params.tech_description || '').slice(0, 500);
+  return `# ${title}专利技术交底书
+
+## 一、技术领域
+本发明涉及${title}相关技术领域，具体涉及一种基于${title}的新型技术方案。
+
+## 二、背景技术
+现有技术中，同类方案存在结构复杂、成本较高、效率不足等问题，难以满足实际应用需求，亟需一种改进的技术方案。
+
+## 三、发明内容
+本发明要解决的技术问题：针对上述现有技术的不足，提供一种${title}，以提高性能、降低成本。
+
+技术方案概述：${desc || '（请补充具体技术方案描述）'}
+
+有益效果：与现有技术相比，本发明结构简单、实施方便，具有良好的应用前景。
+
+## 四、具体实施方式
+实施例 1：（请结合技术方案描述补充实施步骤）
+实施例 2：（请补充另一实施方式）
+
+## 五、附图说明
+图 1 为本发明的整体结构示意图；
+图 2 为本发明的关键部件示意图。
+
+---
+*注：当前为标准模式生成的交底书框架，配置真实 AI 模型后可获得更专业完整的撰写。*`;
+}
+
+// 审稿意见回复模板回退
+function builtinReviewReply(params) {
+  const title = params.title || params.topic || '论文';
+  const comments = String(params.text || '').slice(0, 1000);
+  return `# 审稿意见回复信（Response to Reviewers）
+
+尊敬的编辑与审稿专家：
+
+感谢您对本论文的审阅以及提出的宝贵意见。我们已根据意见逐条修改，具体回复如下：
+
+**审稿意见原文：**
+${comments || '（请粘贴审稿意见）'}
+
+**回复：**
+感谢审稿专家的宝贵意见。我们已在文中相应部分进行了修改与补充，并在修改稿中以修订模式标出。
+
+再次感谢审稿专家与编辑部的辛勤工作！
+
+此致
+敬礼
+
+---
+*注：当前为标准模式生成的回复框架，配置真实 AI 模型后可根据意见逐条生成详细回复。*`;
+}
 
 function builtinAiReduce(params) {
   const text = params.text || '';

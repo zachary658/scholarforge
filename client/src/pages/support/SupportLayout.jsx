@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
-import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock } from '../../components/Icons.jsx';
+import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock, Shield, Book } from '../../components/Icons.jsx';
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 
 const nav = [
@@ -9,6 +9,8 @@ const nav = [
   { to: '/support/orders', label: '课程对接', icon: Wechat, end: false },
   { to: '/support/courses', label: '课程列表', icon: BookOpen, end: false },
   { to: '/support/graduation', label: '毕业作品', icon: Cpu, end: false },
+  { to: '/support/patent', label: '专利申请', icon: Shield, end: false },
+  { to: '/support/publication', label: '期刊发表', icon: Book, end: false },
 ];
 
 export default function SupportLayout() {

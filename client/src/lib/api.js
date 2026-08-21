@@ -183,6 +183,21 @@ export const api = {
   taskBook: (payload) => request('/tools/task-book', { method: 'POST', body: payload }),
   defense: (payload) => request('/tools/defense', { method: 'POST', body: payload }),
   journal: (payload) => request('/tools/journal', { method: 'POST', body: payload }),
+  // ===== 专利申请 / 期刊发表辅助工具 =====
+  patentDraft: (payload) => request('/tools/patent-draft', { method: 'POST', body: payload }),
+  reviewReply: (payload) => request('/tools/review-reply', { method: 'POST', body: payload }),
+
+  // ===== 专利申请服务 =====
+  getPatentTypes: () => request('/patent', { auth: false }),
+  myPatentOrders: () => request('/patent/my/orders'),
+  createPatentOrder: (payload) => request('/patent/orders', { method: 'POST', body: payload }),
+  payPatentOrder: (id) => request(`/patent/orders/${id}/pay`, { method: 'POST' }),
+
+  // ===== 期刊发表服务 =====
+  getJournalLevels: () => request('/publication', { auth: false }),
+  myPublicationOrders: () => request('/publication/my/orders'),
+  createPublicationOrder: (payload) => request('/publication/orders', { method: 'POST', body: payload }),
+  payPublicationOrder: (id) => request(`/publication/orders/${id}/pay`, { method: 'POST' }),
 
   // ===== 文档（旧 documents 表，文本草稿） =====
   listDocuments: () => request('/documents'),
@@ -331,6 +346,22 @@ export const api = {
   // ===== support: 跟进备注 =====
   supportListNotes: (orderType, orderRefId) => request(`/support/notes?order_type=${orderType}&order_ref_id=${orderRefId}`),
   supportAddNote: (orderType, orderRefId, content) => request('/support/notes', { method: 'POST', body: { order_type: orderType, order_ref_id: orderRefId, content } }),
+
+  // ===== support: 专利申请 / 期刊发表对接 =====
+  supportListPatentOrders: (params) => request(`/support/patent-orders?${new URLSearchParams(params).toString()}`),
+  supportUpdatePatentContact: (id, status) => request(`/support/patent-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
+  supportQuotePatentOrder: (id, quoted_price) => request(`/support/patent-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+  supportListPublicationOrders: (params) => request(`/support/publication-orders?${new URLSearchParams(params).toString()}`),
+  supportUpdatePublicationContact: (id, status) => request(`/support/publication-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
+  supportQuotePublicationOrder: (id, quoted_price) => request(`/support/publication-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+
+  // ===== admin: 专利申请 / 期刊发表管理 =====
+  adminListPatentOrders: (params) => request(`/admin/patent-orders?${new URLSearchParams(params).toString()}`),
+  adminUpdatePatentContact: (id, status) => request(`/admin/patent-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
+  adminApprovePatentQuote: (id, status) => request(`/admin/patent-orders/${id}/quote-status`, { method: 'PUT', body: { status } }),
+  adminListPublicationOrders: (params) => request(`/admin/publication-orders?${new URLSearchParams(params).toString()}`),
+  adminUpdatePublicationContact: (id, status) => request(`/admin/publication-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
+  adminApprovePublicationQuote: (id, status) => request(`/admin/publication-orders/${id}/quote-status`, { method: 'PUT', body: { status } }),
 
   // ===== 论文工作区 =====
   listProjects: () => request('/projects'),

@@ -398,6 +398,45 @@ db.exec(`
 // 客服报价进入 pending，管理员审批通过后 approved 才生效（用户方可支付）
 addColumnIfMissing('graduation_project_orders', 'quote_status', "TEXT NOT NULL DEFAULT 'none'");
 
+// ===== 专利申请与期刊论文发表服务模块 =====
+// 服务型订单：用户提交需求 → 客服对接报价 → 管理员审批 → 用户支付 → 人工服务
+db.exec(`
+  CREATE TABLE IF NOT EXISTS patent_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    patent_type TEXT NOT NULL DEFAULT 'invention', -- invention=发明专利 / utility=实用新型 / design=外观设计
+    title TEXT NOT NULL,
+    tech_description TEXT,
+    contact TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    contact_status TEXT NOT NULL DEFAULT 'pending',
+    quoted_price REAL,
+    quote_status TEXT NOT NULL DEFAULT 'none',     -- none/pending/approved/rejected
+    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_patent_orders_user ON patent_orders(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_patent_orders_contact ON patent_orders(contact_status);
+
+  CREATE TABLE IF NOT EXISTS publication_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    paper_title TEXT NOT NULL,
+    field TEXT,
+    journal_level TEXT NOT NULL DEFAULT 'general', -- general=普刊 / core=核心 / sci=SCI
+    requirements TEXT,
+    contact TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    contact_status TEXT NOT NULL DEFAULT 'pending',
+    quoted_price REAL,
+    quote_status TEXT NOT NULL DEFAULT 'none',
+    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pub_orders_user ON publication_orders(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_pub_orders_contact ON publication_orders(contact_status);
+`);
+
 // ===== 客服跟进备注（沟通时间线）：课程订单与毕业作品订单共用 =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS order_notes (
@@ -518,6 +557,9 @@ const featuresSeed = [
   ['task_book', '任务书生成', 4, '次', 'writing', '生成毕业论文任务书，含进度安排与考核指标', 0, 15],
   ['defense', '答辩PPT+演讲稿', 8, '次', 'writing', '生成答辩PPT大纲与配套演讲稿', 0, 16],
   ['journal', '期刊论文撰写', 100, '次', 'writing', '撰写符合期刊发表规范的完整学术论文', 0, 17],
+  // ===== 专利申请 / 论文发表辅助工具 =====
+  ['patent_draft', '专利交底书撰写', 29, '次', 'writing', '根据技术方案撰写专利交底书（技术领域/背景/发明内容/实施方式）', 0, 18],
+  ['review_reply', '审稿意见回复', 19, '次', 'writing', '根据审稿意见生成逐条回复信', 0, 19],
 ];
 for (const f of featuresSeed) seedFeature.run(...f);
 

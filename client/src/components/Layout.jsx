@@ -22,6 +22,8 @@ const navGroups = [
     items: [
       { to: '/app/courses', label: '论文1对1指导', icon: BookOpen, end: false },
       { to: '/app/graduation', label: '毕业作品指导', icon: Cpu, end: false },
+      { to: '/app/patent', label: '专利申请', icon: Shield, end: false },
+      { to: '/app/publication', label: '期刊论文发表', icon: Book, end: false },
     ],
   },
   {

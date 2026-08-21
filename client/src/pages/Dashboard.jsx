@@ -20,6 +20,8 @@ const tools = [
   { to: '/app/polish', icon: Globe, title: '润色与翻译', desc: '学术润色 · 中英互译 · 语法纠错', color: 'bg-lime-50 text-lime-600' },
   { to: '/app/references', icon: Book, title: '文献管理', desc: '检索收藏 · 多格式引用导出', color: 'bg-amber-50 text-amber-600' },
   { to: '/app/projects', icon: Layers, title: '论文工作区', desc: 'AI记忆上下文，跨工具协作', color: 'bg-slate-100 text-slate-600' },
+  { to: '/app/patent', icon: Shield, title: '专利申请', desc: 'AI 交底书撰写 · 专人对接办理', color: 'bg-violet-50 text-violet-600' },
+  { to: '/app/publication', icon: Book, title: '期刊论文发表', desc: 'AI 审稿回复 · 选刊投稿协助', color: 'bg-rose-50 text-rose-600' },
 ];
 
 export default function Dashboard() {
