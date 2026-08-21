@@ -56,6 +56,7 @@ export default function Landing() {
           </div>
           <nav className="hidden items-center gap-6 md:flex lg:gap-8">
             <a href="#courses" className="text-sm font-medium text-slate-300 transition hover:text-white">论文辅导</a>
+            <a href="#services" className="text-sm font-medium text-slate-300 transition hover:text-white">专业服务</a>
             <a href="#graduation" className="text-sm font-medium text-slate-300 transition hover:text-white">作品设计辅导</a>
             <a href="#pipeline" className="text-sm font-medium text-slate-300 transition hover:text-white">AI写作</a>
             <Link to={user ? '/app/rewrite' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">论文降重</Link>
@@ -277,6 +278,73 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* 专业服务：专利申请 + 期刊发表 */}
+      <section id="services" className="bg-white">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <div className="mx-auto max-w-2xl text-center">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-600">
+              <Shield className="h-3.5 w-3.5" />专业服务
+            </div>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">专利申请与期刊发表，一站式办理</h2>
+            <p className="mt-3 text-slate-500">AI 辅助撰写专业文件 + 专业人员对接办理，提交需求后客服报价，审批通过在线支付</p>
+          </div>
+
+          <div className="mt-12 grid gap-6 md:grid-cols-2">
+            {/* 专利申请 */}
+            <div className="group relative flex flex-col rounded-2xl border border-slate-200 bg-white p-8 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-violet-200 hover:shadow-card">
+              <div className="flex items-center justify-between">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-500/20">
+                  <Shield className="h-[22px] w-[22px]" />
+                </div>
+                <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-medium text-violet-600">发明专利 · 实用新型 · 外观设计</span>
+              </div>
+              <h3 className="mt-5 text-lg font-semibold text-ink">专利申请</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                提交技术方案，专业人员对接办理全流程；搭配 AI 专利交底书撰写，快速整理技术领域、背景技术与具体实施方式
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
+                <span className="rounded-md bg-slate-100 px-2 py-1">AI 交底书撰写</span>
+                <span className="rounded-md bg-slate-100 px-2 py-1">客服对接报价</span>
+                <span className="rounded-md bg-slate-100 px-2 py-1">在线支付办理</span>
+              </div>
+              <div className="mt-5 flex-1" />
+              <Link
+                to={user ? '/app/patent' : '/register'}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                申请专利 <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            {/* 期刊发表 */}
+            <div className="group relative flex flex-col rounded-2xl border border-slate-200 bg-white p-8 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-rose-200 hover:shadow-card">
+              <div className="flex items-center justify-between">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500 to-orange-500 text-white shadow-lg shadow-rose-500/20">
+                  <Book className="h-[22px] w-[22px]" />
+                </div>
+                <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-medium text-rose-600">普刊 · 核心 · SCI / EI</span>
+              </div>
+              <h3 className="mt-5 text-lg font-semibold text-ink">期刊论文发表</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                提交论文信息，专业人员协助选刊与投稿；搭配 AI 审稿意见回复，逐条生成专业得体的 Response to Reviewers
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
+                <span className="rounded-md bg-slate-100 px-2 py-1">AI 审稿回复</span>
+                <span className="rounded-md bg-slate-100 px-2 py-1">选刊建议</span>
+                <span className="rounded-md bg-slate-100 px-2 py-1">在线支付对接</span>
+              </div>
+              <div className="mt-5 flex-1" />
+              <Link
+                to={user ? '/app/publication' : '/register'}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                咨询发表 <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* 作品设计辅导 */}
       <section id="graduation" className="bg-[#F7F5F0]">
         <div className="mx-auto max-w-6xl px-6 py-20">
@@ -294,7 +362,7 @@ export default function Landing() {
                 暂未上架毕业作品项目
               </div>
             )}
-            {gradProjects.map((p) => {
+            {gradProjects.slice(0, 6).map((p) => {
               const Icon = CATEGORY_ICON[p.category] || Info;
               return (
                 <div key={p.id} className="group relative flex flex-col rounded-2xl border border-slate-200 bg-white p-7 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-purple-200 hover:shadow-card">
@@ -330,6 +398,18 @@ export default function Landing() {
               );
             })}
           </div>
+
+          {/* 更多项目入口：落地页只展示精选 6 个，避免列表过长影响观感 */}
+          {gradProjects.length > 6 && (
+            <div className="mt-8 text-center">
+              <Link
+                to={user ? '/app/graduation' : '/register'}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-medium text-ink transition hover:border-purple-300 hover:bg-purple-50"
+              >
+                查看全部 {gradProjects.length} 个作品项目 <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          )}
 
           {/* 购买方式 */}
           <div className="mt-10 flex flex-col items-center justify-center gap-4 rounded-2xl border border-purple-100 bg-purple-50/60 px-6 py-6 sm:flex-row sm:text-left">
