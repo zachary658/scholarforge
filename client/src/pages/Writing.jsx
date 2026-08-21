@@ -252,20 +252,21 @@ export default function Writing() {
                 <button onClick={() => navigate('/app/templates')} className="text-accent hover:underline">去上传</button>
               </p>
             </div>
-            {/* 参考材料：上传解读后勾选，生成内容将参考材料；解读 token 计入费用 */}
+            {/* 参考材料：完全可选——不上传资料也可直接生成；上传后生成将参考你的资料 */}
             <div>
               <label className="label">
                 <span className="flex items-center gap-1.5">
-                  <Book className="h-3.5 w-3.5 text-slate-400" />参考材料（可选，生成时参考你的资料）
+                  <Book className="h-3.5 w-3.5 text-slate-400" />参考材料（选填）
                 </span>
               </label>
+              <p className="mb-2 text-xs text-slate-400">不上传资料也可以直接生成；上传后生成内容将参考你的资料</p>
               <input ref={fileRef} type="file" accept=".docx,.pdf,.txt,.md" className="hidden" onChange={handleUploadMaterial} />
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
                 className="btn-ghost w-full border border-dashed border-slate-300 py-2 text-xs"
               >
-                {uploading ? '解读中…' : '+ 上传资料（docx / pdf / txt）'}
+                {uploading ? '解读中…' : '+ 上传资料（docx / pdf / txt，可选）'}
               </button>
               {materials.length > 0 && (
                 <div className="mt-2 max-h-32 space-y-1 overflow-y-auto">
@@ -280,7 +281,7 @@ export default function Writing() {
                 </div>
               )}
               <p className="mt-1.5 text-xs text-slate-400">
-                勾选的资料会作为生成依据（材料解读按 token 计费，随订单收取）
+                勾选的资料才会作为生成参考（按 token 量计入费用）；不勾选则不产生额外费用
               </p>
             </div>
           </div>
