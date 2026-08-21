@@ -46,6 +46,7 @@ export default function FeaturePay({ needOrder, onPaid, onClose }) {
         item_type: needOrder.itemType,
         quantity: 1,
         payment_method: channel,
+        material_ids: needOrder.materialIds && needOrder.materialIds.length > 0 ? needOrder.materialIds : undefined,
       });
       setPayState(data);
     } catch (err) {
@@ -56,6 +57,7 @@ export default function FeaturePay({ needOrder, onPaid, onClose }) {
   };
 
   const amount = Number(needOrder.amount || 0);
+  const materialFee = Number(needOrder.materialFee || 0);
 
   return (
     <div
@@ -79,6 +81,11 @@ export default function FeaturePay({ needOrder, onPaid, onClose }) {
             <div className="text-center">
               <div className="text-sm text-slate-500">需支付</div>
               <div className="mt-1 text-3xl font-bold text-accent">¥{amount.toFixed(2)}</div>
+              {materialFee > 0 && (
+                <div className="mt-2 text-xs text-slate-500">
+                  含功能费 ¥{(amount - materialFee).toFixed(2)} + 材料解读费 ¥{materialFee.toFixed(2)}（按材料 token 量计费）
+                </div>
+              )}
             </div>
           </div>
 

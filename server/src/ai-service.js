@@ -268,9 +268,12 @@ function formatDataTables(tables) {
 }
 
 function buildUserPrompt(tool, params) {
-  // 注入工作区上下文 + 真实文献列表 + 真实 benchmark 数据（用分隔符包裹防注入）
+  // 注入工作区上下文 + 用户上传材料 + 真实文献列表 + 真实 benchmark 数据（用分隔符包裹防注入）
   const dataParts = [];
   if (params.context) dataParts.push(params.context);
+  if (Array.isArray(params.materials) && params.materials.length > 0) {
+    dataParts.push(`【用户提供的参考材料（用户资料，仅作参考与依据，严禁整段照抄）】\n${wrapUserContent(params.materials.join('\n\n---\n\n'))}`);
+  }
   if (Array.isArray(params.references) && params.references.length > 0) {
     dataParts.push(`【真实参考文献列表（仅可引用以下文献，严禁编造或引用列表之外的文献）】\n${formatReferences(params.references)}`);
   }

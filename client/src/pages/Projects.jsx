@@ -8,7 +8,7 @@ import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
   Refresh, Plus, Trash, Edit, Layers, BookOpen, Eye, X,
-  Save, ChevronRight, Brain, FileText, Pen, ArrowRight, FileWord, Check,
+  Save, ChevronRight, Brain, FileText, Pen, ArrowRight, FileWord, Check, Book,
 } from '../components/Icons.jsx';
 
 const FIELDS = [
@@ -294,10 +294,10 @@ function ProjectModal({ project, onClose, onSaved }) {
 function ProjectDetail({ project, onClose, onEdit }) {
   const toast = useToast();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('tasks'); // 默认展示生成记录（纯成果存放区）
   const [tasks, setTasks] = useState([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
-  const [contextPreview, setContextPreview] = useState(null);
+  const [materials, setMaterials] = useState([]);
   const [outline, setOutline] = useState(project.outline || []);
   const [savingOutline, setSavingOutline] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState(project.outline_confirmed_at || null);
@@ -351,12 +351,13 @@ function ProjectDetail({ project, onClose, onEdit }) {
     }
   }, [project.id]);
 
-  const loadContext = useCallback(async () => {
+  // 我的资料（本工作区上传的参考材料）
+  const loadMaterials = useCallback(async () => {
     try {
-      const d = await api.previewProjectContext(project.id, {});
-      setContextPreview(d);
+      const d = await api.listMaterials({ projectId: project.id });
+      setMaterials(d.materials || []);
     } catch (err) {
-      toast.error('加载上下文失败：' + err.message);
+      toast.error('加载资料失败：' + err.message);
     }
   }, [project.id]);
 
@@ -384,10 +385,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
 
   useEffect(() => {
     if (tab === 'tasks') loadTasks();
-    if (tab === 'context') loadContext();
+    if (tab === 'materials') loadMaterials();
     if (tab === 'chapters') loadChapters();
     if (tab === 'outline') loadProject();
-  }, [tab, loadTasks, loadContext, loadChapters, loadProject]);
+  }, [tab, loadTasks, loadMaterials, loadChapters, loadProject]);
 
   const handleSaveOutline = async () => {
     setSavingOutline(true);
@@ -522,15 +523,14 @@ function ProjectDetail({ project, onClose, onEdit }) {
           </div>
         </div>
 
-        {/* Tab */}
+        {/* Tab：工作区为纯成果存放区（生成记录/大纲/章节/资料），写作流程在 AI 写作区推进 */}
         <div className="flex gap-1 border-b border-slate-100 px-6">
           {[
+            { key: 'tasks', label: `生成记录 (${tasks.length})` },
+            { key: 'outline', label: '大纲' },
+            { key: 'chapters', label: '章节内容' },
+            { key: 'materials', label: '我的资料' },
             { key: 'overview', label: '概览' },
-            { key: 'pipeline', label: '全流程' },
-            { key: 'outline', label: '大纲管理' },
-            { key: 'chapters', label: '分章节生成' },
-            { key: 'tasks', label: `任务历史 (${tasks.length})` },
-            { key: 'context', label: '上下文预览' },
           ].map((t) => (
             <button
               key={t.key}
@@ -574,67 +574,14 @@ function ProjectDetail({ project, onClose, onEdit }) {
                   <div className="text-xs text-slate-500">最后更新</div>
                 </div>
               </div>
+              {/* 写作流程入口提示：写作在 AI 写作区进行，本区仅存放成果 */}
               <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm text-slate-600">
                 <p className="flex items-center gap-2 font-medium text-blue-700">
                   <Brain className="h-4 w-4" /> 使用提示
                 </p>
                 <p className="mt-1.5 text-xs leading-relaxed">
-                  在使用 AI 写作、润色、降重等工具时，选择关联到此工作区，AI 会自动带入论文信息、大纲和历史调用结果作为上下文。
+                  论文写作请在「AI 写作」区层层推进（上传资料 → 生成大纲 → 分章节/全文）；本工作区用于存放历次生成成果，可在「生成记录 / 大纲 / 章节内容」中随时回看与下载。
                 </p>
-              </div>
-              {/* 快捷入口到全流程 */}
-              <button
-                onClick={() => setTab('pipeline')}
-                className="flex w-full items-center justify-between rounded-lg border border-accent-100 bg-accent-50/50 px-4 py-3 text-sm text-accent hover:bg-accent-50"
-              >
-                <span className="flex items-center gap-2">
-                  <Layers className="h-4 w-4" /> 查看写作全流程步骤
-                </span>
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          {tab === 'pipeline' && (
-            <div>
-              <div className="mb-4 flex items-center gap-2">
-                <Layers className="h-4 w-4 text-accent" />
-                <h4 className="text-sm font-semibold text-ink">写作全流程</h4>
-                <span className="text-xs text-slate-400">点击任意步骤直接进入对应工具，自动关联本工作区</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {pipelineSteps.map((step, i) => {
-                  const done = completedTools.has(step.key === 'outline' ? 'writing' : step.key === 'paragraph' ? 'writing' : step.key);
-                  return (
-                    <button
-                      key={step.key}
-                      onClick={() => goStep(step)}
-                      className="group flex items-start gap-3 rounded-lg border border-slate-200 p-4 text-left transition hover:border-accent hover:bg-accent-50/40"
-                    >
-                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 group-hover:bg-accent-50 group-hover:text-accent">
-                        <step.icon className="h-[18px] w-[18px]" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-400">步骤 {i + 1}</span>
-                          {step.free && (
-                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">免费</span>
-                          )}
-                          {done && (
-                            <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-600">已尝试</span>
-                          )}
-                        </div>
-                        <h5 className="mt-0.5 text-sm font-semibold text-ink">{step.title}</h5>
-                        <p className="mt-0.5 text-xs text-slate-500">{step.desc}</p>
-                      </div>
-                      <ArrowRight className="mt-2 h-4 w-4 flex-shrink-0 text-slate-300 group-hover:text-accent" />
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/40 p-3 text-xs text-emerald-700">
-                <Brain className="mr-1 inline h-3.5 w-3.5" />
-                全流程中所有 AI 调用都会自动记忆到本工作区，下次调用会带上之前的上下文，无需手动复制内容。
               </div>
             </div>
           )}
@@ -816,27 +763,33 @@ function ProjectDetail({ project, onClose, onEdit }) {
             </div>
           )}
 
-          {tab === 'context' && (
+          {tab === 'materials' && (
             <div>
-              <p className="mb-3 text-sm text-slate-500">
-                以下是 AI 调用时会自动带入的上下文（基于论文信息+大纲+历史任务智能组装）：
-              </p>
-              {!contextPreview ? (
-                <p className="text-center text-sm text-slate-400">加载中…</p>
+              <p className="mb-3 text-sm text-slate-500">本工作区上传的参考材料（在 AI 写作区上传时关联本工作区，生成内容可参考这些资料）</p>
+              {materials.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
+                  暂无资料。前往「AI 写作 → 论文写作」上传资料（docx / pdf / txt），生成时内容将参考你的资料
+                </div>
               ) : (
-                <>
-                  <div className="mb-3 flex items-center gap-3 text-xs">
-                    <span className="rounded bg-blue-50 px-2 py-1 text-blue-600">
-                      上下文摘要：{contextPreview.summary || '（无）'}
-                    </span>
-                    <span className="rounded bg-slate-100 px-2 py-1 text-slate-500">
-                      {contextPreview.chars} 字符
-                    </span>
-                  </div>
-                  <pre className="max-h-[400px] overflow-y-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100 whitespace-pre-wrap">
-                    {contextPreview.context || '（暂无上下文，请先填写论文信息或大纲）'}
-                  </pre>
-                </>
+                <div className="space-y-2">
+                  {materials.map((m) => (
+                    <div key={m.id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-4 py-3">
+                      <Book className="h-4 w-4 shrink-0 text-slate-400" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-ink">{m.name}</div>
+                        <div className="mt-0.5 text-xs text-slate-400">
+                          {m.file_type?.toUpperCase()} · {m.tokens} tokens · 上传于 {fmtDate(m.created_at)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => navigate(`/app/writing?projectId=${project.id}`)}
+                        className="btn-ghost shrink-0 px-3 py-1.5 text-xs"
+                      >
+                        去写作区使用 →
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

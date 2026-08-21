@@ -348,6 +348,21 @@ addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
 addColumnIfMissing('projects', 'sources_json', "TEXT DEFAULT '{}'");
 // ===== 自动工作区：用户首次生成内容时系统自动创建（auto_created=1），防止内容散落丢失 =====
 addColumnIfMissing('projects', 'auto_created', 'INTEGER NOT NULL DEFAULT 0');
+// ===== 用户上传资料（写作参考材料：docx/pdf/txt 解读后存储文本与 token 量）=====
+db.exec(`
+  CREATE TABLE IF NOT EXISTS materials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    file_type TEXT NOT NULL DEFAULT 'txt',
+    text_content TEXT NOT NULL DEFAULT '',
+    tokens INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_materials_user ON materials(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_materials_project ON materials(project_id);
+`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS charts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

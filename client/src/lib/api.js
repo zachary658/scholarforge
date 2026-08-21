@@ -187,6 +187,11 @@ export const api = {
   patentDraft: (payload) => request('/tools/patent-draft', { method: 'POST', body: payload }),
   reviewReply: (payload) => request('/tools/review-reply', { method: 'POST', body: payload }),
 
+  // ===== 写作参考材料（上传解读 / 列表 / 删除） =====
+  uploadMaterial: (file, fields = {}) => upload('/materials/upload', file, fields),
+  listMaterials: (params) => request(`/materials?${new URLSearchParams(params || {}).toString()}`),
+  deleteMaterial: (id) => request(`/materials/${id}`, { method: 'DELETE' }),
+
   // ===== 专利申请服务 =====
   getPatentTypes: () => request('/patent', { auth: false }),
   myPatentOrders: () => request('/patent/my/orders'),

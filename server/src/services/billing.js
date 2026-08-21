@@ -83,3 +83,14 @@ export function tokensToCostYuan(inputTokens, outputTokens) {
   return (inputTokens / 1_000_000) * cfg.inputCostPerMillion
     + (outputTokens / 1_000_000) * cfg.outputCostPerMillion;
 }
+
+// 材料解读费用：按解读 token 量计费（与 AI 计费模型一致：成本 ÷ (1-利润率)）
+// 即售价 = 解读成本 × 利润率系数（默认 input 1 元/百万 token、利润率 0.8 → 5 元/百万 token）
+export function materialFee(tokens) {
+  const t = Math.max(0, Number(tokens) || 0);
+  if (t <= 0) return 0;
+  const cfg = getAiPricingConfig();
+  const cost = (t / 1_000_000) * cfg.inputCostPerMillion;
+  const price = cost / (1 - cfg.profitMargin);
+  return Math.round(price * 100) / 100; // 保留到分
+}

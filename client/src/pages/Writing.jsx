@@ -8,7 +8,7 @@ import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import SmartWritingResult from '../components/SmartWritingResult.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
-  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck, Brain,
+  Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck, Brain, Book,
 } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 
@@ -33,10 +33,54 @@ export default function Writing() {
   const copyTimerRef = useRef(null);
   // 深度文献调研（大纲生成后的付费升级）：多角度检索 → 解析研究框架/文献/数据
   const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
+  // 参考材料：上传解读（docx/pdf/txt）→ 勾选参与生成（材料解读 token 计入订单费用）
+  const [materials, setMaterials] = useState([]);
+  const [selectedMaterials, setSelectedMaterials] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
+    loadMaterials();
   }, []);
+
+  const loadMaterials = () => {
+    api.listMaterials(projectId ? { projectId } : {}).then((d) => setMaterials(d.materials || [])).catch(() => {});
+  };
+
+  // 工作区切换后刷新材料列表
+  useEffect(() => { loadMaterials(); }, [projectId]);
+
+  const handleUploadMaterial = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    try {
+      const d = await api.uploadMaterial(file, projectId ? { projectId } : {});
+      toast.success(`资料「${d.name}」已解读（${d.tokens} tokens），生成时将计入材料解读费`);
+      loadMaterials();
+      setSelectedMaterials((prev) => [...prev, d.id]);
+    } catch (err) {
+      toast.error(err.message || '上传失败');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const toggleMaterial = (id) => {
+    setSelectedMaterials((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const handleDeleteMaterial = async (id) => {
+    try {
+      await api.deleteMaterial(id);
+      setSelectedMaterials((prev) => prev.filter((x) => x !== id));
+      loadMaterials();
+    } catch (err) {
+      toast.error(err.message || '删除失败');
+    }
+  };
 
   // 换题后清空旧调研结果：防止旧题的蒸馏产物错位挂在新题大纲下，且「开始深度调研」按钮被旧结果挡住无法发起新调研
   useEffect(() => {
@@ -79,6 +123,7 @@ export default function Writing() {
       template_id: form.template_id || undefined,
       projectId: projectId || undefined,
       orderNo: orderNo || undefined,
+      material_ids: selectedMaterials.length > 0 ? selectedMaterials : undefined,
     }));
   };
 
@@ -205,6 +250,37 @@ export default function Writing() {
               <p className="mt-1.5 text-xs text-slate-400">
                 上传 .docx 模板可按你的格式生成，{''}
                 <button onClick={() => navigate('/app/templates')} className="text-accent hover:underline">去上传</button>
+              </p>
+            </div>
+            {/* 参考材料：上传解读后勾选，生成内容将参考材料；解读 token 计入费用 */}
+            <div>
+              <label className="label">
+                <span className="flex items-center gap-1.5">
+                  <Book className="h-3.5 w-3.5 text-slate-400" />参考材料（可选，生成时参考你的资料）
+                </span>
+              </label>
+              <input ref={fileRef} type="file" accept=".docx,.pdf,.txt,.md" className="hidden" onChange={handleUploadMaterial} />
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="btn-ghost w-full border border-dashed border-slate-300 py-2 text-xs"
+              >
+                {uploading ? '解读中…' : '+ 上传资料（docx / pdf / txt）'}
+              </button>
+              {materials.length > 0 && (
+                <div className="mt-2 max-h-32 space-y-1 overflow-y-auto">
+                  {materials.map((m) => (
+                    <div key={m.id} className="flex items-center gap-2 rounded-md bg-slate-50 px-2 py-1.5">
+                      <input type="checkbox" checked={selectedMaterials.includes(m.id)} onChange={() => toggleMaterial(m.id)} className="h-3.5 w-3.5 shrink-0 accent-accent" />
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-600" title={m.name}>{m.name}</span>
+                      <span className="shrink-0 text-[10px] text-slate-400">{m.tokens} tokens</span>
+                      <button onClick={() => handleDeleteMaterial(m.id)} className="shrink-0 text-xs text-slate-400 hover:text-red-500">删</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-1.5 text-xs text-slate-400">
+                勾选的资料会作为生成依据（材料解读按 token 计费，随订单收取）
               </p>
             </div>
           </div>

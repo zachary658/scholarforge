@@ -6,7 +6,7 @@ import { formatReference, rewriteText } from '../ai.js';
 import { logUsage } from '../usage.js';
 import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
-import { isFreeUnlimitedFeature } from '../services/billing.js';
+import { isFreeUnlimitedFeature, materialFee } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
 import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
@@ -83,17 +83,46 @@ function inferAutoProjectTitle(params) {
   return '文本优化';
 }
 
+// 加载用户材料：校验归属并返回 { ids, tokens, texts }（每份文本截断控制 token 成本）
+function loadUserMaterials(materialIds, userId) {
+  const ids = (Array.isArray(materialIds) ? materialIds : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return { ids: [], tokens: 0, texts: [] };
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, tokens, text_content FROM materials WHERE user_id = ? AND id IN (${placeholders})`
+  ).all(userId, ...ids);
+  if (rows.length !== new Set(ids).size) {
+    throw bizError('部分资料不存在或无权使用，请重新选择');
+  }
+  return {
+    ids,
+    tokens: rows.reduce((s, r) => s + (r.tokens || 0), 0),
+    texts: rows.map((r) => (r.text_content || '').slice(0, 20000)),
+  };
+}
+
+
+// 业务校验错误（客户端错误 400）：与 AI 服务错误（502/504 等）区分状态码
+function bizError(message) {
+  const e = new Error(message);
+  e.statusCode = 400;
+  return e;
+}
 // 通用：执行 AI 调用 + 失败时退款/取消订单
 // projectId: 可选，关联论文工作区，用于注入上下文
+// materialIds: 可选，参考材料 id 列表——材料解读 token 计入订单费用，生成时注入上下文
 // inputText: 可选，保存到任务记录的输入摘要文本
 // generateDocxOptions: 写作类/开题报告等需要输出 Word 时传入
 // generatePptxOptions: 答辩等需要输出 .pptx 时传入（与 generateDocxOptions 互斥）
 // transformContent: 可选，对 AI 输出做后处理（如引用/图表占位符替换），在 docx/pptx 生成前执行
-async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null }) {
+async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null, materialIds = null }) {
   // 安全：校验工作区归属（防跨用户上下文注入），非本人工作区直接拒绝
   if (projectId && !isProjectOwned(userId, projectId)) {
-    throw new Error('无权访问该工作区');
+    throw bizError('无权访问该工作区');
   }
+
+  // 加载参考材料（归属校验；失败直接拒绝）
+  const materials = loadUserMaterials(materialIds, userId);
 
   // 内容安全审核：用户输入（调用 AI 前）
   const inCheck = await checkContent(inputText || JSON.stringify(params || {}));
@@ -110,16 +139,38 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   }
 
   const bill = resolveBilling(userId, featureKey, orderNo);
-  if (!bill.ok) throw new Error(bill.error);
+  if (!bill.ok) throw bizError(bill.error);
 
   if (bill.mode === 'need_order') {
     const fp = getFeaturePrice(featureKey);
-    return { needOrder: true, featureKey, itemType: featureKey, amount: fp ? fp.price : 0 };
+    // 金额 = 功能价 + 材料解读 token 费（与 AI 计费模型一致）
+    const fee = materialFee(materials.tokens);
+    const total = Math.round(((fp ? fp.price : 0) + fee) * 100) / 100;
+    return {
+      needOrder: true,
+      featureKey,
+      itemType: featureKey,
+      amount: total,
+      materialFee: fee,
+      materialTokens: materials.tokens,
+      materialIds: materials.ids,
+    };
   }
 
   let chargeType = bill.mode === 'unlimited' ? 'unlimited' : 'paid';
   let amount = bill.order ? bill.order.amount : 0;
   const order = bill.order || null;
+
+  // 订单材料一致性校验：生成所用资料必须在已支付订单包含的资料范围内（防未付费材料注入）
+  if (order && materials.ids.length > 0) {
+    let meta = {};
+    try { meta = JSON.parse(order.metadata || '{}'); } catch { meta = {}; }
+    const ordered = Array.isArray(meta.material_ids) ? meta.material_ids : [];
+    const missing = materials.ids.filter((id) => !ordered.includes(id));
+    if (missing.length > 0) {
+      throw bizError('生成所用资料与订单不一致，请重新下单（资料解读费用按订单计收）');
+    }
+  }
 
   // 未指定工作区时按题目自动创建/复用自动工作区：内容自动归档，防止散落丢失
   // （放在付费检查之后：未付费的 needOrder 引导不产生工作区副作用）
@@ -132,7 +183,12 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
   // 原子抢占订单执行权：pending/failed → processing；processing 表示已有请求正在执行。
   // 防并发重放同一 orderNo 造成一次付费多次生成（AI 调用期间订单保持 processing）。
   if (order && !claimOrderExecution(order)) {
-    throw new Error('订单正在处理中，请勿重复提交');
+    throw bizError('订单正在处理中，请勿重复提交');
+  }
+
+  // 注入参考材料上下文（用户资料，仅作参考不得照抄）
+  if (materials.texts.length > 0) {
+    params = { ...params, materials: materials.texts };
   }
 
   // 执行 AI
@@ -374,9 +430,10 @@ router.post('/writing', authRequired, async (req, res) => {
         return replaceChartPlaceholders(replaceCitePlaceholders(content, sourceRefs), sourceBenchmarks);
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
 
     // 全文生成后审校：引用一致性 / 结构完整性 / 明显幻觉（仅真实 AI 下执行，免费但记录 token 成本）
@@ -446,7 +503,7 @@ router.post('/writing', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '生成失败：' + err.message });
   }
 });
 
@@ -561,7 +618,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
     });
   } catch (err) {
     if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
-    res.status(500).json({ error: '智能写作失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '智能写作失败：' + err.message });
   }
 });
 
@@ -594,9 +651,10 @@ router.post('/proposal', authRequired, async (req, res) => {
         template,
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -610,7 +668,7 @@ router.post('/proposal', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '开题报告生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '开题报告生成失败：' + err.message });
   }
 });
 
@@ -631,9 +689,10 @@ router.post('/polish', authRequired, async (req, res) => {
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     // 模板引擎时附润色说明
     let changes = [];
@@ -657,7 +716,7 @@ router.post('/polish', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '润色失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '润色失败：' + err.message });
   }
 });
 
@@ -679,9 +738,10 @@ router.post('/translate', authRequired, async (req, res) => {
       projectId: projectId || null,
       inputText: `[${direction}] ${text.slice(0, 2000)}`,
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       result: result.content,
@@ -699,7 +759,7 @@ router.post('/translate', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '翻译失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '翻译失败：' + err.message });
   }
 });
 
@@ -720,9 +780,10 @@ router.post('/grammar', authRequired, async (req, res) => {
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     // 始终基于原始输入做纯 JS 语法统计检测（内置模式与真实 AI 模式均附加）
     let issues = [];
@@ -748,7 +809,7 @@ router.post('/grammar', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '检查失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '检查失败：' + err.message });
   }
 });
 
@@ -782,9 +843,10 @@ router.post('/rewrite', authRequired, async (req, res) => {
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     // 内置模板引擎时附带降重修改记录
     const changes = result.model.usedRealAI ? [] : synonymDetail.changes;
@@ -806,7 +868,7 @@ router.post('/rewrite', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '降重失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '降重失败：' + err.message });
   }
 });
 
@@ -831,9 +893,10 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       projectId: projectId || null,
       inputText: text.slice(0, 2000),
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       result: result.content,
@@ -850,7 +913,7 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '降AI率失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '降AI率失败：' + err.message });
   }
 });
 
@@ -921,7 +984,7 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
     });
   } catch (err) {
     if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
-    res.status(500).json({ error: '降AI率失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '降AI率失败：' + err.message });
   }
 });
 
@@ -951,9 +1014,10 @@ router.post('/literature-review', authRequired, async (req, res) => {
         template,
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -972,7 +1036,7 @@ router.post('/literature-review', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '文献综述生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '文献综述生成失败：' + err.message });
   }
 });
 
@@ -1002,9 +1066,10 @@ router.post('/task-book', authRequired, async (req, res) => {
         template,
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -1023,7 +1088,7 @@ router.post('/task-book', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '任务书生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '任务书生成失败：' + err.message });
   }
 });
 
@@ -1047,9 +1112,10 @@ router.post('/defense', authRequired, async (req, res) => {
         title: `${topic}答辩PPT`,
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -1068,7 +1134,7 @@ router.post('/defense', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '答辩材料生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '答辩材料生成失败：' + err.message });
   }
 });
 
@@ -1098,9 +1164,10 @@ router.post('/journal', authRequired, async (req, res) => {
         template,
       },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -1119,7 +1186,7 @@ router.post('/journal', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '期刊论文生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '期刊论文生成失败：' + err.message });
   }
 });
 
@@ -1146,9 +1213,10 @@ router.post('/patent-draft', authRequired, async (req, res) => {
       inputText: `【专利交底书】发明名称：${title}`,
       generateDocxOptions: { title: `${title}专利技术交底书`, template },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -1167,7 +1235,7 @@ router.post('/patent-draft', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '专利交底书生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '专利交底书生成失败：' + err.message });
   }
 });
 
@@ -1194,9 +1262,10 @@ router.post('/review-reply', authRequired, async (req, res) => {
       inputText: `【审稿意见回复】论文标题：${paper_title}`,
       generateDocxOptions: { title: `审稿意见回复信-${paper_title}`, template },
       orderNo: orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
     });
     if (result.needOrder) {
-      return res.json({ needOrder: true, itemType: result.itemType, amount: result.amount });
+      return res.json({ ...result });
     }
     res.json({
       content: result.content,
@@ -1215,7 +1284,7 @@ router.post('/review-reply', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(500).json({ error: '审稿意见回复生成失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '审稿意见回复生成失败：' + err.message });
   }
 });
 

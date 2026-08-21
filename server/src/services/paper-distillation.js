@@ -726,7 +726,7 @@ export function htmlTableToRows(html) {
 }
 
 // ===== 通道二：内置 pdfjs（兜底） =====
-async function parsePdfViaPdfjs(pdfBytes) {
+export async function parsePdfViaPdfjs(pdfBytes) {
   const getDocument = await loadPdfjs();
   const doc = await getDocument({ data: new Uint8Array(pdfBytes), isEvalSupported: false, useSystemFonts: true }).promise;
   const lines = [];

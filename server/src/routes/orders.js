@@ -15,7 +15,7 @@ router.use((req, res, next) => {
 
 // 固定价格功能订单
 router.post('/', authRequired, (req, res) => {
-  const { item_type, quantity, payment_method, params } = req.body || {};
+  const { item_type, quantity, payment_method, params, material_ids } = req.body || {};
   if (!item_type) return res.status(400).json({ error: '请指定功能类型' });
   try {
     const result = createFeatureOrder({
@@ -24,6 +24,7 @@ router.post('/', authRequired, (req, res) => {
       quantity: quantity || 1,
       paymentMethod: payment_method || null,
       params: params || null,
+      materialIdsParam: material_ids || null,
     });
     res.json(result);
   } catch (err) {

@@ -6,7 +6,7 @@ import fs from 'fs';
 import logger from '../logger.js';
 import db from '../db.js';
 import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice, getDefaultModel } from '../config-store.js';
-import { getFeatureCashPrice } from './billing.js';
+import { getFeatureCashPrice, materialFee } from './billing.js';
 import { computeCourseQuote } from './course-quote.js';
 import { now, datePrefix } from '../utils.js';
 import { AlipaySdk } from 'alipay-sdk';
@@ -135,8 +135,8 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
   return { order, payParams };
 }
 
-// 创建固定价格功能订单（现金直付）
-export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMethod = null, params = null }) {
+// 创建固定价格功能订单（现金直付；支持参考材料：订单金额 = 功能价 + 材料解读 token 费）
+export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMethod = null, params = null, materialIdsParam = null }) {
   const feature = getFeaturePrice(itemType);
   if (!feature || !feature.is_active) throw new Error('功能不存在或已下架');
   if (feature.is_unlimited) throw new Error('该功能免费，无需下单');
@@ -155,15 +155,37 @@ export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMeth
   // 历史实现按 quantity 计费却只执行一次，会造成"多付少得"；现仅支持单次购买。
   const qty = parseInt(quantity, 10) || 1;
   if (qty !== 1) throw new Error('当前仅支持单次购买，如需多次使用请分别下单');
-  const amount = Math.round(unitPrice * qty * 100) / 100;
+
+  // 材料解读费用：订单金额 = 功能价 + 材料解读 token 费（与 AI 计费模型一致）
+  let materialIds = [];
+  let materialTokens = 0;
+  let materialFeeAmount = 0;
+  if (Array.isArray(materialIdsParam) && materialIdsParam.length > 0) {
+    materialIds = materialIdsParam.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (materialIds.length > 0) {
+      const placeholders = materialIds.map(() => '?').join(',');
+      const rows = db.prepare(
+        `SELECT id, tokens FROM materials WHERE user_id = ? AND id IN (${placeholders})`
+      ).all(userId, ...materialIds);
+      if (rows.length !== new Set(materialIds).size) {
+        throw new Error('部分资料不存在或无权使用，请重新选择');
+      }
+      materialTokens = rows.reduce((s, r) => s + (r.tokens || 0), 0);
+      materialFeeAmount = materialFee(materialTokens);
+    }
+  }
+
+  const amount = Math.round((unitPrice * qty + materialFeeAmount) * 100) / 100;
   const useChannel = resolveChannel(paymentMethod);
 
   const orderNo = genOrderNo();
   const expiresAt = now() + getPaymentConfig().orderExpireSeconds;
   db.prepare(
-    `INSERT INTO orders (order_no, user_id, type, target, target_name, amount, status, payment_method, payment_channel, item_type, item_name, quantity, params_json, expires_at)
-     VALUES (?, ?, 'feature', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`
-  ).run(orderNo, userId, itemType, feature.name, amount, useChannel, useChannel, itemType, feature.name, qty, params ? JSON.stringify(params) : null, expiresAt);
+    `INSERT INTO orders (order_no, user_id, type, target, target_name, amount, status, payment_method, payment_channel, item_type, item_name, quantity, params_json, expires_at, metadata)
+     VALUES (?, ?, 'feature', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(orderNo, userId, itemType, feature.name, amount, useChannel, useChannel, itemType, feature.name, qty,
+    params ? JSON.stringify(params) : null, expiresAt,
+    JSON.stringify({ material_ids: materialIds, material_tokens: materialTokens, material_fee: materialFeeAmount }));
 
   const order = getOrder(orderNo);
   const payParams = buildPaymentParams(order, useChannel);
