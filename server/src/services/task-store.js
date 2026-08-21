@@ -226,13 +226,22 @@ export function updateProject(projectId, userId, updates) {
   const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status'];
   const sets = [];
   const params = [];
+  let outlineChanged = false;
   for (const [k, v] of Object.entries(updates)) {
     const col = k === 'writingRequirements' ? 'writing_requirements' : k === 'outline' ? 'outline_json' : k;
     if (!allowed.includes(col)) continue;
+    if (col === 'outline_json') {
+      // 大纲一旦变更，先前确认不再代表当前内容，必须由用户重新确认后才能生成全文。
+      outlineChanged = true;
+      sets.push(`${col} = ?`);
+      params.push(JSON.stringify(Array.isArray(v) ? v : []));
+      continue;
+    }
     sets.push(`${col} = ?`);
-    params.push(col === 'outline_json' ? JSON.stringify(v) : v);
+    params.push(v);
   }
   if (sets.length === 0) return getProject(projectId, userId);
+  if (outlineChanged) sets.push('outline_confirmed_at = NULL');
   sets.push(`updated_at = ${now()}`);
   params.push(projectId, userId);
   db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
