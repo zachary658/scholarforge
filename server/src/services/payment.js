@@ -251,6 +251,11 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
   }
   if (order.status === 'cancelled') throw new Error('订单已取消，不能改为已支付');
   if (order.status === 'completed') throw new Error('订单已完成');
+  // 网关回调必须与下单时选定的渠道一致；后台人工入账是唯一例外。
+  // 防止通过另一个二维码端点或跨渠道回调篡改订单支付渠道与对账记录。
+  if (channel && channel !== 'manual' && order.payment_channel && channel !== order.payment_channel) {
+    throw new Error('支付渠道与订单不匹配');
+  }
 
   // transaction_id 唯一性检查：防止同一笔交易被绑定到多个订单
   if (transactionId) {
