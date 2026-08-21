@@ -94,6 +94,9 @@ router.get('/alipay/qrcode/:orderNo', authRequired, async (req, res) => {
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
   if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
+  if (order.payment_channel !== 'alipay') {
+    return res.status(400).json({ error: '该订单未选择支付宝支付，请重新发起对应支付方式' });
+  }
   try {
     const qrCode = await createAlipayQrcode(order);
     res.json({ qr_code: qrCode, order_no: order.order_no, amount: order.amount });
@@ -108,6 +111,9 @@ router.get('/wechat/qrcode/:orderNo', authRequired, async (req, res) => {
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
   if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
+  if (order.payment_channel !== 'wechat') {
+    return res.status(400).json({ error: '该订单未选择微信支付，请重新发起对应支付方式' });
+  }
   try {
     const codeUrl = await createWechatQrcode(order);
     res.json({ code_url: codeUrl, order_no: order.order_no, amount: order.amount });
