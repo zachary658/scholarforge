@@ -120,11 +120,12 @@ async function generateChapter(project, chapters, idx) {
   let content = result.content || '';
 
   // 占位符替换：引用编号 + 数据图表由代码生成（与全文生成路径保持一致）
+  // 注意：章节内只替换编号，不追加参考文献列表（参考文献在全文合并/导出时统一生成一次）
   try {
     const { replaceCitePlaceholders, replaceChartPlaceholders } = await import('./paper-distillation.js');
     const sources = project.sources || {};
     content = replaceChartPlaceholders(
-      replaceCitePlaceholders(content, sources.references || null),
+      replaceCitePlaceholders(content, sources.references || null, { appendReferences: false }),
       sources.benchmarks || []
     );
   } catch (err) {

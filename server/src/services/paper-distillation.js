@@ -898,8 +898,10 @@ export function formatReferencesGB(references) {
   }).join('\n');
 }
 
-// 替换引用占位符 [CITE:n] → [n]，并追加由代码生成的参考文献列表
-export function replaceCitePlaceholders(content, references) {
+// 替换引用占位符 [CITE:n] → [n]；appendReferences=true 时在文末追加参考文献列表
+// 分章节生成时传 appendReferences=false（参考文献只在合并全文/全文生成时追加一次，
+// 否则每一章结尾都会重复出现整份参考文献列表）
+export function replaceCitePlaceholders(content, references, { appendReferences = true } = {}) {
   if (!content) return content;
   const hasRefs = Array.isArray(references) && references.length > 0;
   let replaced = content.replace(/\[CITE:(\d+)\]/g, (_m, n) => {
@@ -907,7 +909,7 @@ export function replaceCitePlaceholders(content, references) {
     if (!hasRefs || idx < 1 || idx > references.length) return '';
     return `[${idx}]`;
   });
-  if (hasRefs && !/参考文献|References/i.test(replaced)) {
+  if (appendReferences && hasRefs && !/参考文献|References/i.test(replaced)) {
     replaced = `${replaced}\n\n## 参考文献\n\n${formatReferencesGB(references)}`;
   }
   return replaced;
