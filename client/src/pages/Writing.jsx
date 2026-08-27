@@ -6,6 +6,7 @@ import { FIELDS } from '../lib/constants.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import SmartWritingResult from '../components/SmartWritingResult.jsx';
+import ReviewChainPanel from '../components/ReviewChainPanel.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import {
   Sparkle, Copy, Download, Refresh, Check, FileWord, Layers, BadgeCheck, Brain, Book,
@@ -359,6 +360,9 @@ export default function Writing() {
                       </span>
                     )}
                   </div>
+                )}
+                {result.reviewChain && form.type === 'fulltext' && (
+                  <ReviewChainPanel chain={result.reviewChain} report={result.review} />
                 )}
                 {content ? (
                   <pre className="whitespace-pre-wrap font-serif text-[14px] leading-[1.85] text-slate-700">{content}</pre>

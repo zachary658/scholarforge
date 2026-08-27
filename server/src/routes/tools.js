@@ -440,29 +440,56 @@ router.post('/writing', authRequired, async (req, res) => {
       return res.json({ ...result });
     }
 
-    // 全文生成后审校：引用一致性 / 结构完整性 / 明显幻觉（仅真实 AI 下执行，免费但记录 token 成本）
+    // 全文生成后审校链（借鉴 GPT Researcher reviewer→revisor 闭环）：
+    // 规则审校（免费确定性检查）→ AI 审校 → 发现问题自动修订 → 复核；
+    // 修订发生则替换内容并重新生成 Word。仅真实 AI 下执行，各环节失败均降级保留原结果
     let review = null;
-    if (type === 'fulltext' && result.model?.usedRealAI) {
+    let reviewChain = null;
+    if (type === 'fulltext' && result.model?.usedRealAI && result.content) {
       try {
-        const reviewResult = await runAI('review', { content: result.content });
-        if (reviewResult.usedRealAI && reviewResult.content) {
-          review = reviewResult.content;
-          // 审校是额外一次真实 AI 调用，单独记入 usage_logs（tool_type=review），便于财务核对实际 API 成本
-          logUsage({
-            userId: req.user.id,
-            toolType: 'review',
-            action: 'fulltext_review',
-            model: reviewResult.model,
-            inputChars: result.content.length,
-            outputChars: reviewResult.content.length,
-            tokens: reviewResult.tokens,
-            status: 'success',
-            chargeType: 'none',
-            amount: 0,
-          });
+        const { runReviewChain } = await import('../services/review-chain.js');
+        const chain = await runReviewChain({
+          content: result.content,
+          references: sourceRefs || [],
+          userId: req.user.id,
+          logUsage,
+        });
+        review = chain.report || null;
+        reviewChain = {
+          revised: chain.revised,
+          verdict: chain.verdict,
+          recheckVerdict: chain.recheckVerdict,
+          initialFindings: chain.initialFindings,
+          findings: chain.findings,
+          reviseNote: chain.reviseNote,
+        };
+        if (chain.revised && chain.content) {
+          // 修订稿与首次输出执行同级内容安全审核，未通过则保留原稿
+          const revisedCheck = await checkContent(chain.content);
+          if (revisedCheck.safe) {
+            result.content = chain.content;
+            try {
+              const newDoc = await generateDocx({
+                title: topic,
+                template,
+                userId: req.user.id,
+                feature: featureKey,
+                orderId: result.orderId || null,
+                content: chain.content,
+              });
+              if (newDoc) result.doc = newDoc;
+            } catch (err) {
+              logger.error('tools', `修订稿 docx 重新生成失败（保留原 Word）: ${err.message}`);
+            }
+          } else {
+            logger.warn('tools', `修订稿内容安全未通过（${revisedCheck.reason}），保留原稿`);
+            reviewChain.revised = false;
+            reviewChain.recheckVerdict = null;
+            reviewChain.reviseNote = '修订稿未通过内容安全审核，已保留原稿';
+          }
         }
       } catch (err) {
-        logger.warn('tools', `审校失败（忽略）: ${err.message}`);
+        logger.warn('tools', `审校链失败（忽略）: ${err.message}`);
       }
     }
 
@@ -493,6 +520,7 @@ router.post('/writing', authRequired, async (req, res) => {
       tokens: result.tokens,
       doc: result.doc,
       review,
+      reviewChain,
       chargeType: result.chargeType,
       amount: result.amount,
       orderId: result.orderId,

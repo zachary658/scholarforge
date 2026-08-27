@@ -127,6 +127,10 @@ const SYSTEM_PROMPTS = {
   // 多视角发现（STORM 式蒸馏）：将研究主题拆分为多个检索视角，配合 JSON 模式使用
   perspective_extract: '你是一位学术文献调研规划专家。请将给定的研究主题拆分为 3-5 个互补的研究视角，用于分视角检索文献并蒸馏研究框架（借鉴 STORM 多视角方法论）。每个视角应是具体可检索的短语（如"基于深度学习的医学图像分割方法""医学影像数据集与评价基准"），彼此覆盖不同维度：研究方法、数据集与基准、应用场景、挑战与未来方向等。严格输出 JSON 对象（不要输出 JSON 以外的任何内容、不要用代码块包裹）：{"perspectives":["视角1","视角2","视角3"]}。',
   review: '你是一位严谨的学术论文审校专家。请对给定的论文内容进行质量审校，重点检查三项：1) 引用一致性：正文中的 [1][2] 编号是否与文末参考文献一一对应，是否存在编造或无法对应的引用；2) 结构完整性：论文章节结构是否完整、逻辑是否连贯；3) 明显幻觉：是否存在明显编造的数据、矛盾或不合学术常识的表述。请输出简洁的审校报告，格式如下：\n## 审校结论\n（整体评价：通过 / 需修改）\n\n## 引用问题\n（逐条列出，无则写"未发现"）\n\n## 结构问题\n（逐条列出，无则写"未发现"）\n\n## 数据/事实问题\n（逐条列出，无则写"未发现"）\n\n## 修改建议\n（简要列出）',
+  // 审校链修订（GPT Researcher reviewer→revisor 闭环的 revisor 环节）：依据审校报告修订全文
+  revise: '你是一位严谨的学术论文修订专家。你会收到论文全文、审校报告与规则检查发现的问题。请据此修订论文：1) 修复报告中列出的引用、结构、数据与事实问题；2) 保持原有章节结构、字数规模与学术风格，不要缩写为摘要；3) 引用编号必须与文末参考文献一一对应，不得新增无法对应的引用；4) 直接输出修订后的完整论文全文，不要输出任何解释、对比或说明。',
+  // 审校链轻量复审：只出结论，用于修订后的低成本复核
+  review_verdict: '你是一位学术论文复核专家。请快速判断给定论文是否存在需要修改的引用错误、结构缺失或明显事实问题。第一行只输出「通过」或「需修改」，第二行用一句话说明理由。不要输出其他任何内容。',
 };
 
 // 为所有 system prompt 追加防注入指令
@@ -377,6 +381,10 @@ function buildUserPrompt(tool, params) {
       return `研究主题：${wrapUserContent(params.topic)}${params.field ? `\n学科领域：${wrapUserContent(params.field)}` : ''}\n\n请将该主题拆分为 3-5 个互补的检索视角，严格输出 JSON 对象。`;
     case 'review':
       return `请审校以下论文内容：\n\n${wrapUserContent(params.text || params.content || '')}${ctx}`;
+    case 'revise':
+      return `审校报告：\n${wrapUserContent(params.review || '（无）')}\n\n规则检查发现的问题：\n${wrapUserContent(params.findings || '（无）')}\n\n论文全文：\n${wrapUserContent(params.content || '')}\n\n请输出修订后的完整论文。`;
+    case 'review_verdict':
+      return `请复核以下论文：\n\n${wrapUserContent(params.content || '')}`;
     default:
       return JSON.stringify(params);
   }
@@ -444,6 +452,11 @@ export async function runAI(tool, params, responseFormat = null) {
         // 无真实 AI 时不审校，返回空（调用方需判断 usedRealAI）
         content = '';
         break;
+      // 审校链修订与轻量复审：无真实 AI 时同样返回空（调用方判断 usedRealAI 后跳过）
+      case 'revise':
+      case 'review_verdict':
+        content = '';
+        break;
     }
     return {
       content,
@@ -460,7 +473,8 @@ export async function runAI(tool, params, responseFormat = null) {
   const userPrompt = buildUserPrompt(tool, params);
   // 毕业论文全文需要长输出：默认 2048 tokens 仅能输出约 1500 中文字，严重不足。
   // 按模型目录配置的输出上限覆盖（DeepSeek 等上限 8192，超限会报 Invalid max_tokens）
-  const maxTokensOverride = (tool === 'writing' && params.type === 'fulltext')
+  // 审校链修订（revise）输出整篇修订稿，长度与全文同级，同样需要长输出上限
+  const maxTokensOverride = ((tool === 'writing' && params.type === 'fulltext') || tool === 'revise')
     ? (model.max_tokens || 2048)
     : null;
   const { content, tokens, promptTokens, completionTokens } = await callOpenAICompatible(model, systemPrompt, userPrompt, { maxTokensOverride, responseFormat });
