@@ -71,18 +71,31 @@ export function ruleReview(content, references = []) {
 // 避免因格式问题误触发一次付费修订调用
 export function parseReviewVerdict(reportText) {
   if (!reportText) return 'pass';
-  const m = reportText.match(/##\s*审校结论\s*\n([\s\S]{0,120})/);
-  const seg = m ? m[1] : reportText.slice(0, 200);
+  // 结论段必须在下一个 ## 标题处截断：否则 120 字符窗口会溢出到「引用问题」等后续章节，
+  // 其中常见的「需修改为 [3]」字样会把结论为「通过」的报告误判为 revise，多烧一次付费修订
+  const m = reportText.match(/##\s*审校结论\s*\n([\s\S]*?)(?=\n#|$)/);
+  const seg = (m ? m[1] : reportText.slice(0, 200)).slice(0, 200);
+  // 优先匹配成对格式「整体评价：通过 / 需修改」
+  const verdictLine = seg.match(/整体评价[：:]\s*(通过|需修改|需要修改|需修订|不通过)/);
+  if (verdictLine) {
+    return verdictLine[1] === '通过' ? 'pass' : 'revise';
+  }
   if (/需修改|需要修改|需修订|不通过/.test(seg)) return 'revise';
   if (/通过/.test(seg)) return 'pass';
   return 'pass';
 }
 
-// 修订稿长度合理性：防止模型偷懒（只回摘要）或复读（输出翻倍），异常时保留原稿
+// 修订稿长度合理性：防止模型偷懒（只回摘要）或复读（输出翻倍），异常时保留原稿。
+// 除总长度比例外，再守结构：二级标题大量丢失或参考文献章节消失，视为修订稿不完整（典型为截断）
 function isSaneRevision(revised, original) {
   if (!revised) return false;
   const ratio = revised.length / Math.max(1, original.length);
-  return ratio >= 0.6 && ratio <= 1.6;
+  if (ratio < 0.6 || ratio > 1.6) return false;
+  const h2Of = (t) => (t.match(/(^|\n)##\s+\S/g) || []).length;
+  const origH2 = h2Of(original);
+  if (origH2 >= 3 && h2Of(revised) < Math.ceil(origH2 * 0.5)) return false;
+  if (/参考文献|references/i.test(original) && !/参考文献|references/i.test(revised)) return false;
+  return true;
 }
 
 // —— 审校链主流程 ——

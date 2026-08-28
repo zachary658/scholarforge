@@ -19,7 +19,7 @@ import {
 } from '../config-store.js';
 import { hashPassword, revokeAllRefreshTokens, incrementTokenVersion } from '../auth.js';
 import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
-import { closePendingGraduationOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
+import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
 
@@ -1054,6 +1054,8 @@ function approveServiceQuote(req, res, table) {
     return res.status(400).json({ error: '无有效报价，无法通过审批' });
   }
   db.prepare(`UPDATE ${table} SET quote_status = ? WHERE id = ?`).run(status, row.id);
+  // 审批状态变化（通过/驳回）：作废用户已创建的待支付订单，防止按旧价成交（对齐 graduation 分支）
+  closePendingServiceOrders(table === 'patent_orders' ? 'patent' : 'publication', row.id);
   res.json({ ok: true, id: row.id, quote_status: status });
 }
 

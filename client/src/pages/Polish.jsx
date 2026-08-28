@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
+import { copyText } from '../lib/utils.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import { Sparkle, Copy, Download, Refresh, ArrowRight, Check } from '../components/Icons.jsx';
-import { toast } from '../components/Toast.jsx';
 
 const modes = [
   { value: 'polish', label: '学术润色' },
@@ -51,14 +51,11 @@ export default function Polish() {
   };
 
   const handleCopy = async () => {
-    try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(output);
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error('复制失败，请手动复制');
-    }
+    const ok = await copyText(output);
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   const downloadText = () => {

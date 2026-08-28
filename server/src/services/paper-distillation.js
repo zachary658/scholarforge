@@ -636,6 +636,8 @@ const PDF_MAX_BYTES = 5 * 1024 * 1024;
 const PDF_MAX_PAGES = 15;
 const PDF_MAX_PAPERS = 4;
 const PDF_CONCURRENCY = 3;
+// pdfjs 解析超时（毫秒）：损坏/构造特殊的 PDF 可能让解析长期挂起，拖死请求与任务
+const PDFJS_TIMEOUT_MS = 60_000;
 const MINERU_API_URL = (process.env.MINERU_API_URL || '').replace(/\/+$/, '');
 const MINERU_TIMEOUT_MS = Number(process.env.MINERU_TIMEOUT || 60000);
 
@@ -673,6 +675,26 @@ async function downloadPdfBytes(url) {
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const declared = Number(resp.headers.get('content-length') || 0);
   if (declared && declared > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
+  if (!declared) {
+    // content-length 缺失时流式读取累计字节数：超 5MB 立即 cancel 中断下载，
+    // 不能等 arrayBuffer() 全量缓冲完再检查（那时内存已被无上限的响应体撑爆）
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      // 成功路径流已读完，cancel 为幂等空操作；超时/超限路径借此中断连接释放带宽
+      reader.cancel().catch(() => {});
+    }
+    return Buffer.concat(chunks);
+  }
   const buf = Buffer.from(await resp.arrayBuffer());
   if (buf.length > PDF_MAX_BYTES) throw new Error('PDF 超过 5MB 上限');
   return buf;
@@ -726,7 +748,17 @@ export function htmlTableToRows(html) {
 }
 
 // ===== 通道二：内置 pdfjs（兜底） =====
-export async function parsePdfViaPdfjs(pdfBytes) {
+// 对外统一带超时保护：Promise.race 60 秒超时即 reject（由调用方降级处理），
+// 损坏 PDF 曾可能令解析无限挂起，拖死请求/任务（含资料上传解析路径）
+export function parsePdfViaPdfjs(pdfBytes) {
+  const timeout = new Promise((_, reject) => {
+    const t = setTimeout(() => reject(new Error('PDF 解析超时')), PDFJS_TIMEOUT_MS);
+    t.unref?.(); // 超时定时器不阻塞进程退出
+  });
+  return Promise.race([parsePdfViaPdfjsCore(pdfBytes), timeout]);
+}
+
+async function parsePdfViaPdfjsCore(pdfBytes) {
   const getDocument = await loadPdfjs();
   const doc = await getDocument({ data: new Uint8Array(pdfBytes), isEvalSupported: false, useSystemFonts: true }).promise;
   const lines = [];

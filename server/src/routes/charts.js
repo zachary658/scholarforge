@@ -10,6 +10,7 @@ import fs from 'fs';
 import * as XLSX from 'xlsx';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { authRequired } from '../middleware.js';
+import { makeLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { renderChart } from '../services/chart-renderer.js';
 import { editChapter } from '../services/chapter-service.js';
@@ -26,6 +27,10 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
+
+// 上传解析与图表渲染均为 CPU 密集操作：每用户每分钟最多 20 次
+// authRequired 已在本路由顶部 router.use 挂载，先于限流执行，keyType 'user' 可取到 req.user
+const cpuLimiter = makeLimiter({ keyType: 'user', max: 20, windowMs: 60 * 1000 });
 
 // 图表类型 → vega-lite mark
 const MARK_MAP = {
@@ -55,7 +60,7 @@ function parseFile(buffer, originalname) {
 }
 
 // 上传并解析
-router.post('/upload', upload.single('file'), (req, res) => {
+router.post('/upload', cpuLimiter, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: '请选择文件' });
   try {
     const { columns, rows } = parseFile(req.file.buffer, req.file.originalname);
@@ -67,7 +72,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
 });
 
 // 渲染图表并保存 PNG
-router.post('/render', async (req, res) => {
+router.post('/render', cpuLimiter, async (req, res) => {
   const { title, chart_type, x, y, rows } = req.body || {};
   if (!['bar', 'line', 'pie', 'scatter'].includes(chart_type)) return res.status(400).json({ error: '不支持的图表类型' });
   if (!x || !y) return res.status(400).json({ error: '请选择 X 轴和 Y 轴字段' });

@@ -4,6 +4,7 @@ import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import { FIELDS } from '../lib/constants.js';
 import FeaturePay from '../components/FeaturePay.jsx';
+import { toast } from '../components/Toast.jsx';
 import {
   FileWord, Download, Refresh, Layers, Sparkle, ChevronDown,
 } from '../components/Icons.jsx';
@@ -41,9 +42,12 @@ export default function Proposal() {
     tool.run(() => api.proposal({ ...form, template_id: form.template_id || undefined, orderNo: orderNo || undefined }));
   };
 
-  const handleDownload = () => {
-    if (docInfo?.id) {
-      downloadDocFile(docInfo.id, `${form.topic || '研究'}开题报告`);
+  const handleDownload = async () => {
+    if (!docInfo?.id) return;
+    try {
+      await downloadDocFile(docInfo.id, `${form.topic || '研究'}开题报告`);
+    } catch (err) {
+      toast.error(err.message || '下载失败');
     }
   };
 

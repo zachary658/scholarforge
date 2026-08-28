@@ -214,9 +214,12 @@ async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) 
     // 错误处理
     const txt = await res.text().catch(() => '');
     const status = res.status;
-    // JSON 模式不被某些兼容服务支持时：去掉 response_format 降级重试
+    // JSON 模式不被某些兼容服务支持时：去掉 response_format 降级重试。
+    // 降级属于请求参数适配而非瞬态错误，不消耗重试预算（attempt-- 补偿 for 循环自增），
+    // 保证降级后仍享有完整的 429/5xx 重试机会；body.response_format 已删除，不会死循环
     if (status === 400 && responseFormat && body.response_format) {
       delete body.response_format;
+      attempt--;
       continue;
     }
     // 429/5xx 瞬态错误：指数退避重试
@@ -390,6 +393,16 @@ function buildUserPrompt(tool, params) {
   }
 }
 
+// 输出 token 上限覆盖：fulltext/revise 场景需要长输出（修订要输出整篇论文，2048 会截断），
+// 下限 8192、上限 AI_MAX_OUTPUT_TOKENS（成本熔断）；普通工具不覆盖，沿用模型目录默认值。
+// 此前两分支均为 model.max_tokens || 2048，与不覆盖完全等价，覆盖从未生效，已修复。
+export function resolveMaxTokensOverride(tool, params, model) {
+  if ((tool === 'writing' && params?.type === 'fulltext') || tool === 'revise') {
+    return Math.min(Math.max(model?.max_tokens || 8192, 8192), AI_MAX_OUTPUT_TOKENS);
+  }
+  return null;
+}
+
 // 统一入口：返回 { content, model, tokens, usedRealAI }
 // responseFormat：可选，传入 { type: 'json_object' } 时启用 JSON 模式（结构化输出）
 export async function runAI(tool, params, responseFormat = null) {
@@ -474,9 +487,7 @@ export async function runAI(tool, params, responseFormat = null) {
   // 毕业论文全文需要长输出：默认 2048 tokens 仅能输出约 1500 中文字，严重不足。
   // 按模型目录配置的输出上限覆盖（DeepSeek 等上限 8192，超限会报 Invalid max_tokens）
   // 审校链修订（revise）输出整篇修订稿，长度与全文同级，同样需要长输出上限
-  const maxTokensOverride = ((tool === 'writing' && params.type === 'fulltext') || tool === 'revise')
-    ? (model.max_tokens || 2048)
-    : null;
+  const maxTokensOverride = resolveMaxTokensOverride(tool, params, model);
   const { content, tokens, promptTokens, completionTokens } = await callOpenAICompatible(model, systemPrompt, userPrompt, { maxTokensOverride, responseFormat });
   return {
     content,

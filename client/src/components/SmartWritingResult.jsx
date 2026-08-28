@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { copyText, isSafeUrl } from '../lib/utils.js';
 import {
   Copy, Check, Brain, Book, Layers, Table, BadgeCheck, ArrowRight,
 } from './Icons.jsx';
@@ -26,12 +27,11 @@ export default function SmartWritingResult({ result }) {
 
   const handleCopy = async () => {
     if (!result?.outline) return;
-    try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(result.outline);
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    } catch { /* 忽略复制失败 */ }
+    const ok = await copyText(result.outline);
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   return (
@@ -150,7 +150,7 @@ export default function SmartWritingResult({ result }) {
                 <div className="mt-1 text-xs text-slate-500">
                   {r.authors || '佚名'} · {r.journal || '未知来源'} · {r.year || '未知年份'}
                   {r.source_db && <span className="ml-2 rounded bg-slate-100 px-1 py-0.5 text-[10px]">{r.source_db}</span>}
-                  {r.source_url && (
+                  {isSafeUrl(r.source_url) && (
                     <a href={r.source_url} target="_blank" rel="noreferrer" className="ml-2 text-accent hover:underline">原文链接</a>
                   )}
                 </div>

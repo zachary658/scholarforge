@@ -45,6 +45,23 @@ router.put('/:id', authRequired, (req, res) => {
     delete updates.writingRequirements;
   }
   if (updates.outline) {
+    // 大纲更新校验：数组长度 ≤15（与生成侧硬上限一致），元素结构合法
+    // （章对象须含 chapter/title 字符串标题，sections 为对象数组），防恶意构造超长大纲
+    const outline = updates.outline;
+    if (!Array.isArray(outline)) {
+      return res.status(400).json({ error: '大纲格式不正确（应为章节数组）' });
+    }
+    if (outline.length > 15) {
+      return res.status(400).json({ error: '章节数量超过上限（最多 15 章）' });
+    }
+    const structureOk = outline.every((ch) =>
+      ch && typeof ch === 'object' && !Array.isArray(ch)
+      && typeof (ch.chapter || ch.title) === 'string' && (ch.chapter || ch.title).trim().length > 0
+      && (ch.sections === undefined || (Array.isArray(ch.sections)
+        && ch.sections.every((s) => s && typeof s === 'object' && !Array.isArray(s)))));
+    if (!structureOk) {
+      return res.status(400).json({ error: '大纲章节结构不合法（每章需有标题，sections 为小节数组）' });
+    }
     updates.outline_json = updates.outline;
     delete updates.outline;
   }

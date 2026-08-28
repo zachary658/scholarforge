@@ -94,10 +94,15 @@ test('setParagraphText：写回文本并保留 pPr 与首个 run 的 rPr，删�
   assert.equal(firstRun.getElementsByTagName('w:sz')[0].getAttribute('w:val'), '24');
 });
 
-test('splitRewriteOutput：按 [n] 标记分段解析', () => {
-  assert.deepEqual(splitRewriteOutput('[1] 第一段改写 [2] 第二段改写', 2), ['第一段改写', '第二段改写']);
+test('splitRewriteOutput：按 <<<Pn>>> 标记分段解析', () => {
+  assert.deepEqual(splitRewriteOutput('<<<P1>>> 第一段改写 <<<P2>>> 第二段改写', 2), ['第一段改写', '第二段改写']);
+  // 正文含文献引用编号 [3] 时不得被误当分隔符（旧版 [n] 方案的高危缺陷）
+  assert.deepEqual(splitRewriteOutput('<<<P1>>> 文献[3]提出的方法与[12]的对比 <<<P2>>> 另一段', 2), [
+    '文献[3]提出的方法与[12]的对比',
+    '另一段'
+  ]);
   // 越界编号忽略
-  assert.deepEqual(splitRewriteOutput('[1] 甲 [5] 越界', 2), ['甲', '']);
+  assert.deepEqual(splitRewriteOutput('<<<P1>>> 甲 <<<P5>>> 越界', 2), ['甲', '']);
   // 无标记输出 → 全部为空（调用方保留原文）
   assert.deepEqual(splitRewriteOutput('模型没有按格式输出', 2), ['', '']);
   // 空输出 → 空数组

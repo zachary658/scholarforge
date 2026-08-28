@@ -466,7 +466,8 @@ function ProjectDetail({ project, onClose, onEdit }) {
       const data = await api.mergeChapters(project.id);
       if (data.doc?.id) {
         const { downloadDocFile } = await import('../lib/api.js');
-        downloadDocFile(data.doc.id, project.title);
+        // await 使下载异常能被下方外层 catch 捕获并 toast 提示
+        await downloadDocFile(data.doc.id, project.title);
       }
       toast.success('已生成 Word');
     } catch (err) {

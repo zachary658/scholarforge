@@ -15,6 +15,10 @@ const BATCH_MAX_CHARS = 3000;
 const MAX_DOC_CHARS = 50000;
 // 单段最小长度（过短段落如"摘要"标签、空行保留原样不改写）
 const MIN_PARA_CHARS = 20;
+// document.xml 解压后大小上限（解压前按 zip 头声明大小预检，防 zip 炸弹）
+const MAX_DOCXML_BYTES = 5 * 1024 * 1024;
+// zip 条目总数上限：正常 docx 仅几十个条目，海量条目为解压炸弹特征
+const MAX_ZIP_ENTRIES = 200;
 
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
 
@@ -49,6 +53,10 @@ function isRewritableParagraph(p) {
   // 修订痕迹：跳过，保留审阅批注/修订内容
   if (p.getElementsByTagName('w:ins').length > 0) return false;
   if (p.getElementsByTagName('w:del').length > 0) return false;
+  // 复杂内联结构（超链接/简单域/智能标记）：内部自带 run，整段改写会破坏链接与域代码
+  if (p.getElementsByTagName('w:hyperlink').length > 0) return false;
+  if (p.getElementsByTagName('w:fldSimple').length > 0) return false;
+  if (p.getElementsByTagName('w:smartTag').length > 0) return false;
   return true;
 }
 
@@ -91,13 +99,21 @@ export function parseDocxParagraphs(docXml) {
 // 将改写后的文本写回段落：保留段落 pPr（格式）与首个 run 的 rPr（字体字号），
 // 其他 run 删除，文本写入第一个 run 的 w:t（xml:space="preserve" 保留空格）
 export function setParagraphText(pNode, newText) {
-  const runs = pNode.getElementsByTagName('w:r');
+  // 过滤 XML 1.0 非法控制字符：模型输出若混入控制字符会导致 Word 判定文档损坏
+  const safeText = String(newText || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  // 仅取段落直接子级 w:r：避免误改写/误删除 w:hyperlink、w:fldSimple、w:smartTag
+  // 等内联结构内部的后代 run（此类段落整体已由 isRewritableParagraph 排除）
+  const runs = [];
+  for (let i = 0; i < pNode.childNodes.length; i++) {
+    const n = pNode.childNodes[i];
+    if (n.nodeType === 1 && n.nodeName === 'w:r') runs.push(n);
+  }
   if (runs.length === 0) {
     // 无 run 的段落：新建一个
     const r = pNode.ownerDocument.createElement('w:r');
     const t = pNode.ownerDocument.createElement('w:t');
     t.setAttribute('xml:space', 'preserve');
-    t.appendChild(pNode.ownerDocument.createTextNode(newText));
+    t.appendChild(pNode.ownerDocument.createTextNode(safeText));
     r.appendChild(t);
     pNode.appendChild(r);
     return;
@@ -108,11 +124,11 @@ export function setParagraphText(pNode, newText) {
   if (firstTs.length > 0) {
     while (firstTs[0].firstChild) firstTs[0].removeChild(firstTs[0].firstChild);
     firstTs[0].setAttribute('xml:space', 'preserve');
-    firstTs[0].appendChild(firstRun.ownerDocument.createTextNode(newText));
+    firstTs[0].appendChild(firstRun.ownerDocument.createTextNode(safeText));
   } else {
     const t = firstRun.ownerDocument.createElement('w:t');
     t.setAttribute('xml:space', 'preserve');
-    t.appendChild(firstRun.ownerDocument.createTextNode(newText));
+    t.appendChild(firstRun.ownerDocument.createTextNode(safeText));
     firstRun.appendChild(t);
   }
   // 删除其余 run（其内容已被合并改写，保留会造成重复）
@@ -142,14 +158,23 @@ function buildBatches(paragraphs) {
 
 // 主流程：改写整篇文档
 // tool: 'rewrite'（降重）| 'ai_reduce'（降AI率）
-// 返回 { buffer, stats: { totalChars, rewrittenParas, batches } }
+// 返回 { buffer, stats: { totalChars, rewrittenParas, batches, failedBatches } }
 export async function rewriteDocxBuffer(inputBuffer, tool) {
   // 1. 解压读取 document.xml
   const zip = new AdmZip(inputBuffer);
+  // 解压炸弹防护（解压前预检）：先看 zip 条目总数与 document.xml 头部声明大小，
+  // 超限直接拒绝——若先 getData() 全量解压再检查，内存早已被撑爆，检查形同虚设
+  if (zip.getEntries().length > MAX_ZIP_ENTRIES) {
+    throw new Error(`文档压缩包条目过多（最多 ${MAX_ZIP_ENTRIES} 个）`);
+  }
   const entry = zip.getEntry('word/document.xml');
   if (!entry) throw new Error('文档缺少 word/document.xml，格式无效');
+  if ((entry.header.size || 0) > MAX_DOCXML_BYTES) {
+    throw new Error('文档过大（document.xml 超过 5MB）');
+  }
   let docXml = entry.getData().toString('utf8');
-  if (docXml.length > 5 * 1024 * 1024) throw new Error('文档过大（document.xml 超过 5MB）');
+  // 头部声明可能谎报（如恶意 zip），解压后二次校验兜底
+  if (docXml.length > MAX_DOCXML_BYTES) throw new Error('文档过大（document.xml 超过 5MB）');
 
   // 2. 解析段落
   const { doc, paragraphs } = parseDocxParagraphs(docXml);
@@ -162,54 +187,72 @@ export async function rewriteDocxBuffer(inputBuffer, tool) {
     throw new Error('文档中未找到可改写的正文段落（正文不足 20 字的段落将被跳过）');
   }
 
-  // 3. 分批 AI 改写
+  // 3. 分批 AI 改写（单批失败仅保留原文，不中断整单）
   const batches = buildBatches(rewritable);
   logger.info('docx-rewrite', `开始改写：${rewritable.length} 段 / ${totalChars} 字符 / ${batches.length} 批`);
   let batchIndex = 0;
+  let failedBatches = 0;
   for (const batch of batches) {
     batchIndex++;
-    const input = batch.map((p, i) => `[${i + 1}] ${p.text}`).join('\n\n');
-    let output = '';
-    if (tool === 'rewrite') {
-      const r = await runAI('rewrite', { text: input });
-      output = r.content || '';
-    } else {
-      const r = await runAI('ai_reduce', { text: input });
-      output = r.content || '';
-    }
-    // 解析改写结果：按 [n] 标记切回对应段落；解析失败则保留原文（不破坏用户文档）
-    const parts = splitRewriteOutput(output, batch.length);
-    batch.forEach((p, i) => {
-      const newText = (parts[i] || '').trim();
-      if (newText && newText.length >= 5) {
-        setParagraphText(p.node, newText);
+    try {
+      // 头部指令要求模型按原标记逐段输出，防止段落边界丢失；标记 <<<Pn>>>
+      // 与正文中的文献引用 [3] 等方括号写法不冲突（旧 [n] 分隔符会被引用误触发切段）
+      const input = [
+        '以下段落每段开头均有 <<<Pn>>> 形式的段落标记（n 为段落编号），请逐段改写，输出时在每段开头原样保留对应的段落标记，不要合并、删除段落或改动编号。',
+        ...batch.map((p, i) => `<<<P${i + 1}>>> ${p.text}`),
+      ].join('\n\n');
+      let output = '';
+      if (tool === 'rewrite') {
+        const r = await runAI('rewrite', { text: input });
+        output = r.content || '';
+      } else {
+        const r = await runAI('ai_reduce', { text: input });
+        output = r.content || '';
       }
-      // 改写失败/过短的段落保持原文
-    });
-    logger.info('docx-rewrite', `批次 ${batchIndex}/${batches.length} 完成（${batch.length} 段）`);
+      // 解析改写结果：按 <<<Pn>>> 标记切回对应段落；解析失败则保留原文（不破坏用户文档）
+      const parts = splitRewriteOutput(output, batch.length);
+      batch.forEach((p, i) => {
+        const newText = (parts[i] || '').trim();
+        if (newText && newText.length >= 5) {
+          setParagraphText(p.node, newText);
+        }
+        // 改写失败/过短的段落保持原文
+      });
+      logger.info('docx-rewrite', `批次 ${batchIndex}/${batches.length} 完成（${batch.length} 段）`);
+    } catch (err) {
+      // 单批失败不抛出：该批段落保留原文，整单继续（此前整单丢弃会浪费已成功的批次与费用）
+      failedBatches++;
+      logger.error('docx-rewrite', `批次 ${batchIndex}/${batches.length} 失败，该批保留原文: ${err.message}`);
+    }
   }
 
   // 4. 序列化写回并重新打包
   const serializer = new XMLSerializer();
-  const newXml = serializer.serializeToString(doc);
+  let newXml = serializer.serializeToString(doc);
+  // 补 XML 声明：xmldom 序列化不携带声明，缺失会被部分 Word 版本判定为无效文档
+  if (!newXml.startsWith('<?xml')) {
+    newXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${newXml}`;
+  }
   zip.updateFile('word/document.xml', Buffer.from(newXml, 'utf8'));
   const outBuffer = zip.toBuffer();
 
   return {
     buffer: outBuffer,
-    stats: { totalChars, rewrittenParas: rewritable.length, batches: batches.length, keptCharts: paragraphs.length - rewritable.length },
+    stats: { totalChars, rewrittenParas: rewritable.length, batches: batches.length, failedBatches, keptCharts: paragraphs.length - rewritable.length },
   };
 }
 
-// 解析改写输出：期望格式 "[1] 改写内容 [2] 改写内容"；宽容解析失败返回空数组（调用方保留原文）
+// 解析改写输出：期望格式 "<<<P1>>> 改写内容 <<<P2>>> 改写内容"；宽容解析失败返回空数组（调用方保留原文）
 export function splitRewriteOutput(output, count) {
   const result = new Array(count).fill('');
   if (!output) return result;
-  // 按 [n] 标记切分
-  const regex = /\[(\d+)\]([\s\S]*?)(?=\[\d+\]|$)/g;
+  // 按 <<<Pn>>> 标记切分（每处调用新建正则，避免 /g 的 lastIndex 状态跨调用残留）。
+  // 注意标记为三个 '>'：匹配段须写 >>>，漏写一个会把第三个 '>' 残留进段落正文
+  const regex = /<<<P(\d+)>>>([\s\S]*?)(?=<<<P\d+>>>|$)/g;
   let m;
   while ((m = regex.exec(output)) !== null) {
     const idx = parseInt(m[1], 10) - 1;
+    // 编号须在合理范围内，越界编号忽略
     if (idx >= 0 && idx < count) {
       result[idx] = (m[2] || '').trim();
     }

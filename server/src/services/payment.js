@@ -380,6 +380,15 @@ export function closePendingGraduationOrders(gpOrderId) {
   ).run(String(gpOrderId)).changes;
 }
 
+// 报价变更/审批状态变化时，作废该专利/期刊服务订单关联的所有待支付 orders（对齐 graduation 实现）
+// type 为 'patent' / 'publication'，target 为订单关联的服务单 ID（orders.target）
+export function closePendingServiceOrders(type, target) {
+  if (!type || !target) return 0;
+  return db.prepare(
+    "UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'quoted') AND type = ? AND target = ?"
+  ).run(String(type), String(target)).changes;
+}
+
 // ========== 支付宝：使用官方 alipay-sdk（电脑网站支付/当面付） ==========
 function getAlipaySdk(cfg) {
   return new AlipaySdk({
@@ -397,13 +406,23 @@ export async function createAlipayQrcode(order) {
   if (!cfg.appid || !(cfg.privateKey || cfg.privateKeyPath) || !(cfg.publicKey || cfg.publicKeyPath)) {
     throw new Error('支付宝配置不完整，请在管理后台填写 AppID / 私钥 / 公钥');
   }
+  // 二维码有效期不能超过订单剩余有效期：按 min(15 分钟, 订单剩余秒数) 动态计算，
+  // 向下取整为分钟且至少 1m（expires_at 为秒级时间戳，与 closeExpiredOrders 口径一致）；
+  // 剩余不足 1 分钟时订单即将过期，直接报错让用户重新下单
+  const remainSeconds = order.expires_at != null ? order.expires_at - now() : null;
+  if (remainSeconds != null && remainSeconds < 60) {
+    throw new Error('订单即将过期，请重新下单');
+  }
+  const timeoutExpress = remainSeconds == null || remainSeconds >= 15 * 60
+    ? '15m'
+    : `${Math.max(1, Math.floor(remainSeconds / 60))}m`;
   const sdk = getAlipaySdk(cfg);
   const result = await sdk.exec('alipay.trade.precreate', {
     bizContent: {
       out_trade_no: order.order_no,
       total_amount: order.amount.toFixed(2),
       subject: order.item_name || order.target_name || 'ScholarForge 服务',
-      timeout_express: '15m',
+      timeout_express: timeoutExpress,
     },
   });
   const qrCode = result.qr_code || result.qrCode;

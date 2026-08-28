@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
+import { copyText } from '../lib/utils.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import PayModal from '../components/PayModal.jsx';
 import {
@@ -21,6 +22,7 @@ export default function Patent() {
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState('ai'); // ai=交底书工具 / service=申请服务 / my=我的订单
   const [payState, setPayState] = useState(null); // 服务订单支付
+  const [payingId, setPayingId] = useState(null); // 发起支付中的订单，防重复提交
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -67,21 +69,32 @@ export default function Patent() {
   };
 
   const handlePay = async (order) => {
+    setPayingId(order.id);
     try {
       const data = await api.payPatentOrder(order.id);
       setPayState({ ...data, svcOrder: order });
     } catch (err) {
       toast.error(err.message || '发起支付失败');
+    } finally {
+      setPayingId(null);
     }
   };
 
   const handleCopy = async () => {
     if (!tool.result?.content) return;
+    const ok = await copyText(tool.result.content);
+    if (!ok) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleDownload = async () => {
+    if (!docInfo?.id) return;
     try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(tool.result.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch { /* 忽略 */ }
+      await downloadDocFile(docInfo.id, form.title || '专利交底书');
+    } catch (err) {
+      toast.error(err.message || '下载失败');
+    }
   };
 
   const result = tool.result;
@@ -152,7 +165,7 @@ export default function Patent() {
                     </button>
                   )}
                   {docInfo && (
-                    <button onClick={() => downloadDocFile(docInfo.id, form.title || '专利交底书')} className="btn-ghost text-xs text-accent">
+                    <button onClick={handleDownload} className="btn-ghost text-xs text-accent">
                       <Download className="h-4 w-4" /> 下载 Word
                     </button>
                   )}
@@ -241,7 +254,9 @@ export default function Patent() {
                 </div>
               </div>
               {o.status === 'pending' && o.quote_status === 'approved' && (
-                <button onClick={() => handlePay(o)} className="btn-primary px-4 py-2 text-xs">去支付 ¥{Number(o.quoted_price).toFixed(2)}</button>
+                <button onClick={() => handlePay(o)} disabled={payingId === o.id} className="btn-primary px-4 py-2 text-xs">
+                  {payingId === o.id ? '支付中…' : `去支付 ¥${Number(o.quoted_price).toFixed(2)}`}
+                </button>
               )}
               {o.status === 'pending' && o.quote_status === 'none' && (
                 <span className="text-xs text-slate-400">等待客服报价</span>

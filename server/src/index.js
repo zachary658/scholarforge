@@ -32,6 +32,7 @@ import { closeExpiredOrders } from './services/payment.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
+import { makeLimiter } from './middleware/rateLimit.js';
 import logger from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -115,8 +116,31 @@ app.use(rateLimit({
     req.path === '/api/health',
 }));
 
+// 支付异步回调路径：上方全局限流已跳过，此处单独挂宽松 IP 限流
+// （每 IP 每分钟 60 次，网关正常重试远低于该阈值，仅防回调接口被恶意刷）
+app.use(
+  ['/api/payment/alipay/notify', '/api/payment/wechat/notify'],
+  makeLimiter({ keyType: 'ip', max: 60, windowMs: 60 * 1000 }),
+);
+
 // 支付宝异步回调使用 urlencoded 表单
 app.use('/api/payment/alipay/notify', express.urlencoded({ extended: true, limit: '1mb' }));
+
+// 回调路由单独收紧 JSON 解析上限至 64kb（微信/支付宝回调实际仅数 KB，防伪造超大回调占内存）。
+// 先于全局 5mb 解析器挂载：body-parser 依 req._body 幂等跳过重复解析，先命中的 64kb 生效，
+// verify 钩子同样保存 rawBody，微信验签所需的原始字节流逻辑不受影响
+app.use(
+  ['/api/payment/alipay/notify', '/api/payment/wechat/notify'],
+  express.json({
+    limit: '64kb',
+    verify: (req, _res, buf) => {
+      // 仅对 POST/PUT 请求保留 rawBody，避免 GET 也存一份浪费内存
+      if (req.method === 'POST' || req.method === 'PUT') {
+        req.rawBody = buf.toString('utf8');
+      }
+    },
+  }),
+);
 
 // 全局 JSON 解析：通过 verify 钩子保留原始 body 字节流到 req.rawBody
 // 微信支付回调验签需要原始字节流，JSON.stringify(req.body) 会因键序/转义不一致导致验签失败

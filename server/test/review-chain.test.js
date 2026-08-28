@@ -89,6 +89,19 @@ test('parseReviewVerdict：识别通过结论', () => {
   assert.equal(parseReviewVerdict(report), 'pass');
 });
 
+test('parseReviewVerdict：结论为通过时不被后续章节的「需修改」字样污染（窗口溢出回归）', () => {
+  // 旧版 120 字符窗口会溢出到引用问题清单，其中「需修改为 [3]」导致误判 revise、多烧一次付费修订
+  const report = [
+    '## 审校结论',
+    '（整体评价：通过）论文整体质量合格，无需返修。',
+    '',
+    '## 引用问题',
+    '- 正文 [5] 引用越界，需修改为 [3]',
+    '- [CITE:2] 占位符残留，需修改为真实引用'
+  ].join('\n');
+  assert.equal(parseReviewVerdict(report), 'pass');
+});
+
 test('parseReviewVerdict：无报告或格式异常时宽容判通过（防误触发付费修订）', () => {
   assert.equal(parseReviewVerdict(''), 'pass');
   assert.equal(parseReviewVerdict(null), 'pass');

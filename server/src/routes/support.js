@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { supportRequired } from '../middleware.js';
 import db from '../db.js';
-import { closePendingGraduationOrders } from '../services/payment.js';
+import { closePendingGraduationOrders, closePendingServiceOrders } from '../services/payment.js';
 
 const router = Router();
 
@@ -258,6 +258,8 @@ function quoteServiceOrder(req, res, table) {
   if (!row) return res.status(404).json({ error: '订单不存在' });
   if (row.status !== 'pending') return res.status(400).json({ error: '订单已支付，不能重新报价' });
   db.prepare(`UPDATE ${table} SET quoted_price = ?, quote_status = ? WHERE id = ?`).run(price, 'pending', row.id);
+  // 报价变更：作废用户已创建的待支付订单，防止按旧价成交（对齐 graduation 分支）
+  closePendingServiceOrders(table === 'patent_orders' ? 'patent' : 'publication', row.id);
   res.json({ ok: true, id: row.id, quoted_price: price, quote_status: 'pending' });
 }
 

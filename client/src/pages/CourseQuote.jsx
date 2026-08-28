@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import { copyText } from '../lib/utils.js';
 import PayModal from '../components/PayModal.jsx';
 import { toast } from '../components/Toast.jsx';
 import {
@@ -65,37 +66,6 @@ const emptyForm = {
 
 function fmt(v) {
   return `¥${Number(v || 0).toFixed(2)}`;
-}
-
-// 复制到剪贴板（含旧浏览器降级）
-async function copyText(text, label) {
-  if (!text) return;
-  const fallback = () => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      toast.success(`${label}已复制`);
-    } catch {
-      toast.error('复制失败，请手动复制');
-    }
-    document.body.removeChild(ta);
-  };
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(`${label}已复制`);
-      return;
-    } catch {
-      fallback();
-    }
-  } else {
-    fallback();
-  }
 }
 
 export default function CourseQuote() {

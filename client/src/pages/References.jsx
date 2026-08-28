@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
+import { isSafeUrl } from '../lib/utils.js';
 import {
   Search, Plus, Trash, Book, Copy, Check, Refresh,
   ExternalLink, BadgeCheck,
@@ -278,7 +279,7 @@ export default function References() {
                         <tag.icon className="h-3 w-3" />
                         {r.source_db || tag.label}
                       </span>
-                      {r.source_url && (
+                      {isSafeUrl(r.source_url) && (
                         <a
                           href={r.source_url}
                           target="_blank"
@@ -351,7 +352,7 @@ export default function References() {
                         <tag.icon className="h-3 w-3" />
                         {r.source_db || tag.label}
                       </span>
-                      {r.source_url && (
+                      {isSafeUrl(r.source_url) && (
                         <a
                           href={r.source_url}
                           target="_blank"

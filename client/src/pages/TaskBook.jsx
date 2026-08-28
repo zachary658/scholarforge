@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import FeaturePay from '../components/FeaturePay.jsx';
+import { toast } from '../components/Toast.jsx';
 import {
   FileWord, Download, Refresh, Layers, Sparkle,
 } from '../components/Icons.jsx';
@@ -39,9 +40,12 @@ export default function TaskBook() {
     tool.run(() => api.taskBook({ ...form, template_id: form.template_id || undefined, orderNo: orderNo || undefined }));
   };
 
-  const handleDownload = () => {
-    if (docInfo?.id) {
-      downloadDocFile(docInfo.id, `${form.topic || '论文'}任务书`);
+  const handleDownload = async () => {
+    if (!docInfo?.id) return;
+    try {
+      await downloadDocFile(docInfo.id, `${form.topic || '论文'}任务书`);
+    } catch (err) {
+      toast.error(err.message || '下载失败');
     }
   };
 

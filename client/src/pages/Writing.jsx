@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, downloadDocFile } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
 import { FIELDS } from '../lib/constants.js';
+import { copyText } from '../lib/utils.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import SmartWritingResult from '../components/SmartWritingResult.jsx';
@@ -34,6 +35,8 @@ export default function Writing() {
   const copyTimerRef = useRef(null);
   // 深度文献调研（大纲生成后的付费升级）：多角度检索 → 解析研究框架/文献/数据
   const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
+  // 深度调研请求序号：换题/重新发起后使在途旧请求的响应过期，防止旧结果错挂到新题（竞态防护）
+  const distillSeqRef = useRef(0);
   // 参考材料：上传解读（docx/pdf/txt）→ 勾选参与生成（材料解读 token 计入订单费用）
   const [materials, setMaterials] = useState([]);
   const [selectedMaterials, setSelectedMaterials] = useState([]);
@@ -85,6 +88,7 @@ export default function Writing() {
 
   // 换题后清空旧调研结果：防止旧题的蒸馏产物错位挂在新题大纲下，且「开始深度调研」按钮被旧结果挡住无法发起新调研
   useEffect(() => {
+    distillSeqRef.current += 1; // 使在途旧请求的响应序号过期，落地后直接丢弃
     setDistill({ loading: false, error: '', result: null, needOrder: null });
   }, [form.topic]);
 
@@ -129,19 +133,18 @@ export default function Writing() {
   };
 
   const handleCopy = async () => {
-    try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(content);
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error('复制失败，请手动复制');
-    }
+    const ok = await copyText(content);
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   // 深度文献调研：大纲生成后的付费升级（需已支付的文献综述订单）
+  // 请求序号防竞态：响应落地前发现序号已过期（期间已换题/重新发起）则丢弃，防止旧结果覆盖新状态
   const runDistill = async (orderNo) => {
     if (!form.topic.trim()) return;
+    const seq = ++distillSeqRef.current;
     setDistill({ loading: true, error: '', result: null, needOrder: null });
     try {
       const data = await api.smartWriting({
@@ -150,6 +153,7 @@ export default function Writing() {
         projectId: projectId || undefined,
         orderNo: orderNo || undefined,
       });
+      if (seq !== distillSeqRef.current) return;
       if (data.needOrder) {
         setDistill({ loading: false, error: '', result: null, needOrder: { itemType: data.itemType, amount: data.amount } });
       } else {
@@ -162,13 +166,17 @@ export default function Writing() {
         }
       }
     } catch (err) {
+      if (seq !== distillSeqRef.current) return;
       setDistill({ loading: false, error: err.message || '深度调研失败', result: null, needOrder: null });
     }
   };
 
-  const handleDownload = () => {
-    if (docInfo?.id) {
-      downloadDocFile(docInfo.id, form.topic || '论文');
+  const handleDownload = async () => {
+    if (!docInfo?.id) return;
+    try {
+      await downloadDocFile(docInfo.id, form.topic || '论文');
+    } catch (err) {
+      toast.error(err.message || '下载失败');
     }
   };
 
@@ -191,7 +199,11 @@ export default function Writing() {
                 {writeTypes.map((t) => (
                   <button
                     key={t.value}
-                    onClick={() => setForm({ ...form, type: t.value })}
+                    onClick={() => {
+                      if (form.type === t.value) return;
+                      tool.reset(); // 切换类型时清空旧结果，防止旧结果（含免费/已付费标识）误导
+                      setForm({ ...form, type: t.value });
+                    }}
                     className={`relative rounded-lg border px-3 py-2.5 text-sm font-medium transition ${
                       form.type === t.value
                         ? 'border-accent bg-accent-50 text-accent'

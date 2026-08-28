@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { api } from '../lib/api.js';
+import { api, downloadDocFile } from '../lib/api.js';
 import FeaturePay from './FeaturePay.jsx';
 import AcademicIntegrityModal from './AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
@@ -64,14 +64,14 @@ export default function DocRewritePanel({ mode }) {
     }
   };
 
-  const handleDownload = () => {
+  // 下载走鉴权接口（download_url 直链不带 Authorization 会 401）
+  const handleDownload = async () => {
     if (!result?.doc) return;
-    const a = document.createElement('a');
-    a.href = result.doc.download_url;
-    a.download = `${label}_${file?.name || '文档.docx'}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      await downloadDocFile(result.doc.id, `${label}_${file?.name || '文档.docx'}`);
+    } catch (err) {
+      toast.error(err.message || '下载失败');
+    }
   };
 
   return (

@@ -29,7 +29,9 @@ export function useTool() {
     try {
       const data = await apiCall();
       if (data.needOrder) {
-        setNeedOrder({ itemType: data.itemType, amount: data.amount });
+        // 保留 materialIds：带参考材料的订单必须把它传给下单接口，
+        // 否则订单金额缺材料费且支付后生成会命中后端材料一致性校验而失败
+        setNeedOrder({ itemType: data.itemType, amount: data.amount, materialIds: data.materialIds || [] });
         return;
       }
       setResult(data);

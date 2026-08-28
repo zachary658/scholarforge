@@ -45,6 +45,9 @@ async function buildChapterAIParams(project, ch, context) {
 // 进程内队列：正在生成中的 projectId 集合
 const running = new Set();
 
+// 章节数硬上限：超长大纲（恶意构造或模型失控输出）会令分章节生成成本失控
+const MAX_CHAPTERS = 15;
+
 export function isGenerating(projectId) {
   return running.has(projectId);
 }
@@ -54,7 +57,13 @@ function getChapters(projectId) {
   try { return JSON.parse(row?.chapters_json || '[]'); } catch { return []; }
 }
 
-function saveChapters(projectId, chapters) {
+// 保存章节草稿；orderId 非空时顺带续租订单（刷新 orders.updated_at）：
+// 长任务逐章保存期间不断续期，防止超过 30 分钟 claim 超时被其他实例判定卡死抢占（多实例双跑烧钱）
+function saveChapters(projectId, chapters, orderId = null) {
+  if (orderId) {
+    db.prepare("UPDATE orders SET updated_at = ? WHERE id = ? AND service_status = 'processing'")
+      .run(now(), orderId);
+  }
   db.prepare('UPDATE projects SET chapters_json = ?, updated_at = ? WHERE id = ?')
     .run(JSON.stringify(chapters), now(), projectId);
 }
@@ -88,6 +97,10 @@ function validateOrder(userId, orderNo, projectId, { allowCompleted = false } = 
 // 从已确认大纲初始化章节草稿
 function buildChapters(outline) {
   if (!Array.isArray(outline) || outline.length === 0) return [];
+  // 章节数硬上限：超长大纲直接报错，避免生成成本失控
+  if (outline.length > MAX_CHAPTERS) {
+    throw new Error(`章节数超过上限（最多 ${MAX_CHAPTERS} 章，当前 ${outline.length} 章）`);
+  }
   return outline.map((ch, i) => ({
     id: `ch_${i + 1}`,
     chapter: ch.chapter || ch.title || `第${i + 1}章`,
@@ -140,6 +153,10 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
   if (!project) throw new Error('工作区不存在');
   if (!project.outline_confirmed_at) throw new Error('请先确认大纲再生成正文');
   if ((project.outline || []).length === 0) throw new Error('大纲为空，请先生成并确认大纲');
+  // 章节数硬上限：与 buildChapters 一致，超限直接报错（防超长大纲生成成本失控）
+  if ((project.outline || []).length > MAX_CHAPTERS) {
+    throw new Error(`章节数超过上限（最多 ${MAX_CHAPTERS} 章，当前 ${project.outline.length} 章）`);
+  }
 
   const bill = validateOrder(userId, orderNo, projectId);
   if (!bill.ok) {
@@ -181,13 +198,14 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
         cur = getChapters(projectId);
         if (cur[i]?.status === 'done') continue;
         cur[i] = { ...cur[i], status: 'processing' };
-        saveChapters(projectId, cur);
+        // 每章保存时续租订单（更新 orders.updated_at），防长任务被 claim 超时抢占
+        saveChapters(projectId, cur, bill.order.id);
 
         const content = await generateChapter(project, cur, i);
 
         cur = getChapters(projectId);
         cur[i] = { ...cur[i], content, status: 'done' };
-        saveChapters(projectId, cur);
+        saveChapters(projectId, cur, bill.order.id);
       }
       // 全部完成：标记订单服务完成（仅当仍处于 processing，防并发覆盖）
       db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);

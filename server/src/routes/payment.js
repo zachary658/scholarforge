@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
+import { now } from '../utils.js';
 import {
   createOrder,
   markOrderPaid,
@@ -94,6 +95,11 @@ router.get('/alipay/qrcode/:orderNo', authRequired, async (req, res) => {
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
   if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
+  // 过期校验：expires_at 为秒级时间戳（与 closeExpiredOrders 定时关单的判断口径一致），
+  // 过期订单禁止再取码，防止定时关单存在时间差时用户仍按旧单扫码支付
+  if (order.expires_at != null && order.expires_at <= now()) {
+    return res.status(400).json({ error: '订单已过期，请重新下单' });
+  }
   if (order.payment_channel !== 'alipay') {
     return res.status(400).json({ error: '该订单未选择支付宝支付，请重新发起对应支付方式' });
   }
@@ -111,6 +117,11 @@ router.get('/wechat/qrcode/:orderNo', authRequired, async (req, res) => {
   if (!order) return res.status(404).json({ error: '订单不存在' });
   if (order.user_id !== req.user.id) return res.status(403).json({ error: '无权操作' });
   if (!['pending', 'quoted'].includes(order.status)) return res.status(400).json({ error: '订单状态不允许支付' });
+  // 过期校验：expires_at 为秒级时间戳（与 closeExpiredOrders 定时关单的判断口径一致），
+  // 过期订单禁止再取码，防止定时关单存在时间差时用户仍按旧单扫码支付
+  if (order.expires_at != null && order.expires_at <= now()) {
+    return res.status(400).json({ error: '订单已过期，请重新下单' });
+  }
   if (order.payment_channel !== 'wechat') {
     return res.status(400).json({ error: '该订单未选择微信支付，请重新发起对应支付方式' });
   }

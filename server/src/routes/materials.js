@@ -4,6 +4,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
 import { authRequired } from '../middleware.js';
+import { makeLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { estimateTextTokens } from '../services/billing.js';
 import { parsePdfViaPdfjs } from '../services/paper-distillation.js';
@@ -17,6 +18,10 @@ router.use(authRequired);
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_TEXT_CHARS = 100000; // 解读文本最多 10 万字符
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } });
+
+// 上传解读为 CPU 密集操作（docx/pdf 解析）：每用户每分钟最多 20 次
+// authRequired 已在本路由顶部 router.use 挂载，先于限流执行，keyType 'user' 可取到 req.user
+const uploadLimiter = makeLimiter({ keyType: 'user', max: 20, windowMs: 60 * 1000 });
 
 // 按扩展名解析文件为纯文本
 async function extractText(buffer, filename) {
@@ -36,7 +41,7 @@ async function extractText(buffer, filename) {
 }
 
 // 上传并解读资料（含 token 估算；解读 token 量在生成下单时计入费用）
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '请选择文件' });
   const projectId = req.body.projectId ? parseInt(req.body.projectId, 10) : null;
   // 安全：校验工作区归属（防跨用户关联）

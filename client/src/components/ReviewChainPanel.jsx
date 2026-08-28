@@ -86,13 +86,13 @@ export default function ReviewChainPanel({ chain, report }) {
           {errors.map((e, i) => (
             <div key={`e${i}`} className="flex items-start gap-1.5 text-xs text-red-600">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{e.detail}</span>
+              <span>{typeof e === 'string' ? e : e.detail}</span>
             </div>
           ))}
           {warnings.map((w, i) => (
             <div key={`w${i}`} className="flex items-start gap-1.5 text-xs text-slate-500">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-              <span>{w.detail}</span>
+              <span>{typeof w === 'string' ? w : w.detail}</span>
             </div>
           ))}
         </div>

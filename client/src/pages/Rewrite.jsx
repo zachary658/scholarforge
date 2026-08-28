@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useTool } from '../lib/useTool.js';
+import { copyText } from '../lib/utils.js';
 import FeaturePay from '../components/FeaturePay.jsx';
 import DocRewritePanel from '../components/DocRewritePanel.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
@@ -44,15 +45,11 @@ export default function Rewrite() {
   };
 
   const handleCopy = async () => {
-    try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(output);
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-      toast.success('已复制降重结果');
-    } catch {
-      toast.error('复制失败，请手动复制');
-    }
+    const ok = await copyText(output, '降重结果');
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   const downloadText = () => {

@@ -94,3 +94,19 @@ export function materialFee(tokens) {
   const price = cost / (1 - cfg.profitMargin);
   return Math.round(price * 100) / 100; // 保留到分
 }
+
+// ========== 材料注入 / 计费统一规则（防「计费与注入脱钩」） ==========
+// 每份材料注入上限（字符）：生成时仅注入前 20000 字符，控制上下文 token 成本
+export const MATERIAL_MAX_CHARS_PER = 20000;
+// 单次调用注入总量上限（字符）：超出直接报错（而非静默截断），要求用户精简
+export const MATERIAL_TOTAL_CHARS_MAX = 60000;
+
+// 按注入规则折算材料计费 token：每份取前 20000 字符，总量按 60000 封顶
+// 计费基数 = 实际注入量（与 tools.loadUserMaterials 的截断规则一致），
+// 避免「按材料完整 tokens 计费、却只注入前 20000 字符」的多收费
+export function materialBillableTokens(texts) {
+  const list = (Array.isArray(texts) ? texts : [])
+    .map((t) => String(t || '').slice(0, MATERIAL_MAX_CHARS_PER));
+  if (list.length === 0) return 0;
+  return estimateTextTokens(list.join('\n\n---\n\n').slice(0, MATERIAL_TOTAL_CHARS_MAX));
+}

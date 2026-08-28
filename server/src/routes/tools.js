@@ -10,7 +10,7 @@ import { formatReference, rewriteText } from '../ai.js';
 import { logUsage } from '../usage.js';
 import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
-import { isFreeUnlimitedFeature, materialFee } from '../services/billing.js';
+import { isFreeUnlimitedFeature, materialFee, materialBillableTokens, MATERIAL_MAX_CHARS_PER, MATERIAL_TOTAL_CHARS_MAX } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
 import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
@@ -50,6 +50,10 @@ const UNLIMITED_TOOL_ACTION = {
   writing_outline: ['writing', 'outline'],
 };
 
+// 同一订单生成尝试次数上限（含首次，按 usage_logs 中该订单的记录数统计）：
+// failed 订单允许重试（AI 瞬时失败不应锁死已付费订单），但重试计入上限，超出要求重新下单
+const ORDER_MAX_GENERATION_ATTEMPTS = 3;
+
 // 工具调用前置：现金直付模式下，免费功能直接放行，收费功能需关联已支付订单
 function resolveBilling(userId, featureKey, orderNo) {
   // 免费且不限次的功能（如大纲生成、文献检索），直接放行
@@ -74,8 +78,15 @@ function resolveBilling(userId, featureKey, orderNo) {
   if (order.type !== 'feature') return { ok: false, error: '订单类型不正确' };
   if (order.item_type !== featureKey) return { ok: false, error: '订单与功能不匹配' };
   if (order.status !== 'paid') return { ok: false, error: '订单未支付' };
-  // failed 允许重试：AI 瞬时失败（超时/网络抖动）不应锁死用户已付费的订单
+  // failed 允许重试：AI 瞬时失败（超时/网络抖动）不应锁死用户已付费的订单，
+  // 但重试计入次数上限（usage_logs 统计该订单的生成尝试次数），超出要求重新下单
   if (!['pending', 'processing', 'failed'].includes(order.service_status)) return { ok: false, error: '订单服务已结束' };
+  if (order.service_status === 'failed') {
+    const attempts = db.prepare('SELECT COUNT(*) AS c FROM usage_logs WHERE order_id = ?').get(order.id).c;
+    if (attempts >= ORDER_MAX_GENERATION_ATTEMPTS) {
+      return { ok: false, error: `该订单已生成失败 ${attempts} 次，达到重试上限，请重新下单` };
+    }
+  }
   return { ok: true, mode: 'order', order };
 }
 
@@ -87,7 +98,11 @@ function inferAutoProjectTitle(params) {
   return '文本优化';
 }
 
-// 加载用户材料：校验归属并返回 { ids, tokens, texts }（每份文本截断控制 token 成本）
+// 加载用户材料：校验归属并返回 { ids, tokens, texts }
+// 注入与计费规则（防「计费与注入脱钩」）：
+// - 每份材料仅注入前 20000 字符（MATERIAL_MAX_CHARS_PER，控制 token 成本）
+// - 单次调用注入总量上限 60000 字符（MATERIAL_TOTAL_CHARS_MAX），超限直接报错而非静默截断
+// - 计费 token 按实际注入的字符量折算（materialBillableTokens），不再按材料完整 tokens 计费
 function loadUserMaterials(materialIds, userId) {
   const ids = (Array.isArray(materialIds) ? materialIds : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0) return { ids: [], tokens: 0, texts: [] };
@@ -98,10 +113,18 @@ function loadUserMaterials(materialIds, userId) {
   if (rows.length !== new Set(ids).size) {
     throw bizError('部分资料不存在或无权使用，请重新选择');
   }
+  // 每份材料截断到注入上限（与生成时注入上下文的文本一致）
+  const texts = rows.map((r) => String(r.text_content || '').slice(0, MATERIAL_MAX_CHARS_PER));
+  // 注入总量上限：超限报错而非静默截断，避免用户付费后上下文被悄悄砍掉
+  const totalChars = texts.reduce((s, t) => s + t.length, 0);
+  if (totalChars > MATERIAL_TOTAL_CHARS_MAX) {
+    throw bizError(`参考材料过多，请精简后再试（单次最多注入 ${MATERIAL_TOTAL_CHARS_MAX} 字符，当前 ${totalChars}）`);
+  }
   return {
     ids,
-    tokens: rows.reduce((s, r) => s + (r.tokens || 0), 0),
-    texts: rows.map((r) => (r.text_content || '').slice(0, 20000)),
+    // 计费与注入对齐：按实际注入量折算 token，总量 60000 封顶
+    tokens: materialBillableTokens(texts),
+    texts,
   };
 }
 
