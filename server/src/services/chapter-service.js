@@ -287,8 +287,15 @@ export function mergeChapters(userId, projectId) {
   if (!project) throw new Error('工作区不存在');
   const chapters = getChapters(projectId);
   const body = chapters.map((c) => {
+    const content = String(c.content || '').trim();
+    if (content) {
+      // 生成链产出的正文自带「## 章标题 / ### 小节标题」结构，直接采用；
+      // 不得再额外拼接大纲小节标题——否则所有小标题堆砌在正文之前，且与正文内容重复错位
+      return /^#{1,3}\s+\S/.test(content) ? content : `## ${c.chapter}\n\n${content}`;
+    }
+    // 未生成的章节保留大纲结构占位
     const secText = (c.sections || []).map((s) => (s.title ? `### ${s.title}` : '')).filter(Boolean).join('\n');
-    return `## ${c.chapter}\n${secText}\n\n${c.content || '（本章内容待生成）'}`;
+    return `## ${c.chapter}\n${secText}\n\n（本章内容待生成）`;
   }).join('\n\n');
   return { title: project.title, content: body, chapters };
 }

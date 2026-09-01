@@ -305,6 +305,12 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [generating, setGenerating] = useState(false);
   const [needPay, setNeedPay] = useState(null);
   const [merging, setMerging] = useState(false);
+  // 合并导出用的格式模板（可选：高校/自定义模板，与写作类导出一致）
+  const [templates, setTemplates] = useState([]);
+  const [mergeTemplateId, setMergeTemplateId] = useState('');
+  useEffect(() => {
+    api.listTemplates().then((d) => setTemplates(d.templates || [])).catch(() => {});
+  }, []);
   const integrity = useAcademicIntegrity();
   // 轮询定时器：用 ref 管理，防重复创建 interval；组件卸载时清理（此前存在内存泄漏）
   const pollRef = useRef(null);
@@ -463,7 +469,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const doMerge = async () => {
     setMerging(true);
     try {
-      const data = await api.mergeChapters(project.id);
+      const data = await api.mergeChapters(project.id, { template_id: mergeTemplateId || undefined });
       if (data.doc?.id) {
         const { downloadDocFile } = await import('../lib/api.js');
         // await 使下载异常能被下方外层 catch 捕获并 toast 提示
@@ -677,9 +683,22 @@ function ProjectDetail({ project, onClose, onEdit }) {
                     {generating ? '生成中…' : '生成全部章节'}
                   </button>
                   {chapters.length > 0 && (
-                    <button onClick={doMerge} disabled={merging} className="btn-secondary text-xs">
-                      <FileWord className="h-3.5 w-3.5" /> {merging ? '导出中…' : '合并导出 Word'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="input !w-auto !py-1.5 text-xs"
+                        value={mergeTemplateId}
+                        onChange={(e) => setMergeTemplateId(e.target.value)}
+                        title="合并导出应用的格式模板"
+                      >
+                        <option value="">默认学术格式</option>
+                        {templates.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                      <button onClick={doMerge} disabled={merging} className="btn-secondary text-xs">
+                        <FileWord className="h-3.5 w-3.5" /> {merging ? '导出中…' : '合并导出 Word'}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

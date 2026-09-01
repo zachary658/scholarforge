@@ -177,15 +177,23 @@ router.put('/:id/chapters/:chapterId', authRequired, (req, res) => {
   }
 });
 
-// 合并全部章节导出 Word
+// 合并全部章节导出 Word（可传 template_id 应用高校/自定义模板格式）
 router.post('/:id/chapters/merge', authRequired, async (req, res) => {
   try {
     const merged = mergeChapters(req.user.id, parseInt(req.params.id, 10));
+    // 模板可选：与写作类导出一致，限本人上传或全局共享的模板
+    let template = null;
+    const templateId = parseInt(req.body?.template_id, 10);
+    if (templateId) {
+      const { default: db } = await import('../db.js');
+      template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(templateId, req.user.id);
+    }
     const doc = await generateDocx({
       title: merged.title,
       content: merged.content,
       feature: 'chapters',
       userId: req.user.id,
+      template,
     });
     res.json({ doc, content: merged.content });
   } catch (err) {
