@@ -908,6 +908,8 @@ router.post('/rewrite', authRequired, async (req, res) => {
     const coherence = checkCoherence(result.content);
     res.json({
       result: result.content,
+      // 引擎透明度：真实反映本次降重使用的引擎（builtin=内置规则改写未调 AI，ai=大模型）
+      engine: result.model.usedRealAI ? 'ai' : 'builtin',
       changes,
       coherence,
       model: result.model,
@@ -1408,6 +1410,9 @@ async function handleDocRewrite(req, res, tool) {
       ok: true,
       doc: { id: info.lastInsertRowid, download_url: `/api/docs/download/${info.lastInsertRowid}` },
       stats,
+      // 引擎透明度：真实反映本次整篇改写使用的引擎（builtin=内置规则改写未调 AI，ai=大模型），
+      // 由 docx-rewrite 按 runAI 同一口径判定后经 stats 回报
+      engine: stats.usedRealAI ? 'ai' : 'builtin',
     });
   } catch (err) {
     if (order) {

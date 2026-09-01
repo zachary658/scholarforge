@@ -6,7 +6,7 @@
 // AI 分批改写（保持段落边界与相近字数）→ 段落文本写回（保留原段落格式与首个 run 样式）→ 重新打包。
 import AdmZip from 'adm-zip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { runAI } from '../ai-service.js';
+import { runAI, hasRealAIModel } from '../ai-service.js';
 import logger from '../logger.js';
 
 // 单批最大字符数（控制每次 AI 调用长度与质量）
@@ -158,7 +158,10 @@ function buildBatches(paragraphs) {
 
 // 主流程：改写整篇文档
 // tool: 'rewrite'（降重）| 'ai_reduce'（降AI率）
-// 返回 { buffer, stats: { totalChars, rewrittenParas, batches, failedBatches } }
+// 返回 { buffer, stats: { totalChars, rewrittenParas, batches, failedBatches, keptCharts, usedRealAI } }
+// usedRealAI：本次改写实际使用的引擎（true=真实大模型，false=内置模板引擎），
+// 供路由响应 engine 字段真实反映；批次开始前按 runAI 同一口径判定，
+// 即便所有批次失败仅保留原文，也不会把「调用过 AI 但失败」谎报为内置引擎
 export async function rewriteDocxBuffer(inputBuffer, tool) {
   // 1. 解压读取 document.xml
   const zip = new AdmZip(inputBuffer);
@@ -189,6 +192,8 @@ export async function rewriteDocxBuffer(inputBuffer, tool) {
 
   // 3. 分批 AI 改写（单批失败仅保留原文，不中断整单）
   const batches = buildBatches(rewritable);
+  // 引擎判定（与 runAI 的内置回退口径一致，见 hasRealAIModel）：真实反映本次使用的引擎
+  const usedRealAI = hasRealAIModel();
   logger.info('docx-rewrite', `开始改写：${rewritable.length} 段 / ${totalChars} 字符 / ${batches.length} 批`);
   let batchIndex = 0;
   let failedBatches = 0;
@@ -238,7 +243,7 @@ export async function rewriteDocxBuffer(inputBuffer, tool) {
 
   return {
     buffer: outBuffer,
-    stats: { totalChars, rewrittenParas: rewritable.length, batches: batches.length, failedBatches, keptCharts: paragraphs.length - rewritable.length },
+    stats: { totalChars, rewrittenParas: rewritable.length, batches: batches.length, failedBatches, keptCharts: paragraphs.length - rewritable.length, usedRealAI },
   };
 }
 

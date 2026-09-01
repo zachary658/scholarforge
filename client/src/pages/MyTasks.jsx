@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
@@ -36,22 +36,26 @@ export default function MyTasks() {
   const [toolType, setToolType] = useState('');
   const [detail, setDetail] = useState(null); // 查看详情的任务
   const [retentionDays, setRetentionDays] = useState(30);
+  const loadSeqRef = useRef(0); // 列表请求序号：旧响应若已被更新请求超越则丢弃
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const params = { page, size: 20 };
       if (keyword) params.q = keyword;
       if (toolType) params.toolType = toolType;
       const d = await api.listTasks(params);
+      if (seq !== loadSeqRef.current) return; // 已有更新的请求发出，丢弃旧响应
       setTasks(d.tasks || []);
       setPages(d.pages || 1);
       setTotal(d.total || 0);
       if (d.retention_days) setRetentionDays(d.retention_days);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return; // 已有更新的请求发出，丢弃旧响应
       toast.error('加载失败：' + err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [page, keyword, toolType]);
 

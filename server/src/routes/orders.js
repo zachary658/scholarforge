@@ -4,6 +4,7 @@ import { authRequired } from '../middleware.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { createFeatureOrder, requestQuoteOrder, initiateOrderPayment } from '../services/payment.js';
+import { checkTextLength, TEXT_MAX_SHORT, TEXT_MAX_LONG } from '../utils.js';
 
 const router = Router();
 
@@ -37,6 +38,12 @@ router.post('/request-quote', authRequired, (req, res) => {
   const { item_type, custom_requirements, expected_deadline } = req.body || {};
   if (!item_type) return res.status(400).json({ error: '请指定功能类型' });
   if (!custom_requirements) return res.status(400).json({ error: '请填写自定义需求' });
+  // 入库长度校验：需求描述 ≤5000，期望交付时间说明 ≤200，超限 400
+  const lenErr = checkTextLength([
+    { value: custom_requirements, label: '自定义需求', max: TEXT_MAX_LONG },
+    { value: expected_deadline, label: '期望交付时间', max: TEXT_MAX_SHORT },
+  ]);
+  if (lenErr) return res.status(400).json({ error: lenErr });
   try {
     const result = requestQuoteOrder({
       userId: req.user.id,

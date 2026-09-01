@@ -140,6 +140,11 @@ export default function Rewrite() {
                   </div>
                 )}
 
+                {/* 内置引擎提示：本次改写未调用 AI 模型时告知用户 */}
+                {r.engine === 'builtin' && (
+                  <div className="mb-3 text-xs text-slate-500">本次改写由内置规则引擎完成，未调用 AI 模型</div>
+                )}
+
                 {/* 降重后文本 */}
                 {output && (
                   <div className="mb-4">

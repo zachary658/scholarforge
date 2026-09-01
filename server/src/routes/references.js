@@ -4,6 +4,7 @@ import { authRequired } from '../middleware.js';
 import { formatReference } from '../ai.js';
 import { getSetting } from '../config-store.js';
 import { logUsage } from '../usage.js';
+import { checkTextLength, TEXT_MAX_SHORT } from '../utils.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -203,6 +204,24 @@ router.get('/', authRequired, (req, res) => {
 router.post('/', authRequired, (req, res) => {
   const { title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db } = req.body || {};
   if (!title) return res.status(400).json({ error: '请填写文献标题' });
+  // 入库长度校验：短文本 ≤200（作者列表放宽至 500，兼容多作者论文），原文链接 ≤2048，超限 400
+  const lenErr = checkTextLength([
+    { value: title, label: '文献标题', max: TEXT_MAX_SHORT },
+    { value: authors, label: '作者', max: 500 },
+    { value: year, label: '年份', max: TEXT_MAX_SHORT },
+    { value: journal, label: '期刊', max: TEXT_MAX_SHORT },
+    { value: publisher, label: '出版社', max: TEXT_MAX_SHORT },
+    { value: ref_type, label: '文献类型', max: TEXT_MAX_SHORT },
+    { value: doi, label: 'DOI', max: TEXT_MAX_SHORT },
+    { value: source, label: '来源', max: TEXT_MAX_SHORT },
+    { value: source_db, label: '来源数据库', max: TEXT_MAX_SHORT },
+    { value: source_url, label: '原文链接', max: 2048 },
+  ]);
+  if (lenErr) return res.status(400).json({ error: lenErr });
+  // source_url 协议白名单：仅允许 http/https 开头（与前端校验一致，后端兜底拦截 javascript: 等危险协议）
+  if (source_url && !/^https?:\/\//i.test(String(source_url))) {
+    return res.status(400).json({ error: '原文链接仅支持 http/https 协议' });
+  }
   const info = db
     .prepare(
       `INSERT INTO "references" (user_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db)

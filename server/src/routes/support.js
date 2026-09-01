@@ -171,8 +171,10 @@ router.post('/notes', (req, res) => {
   if (!['course', 'graduation', 'patent', 'publication'].includes(order_type)) return res.status(400).json({ error: '无效的订单类型' });
   const refId = parseInt(order_ref_id, 10);
   if (!refId) return res.status(400).json({ error: '缺少订单 ID' });
-  const text = String(content || '').trim().slice(0, 2000);
+  // 长度校验：备注内容 ≤2000 字符，超限 400（此前静默截断会造成内容丢失，改为明确提示）
+  const text = String(content || '').trim();
   if (!text) return res.status(400).json({ error: '请填写备注内容' });
+  if (text.length > 2000) return res.status(400).json({ error: '备注内容过长（最多 2000 字符）' });
   const info = db.prepare(
     'INSERT INTO order_notes (order_type, order_ref_id, author_id, author_name, content) VALUES (?, ?, ?, ?, ?)'
   ).run(order_type, refId, req.user.id, req.user.name || '', text);

@@ -172,7 +172,7 @@ async function callOpenAICompatible(model, systemPrompt, userPrompt, opts = {}) 
       { role: 'user', content: userPrompt },
     ],
     temperature: model.temperature ?? 0.7,
-    max_tokens: Math.min(maxTokensOverride || model.max_tokens || 2048, AI_MAX_OUTPUT_TOKENS),
+    max_tokens: effectiveMaxTokens(model, maxTokensOverride),
   };
   if (responseFormat) body.response_format = responseFormat;
 
@@ -403,11 +403,26 @@ export function resolveMaxTokensOverride(tool, params, model) {
   return null;
 }
 
+// 实际发送给模型的有效 max_tokens：override 优先，其次模型目录配置，兜底 2048，
+// 一律不超过 AI_MAX_OUTPUT_TOKENS 成本熔断上限（callOpenAICompatible 的唯一计算口径）。
+// 导出供 billing.estimateCallTokens 复用，保证成本监控口径与实际请求的 max_tokens 一致，
+// 避免「监控按预算表估、实际按 override 发」的脱钩。
+export function effectiveMaxTokens(model, maxTokensOverride) {
+  return Math.min(maxTokensOverride || model?.max_tokens || 2048, AI_MAX_OUTPUT_TOKENS);
+}
+
+// 是否配置了可用的真实模型（runAI 走真实调用而非内置模板引擎的判定口径）。
+// 导出供下游复用（billing 监控口径、docx-rewrite 引擎标识），防止判定口径漂移。
+export function hasRealAIModel(model = getDefaultModel()) {
+  return !!(model && model.provider !== 'builtin' && model.api_key);
+}
+
 // 统一入口：返回 { content, model, tokens, usedRealAI }
 // responseFormat：可选，传入 { type: 'json_object' } 时启用 JSON 模式（结构化输出）
 export async function runAI(tool, params, responseFormat = null) {
   const model = getDefaultModel();
-  const useBuiltin = !model || model.provider === 'builtin' || !model.api_key;
+  // 内置回退判定统一走 hasRealAIModel（单一口径，供 billing / docx-rewrite 等下游共用）
+  const useBuiltin = !hasRealAIModel(model);
 
   if (useBuiltin) {
     // 回退到模板引擎

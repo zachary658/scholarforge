@@ -50,12 +50,28 @@ export default function References() {
   const [copiedId, setCopiedId] = useState(null);
   const [loading, setLoading] = useState(false);
   const copyTimerRef = useRef(null);
+  const searchSeqRef = useRef(0); // 检索请求序号：旧响应若已被更新请求超越则丢弃
+  const refsSeqRef = useRef(0); // 文献库列表请求序号：同上
 
-  const loadRefs = () => api.listRefs().then((d) => setRefs(d.references || [])).catch(() => {});
+  const loadRefs = () => {
+    const seq = ++refsSeqRef.current;
+    api.listRefs()
+      .then((d) => {
+        if (seq !== refsSeqRef.current) return; // 已有更新的请求发出，丢弃旧响应
+        setRefs(d.references || []);
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     loadRefs();
-    api.searchRefs('').then((d) => setResults(d.results || [])).catch(() => {});
+    const seq = ++searchSeqRef.current;
+    api.searchRefs('')
+      .then((d) => {
+        if (seq !== searchSeqRef.current) return; // 已有更新的请求发出，丢弃旧响应
+        setResults(d.results || []);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -65,18 +81,21 @@ export default function References() {
   }, []);
 
   const search = async () => {
+    const seq = ++searchSeqRef.current;
     setLoading(true);
     try {
       const data = await api.searchRefs(query);
+      if (seq !== searchSeqRef.current) return; // 已有更新的检索发出，丢弃旧响应
       setResults(data.results || []);
       setSearched(true);
     } catch (err) {
+      if (seq !== searchSeqRef.current) return; // 已有更新的检索发出，丢弃旧响应
       // 检索失败时给用户明确提示，而不是静默显示空结果
       setResults([]);
       setSearched(true);
       toast.error(err && err.message ? `文献检索失败：${err.message}` : '文献检索失败，请稍后重试');
     } finally {
-      setLoading(false);
+      if (seq === searchSeqRef.current) setLoading(false);
     }
   };
 

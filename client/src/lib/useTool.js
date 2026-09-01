@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { toast } from '../components/Toast.jsx';
 
 // 通用工具调用 + 现金直付计费流程封装
@@ -19,8 +19,10 @@ export function useTool() {
   const [errorData, setErrorData] = useState(null); // 后端业务标志（needAcademicIntegrity / needConfirmOutline 等）
   const [result, setResult] = useState(null); // { content, doc, model, tokens, chargeType, amount, orderNo, ... }
   const [needOrder, setNeedOrder] = useState(null); // { itemType, amount }
+  const seqRef = useRef(0); // 请求序号：响应回来时若已发出更新的请求则丢弃旧响应，防止竞态覆盖
 
   const run = useCallback(async (apiCall) => {
+    const seq = ++seqRef.current;
     setError('');
     setErrorData(null);
     setLoading(true);
@@ -28,6 +30,7 @@ export function useTool() {
     setNeedOrder(null);
     try {
       const data = await apiCall();
+      if (seq !== seqRef.current) return; // 已有更新的请求发出，丢弃旧响应
       if (data.needOrder) {
         // 保留 materialIds：带参考材料的订单必须把它传给下单接口，
         // 否则订单金额缺材料费且支付后生成会命中后端材料一致性校验而失败
@@ -44,10 +47,11 @@ export function useTool() {
         );
       }
     } catch (err) {
+      if (seq !== seqRef.current) return; // 已有更新的请求发出，丢弃旧响应
       setError(err.message || '调用失败');
       setErrorData(err.data || null);
     } finally {
-      setLoading(false);
+      if (seq === seqRef.current) setLoading(false);
     }
   }, []);
 

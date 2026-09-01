@@ -14,6 +14,7 @@ import { makeLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { renderChart } from '../services/chart-renderer.js';
 import { editChapter } from '../services/chapter-service.js';
+import { sanitizeErrorMessage } from '../utils.js';
 import logger from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -114,7 +115,9 @@ router.post('/render', cpuLimiter, async (req, res) => {
     });
   } catch (err) {
     logger.error('charts', `渲染失败: ${err.message}`);
-    res.status(500).json({ error: '图表生成失败：' + err.message });
+    // 错误脱敏：业务错误（中文提示）原样透传；数据库/文件系统/渲染库等非预期错误
+    // 不向客户端暴露内部细节，统一返回通用提示（真实错误已在上方 logger.error 记录）
+    res.status(500).json({ error: '图表生成失败：' + sanitizeErrorMessage(err, 'charts/render') });
   }
 });
 

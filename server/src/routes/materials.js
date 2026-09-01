@@ -9,6 +9,7 @@ import db from '../db.js';
 import { estimateTextTokens } from '../services/billing.js';
 import { parsePdfViaPdfjs } from '../services/paper-distillation.js';
 import { isProjectOwned } from '../services/task-store.js';
+import { FILE_SIGNATURES } from '../utils.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -40,6 +41,14 @@ async function extractText(buffer, filename) {
   throw new Error('仅支持 .docx / .pdf / .txt 格式');
 }
 
+// magic-byte 校验：扩展名可伪造，按文件头拦截伪装文件
+// docx（ZIP 容器）前 4 字节 PK\x03\x04；pdf 开头 %PDF；txt/md 为纯文本无文件头，跳过
+function checkFileMagic(buffer, ext) {
+  if (ext === 'docx') return buffer.subarray(0, 4).equals(FILE_SIGNATURES.docx);
+  if (ext === 'pdf') return buffer.subarray(0, 4).equals(FILE_SIGNATURES.pdf);
+  return true;
+}
+
 // 上传并解读资料（含 token 估算；解读 token 量在生成下单时计入费用）
 router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '请选择文件' });
@@ -47,6 +56,12 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
   // 安全：校验工作区归属（防跨用户关联）
   if (projectId && !isProjectOwned(req.user.id, projectId)) {
     return res.status(403).json({ error: '无权访问该工作区' });
+  }
+  // magic-byte 校验：读文件头（前 8 字节内比对签名），不符直接 400 中文提示，
+  // 防伪造扩展名的伪装文件进入解析流程（泄露解析器内部错误或拖垮解析服务）
+  const ext = (req.file.originalname || '').split('.').pop().toLowerCase();
+  if (!checkFileMagic(req.file.buffer, ext)) {
+    return res.status(400).json({ error: '文件内容与扩展名不符，请上传真实的 .docx / .pdf 文档' });
   }
   try {
     const text = await extractText(req.file.buffer, req.file.originalname);

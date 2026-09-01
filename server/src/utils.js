@@ -29,6 +29,24 @@ export function dedupKeyOf(value) {
     .slice(0, 200);
 }
 
+// ===== 输入长度校验（入库前统一上限，防超长恶意串写库）=====
+// 短文本（标题/名称类）与长文本（描述/需求/备注类）的通用上限
+export const TEXT_MAX_SHORT = 200;
+export const TEXT_MAX_LONG = 5000;
+
+/**
+ * 批量校验字符串字段长度：超限返回中文错误提示，全部通过返回 null。
+ * items 元素形如 { value, label, max }；value 非字符串时跳过（类型校验由各路由自行负责）。
+ */
+export function checkTextLength(items) {
+  for (const { value, label, max } of items) {
+    if (typeof value === 'string' && value.length > max) {
+      return `${label}过长（最多 ${max} 字符）`;
+    }
+  }
+  return null;
+}
+
 // ===== SSRF 防护：校验出站 AI 服务地址 =====
 // AI base_url 由管理员在后台配置，服务端会据此发起请求。
 // 若管理员账号被攻破，可被用于 SSRF（探测内网 / 云元数据端点）。
@@ -191,6 +209,8 @@ export const FILE_SIGNATURES = {
   jpeg: Buffer.from([0xff, 0xd8, 0xff]),
   // WEBP（RIFF 容器头，扩展名已限制为 .webp，前缀校验足以排除 HTML/SVG 等）
   webp: Buffer.from('RIFF', 'ascii'),
+  // PDF 文件头（上传 magic-byte 校验用）
+  pdf: Buffer.from('%PDF', 'ascii'),
 };
 
 // 并发信号量：限制同时进行的异步任务数量（如出站 HTTP、AI 调用、PDF 下载），
@@ -222,4 +242,29 @@ export function createSemaphore(maxConcurrent) {
       return active;
     },
   };
+}
+
+// ===== 错误信息脱敏（防内部信息泄露给客户端）=====
+// 业务错误判定依据：本项目所有主动抛给用户看的错误（bizError、各服务层校验、
+// ai-service 的分类错误）均为含中文的消息；而数据库（SQLite）、文件系统、
+// 第三方 SDK 的非预期错误消息是英文技术细节，直接透传会把 SQL 语句、
+// 文件路径、上游网关响应等信息泄露给客户端。故以「消息含中文字符」作为业务错误特征。
+
+/**
+ * 判断错误是否为业务错误（消息可安全透传给客户端）
+ */
+export function isBusinessError(err) {
+  return !!(err && typeof err.message === 'string' && /[\u4e00-\u9fff]/.test(err.message));
+}
+
+/**
+ * 错误消息脱敏：业务错误（中文提示）原样透传；非预期错误 console.error 记录真实错误后返回通用提示。
+ * @param {Error} err catch 块捕获的错误
+ * @param {string} scope 日志定位标识（如 'payment/mock'），可省略
+ * @returns {string} 可安全返回给客户端的错误消息
+ */
+export function sanitizeErrorMessage(err, scope = '') {
+  if (isBusinessError(err)) return err.message;
+  console.error(`${scope ? `[${scope}] ` : ''}未预期内部错误:`, err);
+  return '服务器内部错误，请稍后重试';
 }

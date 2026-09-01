@@ -2,7 +2,8 @@
 // 功能定价：固定价格（feature_prices.price，单位元）或人工报价（pricing_mode='quote'）
 // 同时保留 token 估算，用于成本监控（不直接扣费）
 import { encode } from 'gpt-tokenizer';
-import { getFeaturePrice, getAiPricingConfig } from '../config-store.js';
+import { getFeaturePrice, getAiPricingConfig, getDefaultModel } from '../config-store.js';
+import { resolveMaxTokensOverride, effectiveMaxTokens, hasRealAIModel } from '../ai-service.js';
 
 // ========== 免费功能 ==========
 
@@ -69,6 +70,17 @@ export function estimateCallTokens(toolType, params = {}) {
     outputTokens = OUTPUT_TOKEN_BUDGET[`writing_${params?.type}`] || OUTPUT_TOKEN_BUDGET.default;
   } else {
     outputTokens = OUTPUT_TOKEN_BUDGET[toolType] || OUTPUT_TOKEN_BUDGET.default;
+  }
+
+  // 输出预估与实际生效的 max_tokens 对齐：配置了真实模型时，实际请求的 max_tokens 由
+  // ai-service 统一计算（fulltext/revise 有 maxTokensOverride ≥8192，普通工具取模型目录
+  // 配置，均受 AI_MAX_OUTPUT_TOKENS 熔断封顶），监控必须跟随该值，否则口径脱钩：
+  // 如 revise 在表中无项按 default 2048 估、实际 override 后 ≥8192（严重低估），
+  // writing_fulltext 按表 16000 估、实际可能仅 8192（高估）。
+  // 未配置真实模型（内置引擎，不发起真实调用）时沿用上表预算估算（表内数字不变）。
+  if (hasRealAIModel()) {
+    const model = getDefaultModel();
+    outputTokens = effectiveMaxTokens(model, resolveMaxTokensOverride(toolType, params, model));
   }
 
   const userText = typeof params === 'string' ? params : JSON.stringify(params || {});

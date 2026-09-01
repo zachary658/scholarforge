@@ -107,6 +107,9 @@ export default function DocRewritePanel({ mode }) {
               <div className="mt-0.5 text-xs text-emerald-600">
                 改写 {result.stats?.rewrittenParas} 段正文 · 保留 {result.stats?.keptCharts} 个段落（标题/图表/表格等原样保留）
               </div>
+              {result.engine === 'builtin' && (
+                <div className="mt-0.5 text-xs text-slate-500">本次改写由内置规则引擎完成，未调用 AI 模型</div>
+              )}
             </div>
           </div>
           <button onClick={handleDownload} className="btn-primary px-4 py-2 text-sm">

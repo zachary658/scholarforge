@@ -9,6 +9,7 @@ import {
   startChapterGeneration, regenerateChapter, editChapter, mergeChapters, isGenerating,
 } from '../services/chapter-service.js';
 import { generateDocx } from '../services/docx-generator.js';
+import { checkTextLength, TEXT_MAX_SHORT, TEXT_MAX_LONG } from '../utils.js';
 
 const router = Router();
 
@@ -20,6 +21,14 @@ router.get('/', authRequired, (req, res) => {
 router.post('/', authRequired, (req, res) => {
   const { title, field, description, writingRequirements, outline } = req.body || {};
   if (!title) return res.status(400).json({ error: '请填写论文标题' });
+  // 入库长度校验：标题/领域 ≤200，描述/写作要求 ≤5000，超限 400
+  const lenErr = checkTextLength([
+    { value: title, label: '论文标题', max: TEXT_MAX_SHORT },
+    { value: field, label: '学科领域', max: TEXT_MAX_SHORT },
+    { value: description, label: '论文描述', max: TEXT_MAX_LONG },
+    { value: writingRequirements, label: '写作要求', max: TEXT_MAX_LONG },
+  ]);
+  if (lenErr) return res.status(400).json({ error: lenErr });
   const p = createProject({
     userId: req.user.id,
     title,
@@ -39,6 +48,14 @@ router.get('/:id', authRequired, (req, res) => {
 
 router.put('/:id', authRequired, (req, res) => {
   const updates = { ...req.body };
+  // 入库长度校验：标题/领域 ≤200，描述/写作要求 ≤5000（兼容驼峰与下划线两种字段名），超限 400
+  const lenErr = checkTextLength([
+    { value: updates.title, label: '论文标题', max: TEXT_MAX_SHORT },
+    { value: updates.field, label: '学科领域', max: TEXT_MAX_SHORT },
+    { value: updates.description, label: '论文描述', max: TEXT_MAX_LONG },
+    { value: updates.writingRequirements ?? updates.writing_requirements, label: '写作要求', max: TEXT_MAX_LONG },
+  ]);
+  if (lenErr) return res.status(400).json({ error: lenErr });
   // 字段名映射
   if (updates.writingRequirements) {
     updates.writing_requirements = updates.writingRequirements;

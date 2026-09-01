@@ -11,7 +11,7 @@ import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
-import { now } from '../utils.js';
+import { now, sanitizeErrorMessage } from '../utils.js';
 import {
   createOrder,
   markOrderPaid,
@@ -85,7 +85,9 @@ router.post('/mock/:orderNo', authRequired, async (req, res) => {
     const updated = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(order.order_no);
     res.json({ ok: true, order: updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 错误脱敏：业务错误（如「订单状态已变更」等中文提示）原样透传；
+    // 数据库/支付 SDK 等非预期错误返回通用提示，真实错误由 sanitizeErrorMessage 记录
+    res.status(500).json({ error: sanitizeErrorMessage(err, 'payment/mock') });
   }
 });
 
@@ -107,7 +109,9 @@ router.get('/alipay/qrcode/:orderNo', authRequired, async (req, res) => {
     const qrCode = await createAlipayQrcode(order);
     res.json({ qr_code: qrCode, order_no: order.order_no, amount: order.amount });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 错误脱敏：业务错误（如「支付宝配置不完整」等中文提示）原样透传；
+    // 支付 SDK/网关原始错误不泄露给客户端，由 sanitizeErrorMessage 记录真实错误
+    res.status(500).json({ error: sanitizeErrorMessage(err, 'payment/alipay/qrcode') });
   }
 });
 
@@ -129,7 +133,9 @@ router.get('/wechat/qrcode/:orderNo', authRequired, async (req, res) => {
     const codeUrl = await createWechatQrcode(order);
     res.json({ code_url: codeUrl, order_no: order.order_no, amount: order.amount });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 错误脱敏：业务错误（如「微信支付配置不完整」等中文提示）原样透传；
+    // 支付 SDK/网关原始错误不泄露给客户端，由 sanitizeErrorMessage 记录真实错误
+    res.status(500).json({ error: sanitizeErrorMessage(err, 'payment/wechat/qrcode') });
   }
 });
 
