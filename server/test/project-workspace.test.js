@@ -85,11 +85,21 @@ test('updateProject：deadline 字符串强转数字、空值清空为 null', as
   assert.equal(u2.deadline, null);
 });
 
-test('updateProject：completion_percent 非法值归零', async () => {
+test('updateProject：completion_percent 非法值抛 400（不静默归零）', async () => {
   const uid = await createTestUser(`proj-pct-${Date.now()}@example.com`);
   const p = createProject({ userId: uid, title: '完成度测试论文', completion_percent: 40 });
-  const u = updateProject(p.id, uid, { completion_percent: 'abc' });
-  assert.equal(u.completion_percent, 0);
+  // 负数 / 超上限 / 非数字均应拒绝（400），且不改变原值
+  assert.throws(() => updateProject(p.id, uid, { completion_percent: -5 }), (e) => e.statusCode === 400);
+  assert.throws(() => updateProject(p.id, uid, { completion_percent: 500 }), (e) => e.statusCode === 400);
+  assert.throws(() => updateProject(p.id, uid, { completion_percent: 'abc' }), (e) => e.statusCode === 400);
+  assert.equal(getProject(p.id, uid).completion_percent, 40);
+});
+
+test('updateProject：current_stage 白名单校验', async () => {
+  const uid = await createTestUser(`proj-stage-${Date.now()}@example.com`);
+  const p = createProject({ userId: uid, title: '阶段测试论文' });
+  assert.equal(updateProject(p.id, uid, { current_stage: 'writing' }).current_stage, 'writing');
+  assert.throws(() => updateProject(p.id, uid, { current_stage: 'hacked' }), (e) => e.statusCode === 400);
 });
 
 test('updateProject：忽略未授权字段（白名单）', async () => {

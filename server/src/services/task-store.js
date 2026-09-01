@@ -109,6 +109,31 @@ export function classifyTaskError(err) {
   return { code: 'internal_error', retryable: false, label: '系统内部错误' };
 }
 
+// 可重试的错误码（与 classifyTaskError 的 retryable 对应；只有这些失败允许一键重试）
+export const RETRYABLE_ERROR_CODES = new Set(['network_timeout', 'ai_unavailable']);
+
+// 重试前置校验（不重复扣费）：
+//   1) 任务属于当前用户；2) 仅 failed 且可重试；3) 原订单仍为 paid 且 service_status=failed；
+// 通过后 retry_count + 1（并发防重由调用方 claimOrderExecution 的原子 UPDATE 保证）。
+// 返回 { task, orderNo }，或 { error, status } 表示不可重试。
+export function prepareTaskRetry(taskId, userId) {
+  const task = getTaskDetail(taskId, userId);
+  if (!task) return { error: '任务不存在', status: 404 };
+  if (task.status !== 'failed') return { error: '仅失败任务可重试', status: 409 };
+  if (!RETRYABLE_ERROR_CODES.has(task.error_code)) {
+    return { error: '该错误类型不支持一键重试，请联系客服', status: 409 };
+  }
+  let orderNo = null;
+  if (task.order_id) {
+    const order = db.prepare('SELECT id, order_no, status, service_status FROM orders WHERE id = ?').get(task.order_id);
+    if (!order || order.status !== 'paid') return { error: '原订单不可用，请重新下单', status: 409 };
+    if (order.service_status !== 'failed') return { error: '订单服务状态异常，请重新下单', status: 409 };
+    orderNo = order.order_no;
+  }
+  db.prepare('UPDATE ai_tasks SET retry_count = retry_count + 1 WHERE id = ?').run(taskId);
+  return { task, orderNo };
+}
+
 // 查询任务历史（分页+筛选）
 export function listTasks({ userId, projectId = null, toolType = null, keyword = null, page = 1, size = 20 }) {
   const offset = (page - 1) * size;
@@ -198,6 +223,9 @@ export function cleanupOldDocs() {
 }
 
 // ========== 论文工作区 ==========
+
+// 论文主流程阶段白名单（与前端 PAPER_STAGES 对齐；current_stage 只允许这些值）
+export const PAPER_STAGES = ['create', 'materials', 'outline', 'literature', 'writing', 'review', 'defense', 'export'];
 
 // 确保用户存在对应题目的"自动工作区"：首次生成该题目的内容时自动创建（auto_created=1），
 // 未显式指定工作区的 AI 生成内容按题目自动归档，防止内容散落丢失。
@@ -290,9 +318,24 @@ export function updateProject(projectId, userId, updates) {
       continue;
     }
     if (col === 'completion_percent') {
+      // 完成度 0–100 整数：非法值抛 400（不静默归零），防客户端伪造任意进度
+      const pct = Number(v);
+      if (!Number.isInteger(pct) || pct < 0 || pct > 100) {
+        const e = new Error('完成度必须在 0–100 之间');
+        e.statusCode = 400;
+        throw e;
+      }
       sets.push(`${col} = ?`);
-      params.push(Number(v) || 0);
+      params.push(pct);
       continue;
+    }
+    if (col === 'current_stage') {
+      // 阶段白名单：只允许 PAPER_STAGES 中的值，防客户端伪造任意阶段
+      if (!PAPER_STAGES.includes(v)) {
+        const e = new Error('阶段不合法');
+        e.statusCode = 400;
+        throw e;
+      }
     }
     sets.push(`${col} = ?`);
     params.push(v);

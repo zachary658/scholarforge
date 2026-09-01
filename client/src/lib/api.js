@@ -410,6 +410,7 @@ export const api = {
   listTasks: (params) => request(`/tasks?${new URLSearchParams(params).toString()}`),
   getTask: (id) => request(`/tasks/${id}`),
   deleteTask: (id) => request(`/tasks/${id}`, { method: 'DELETE' }),
+  retryTask: (id) => request(`/tasks/${id}/retry`, { method: 'POST' }),
 };
 
 // 触发浏览器下载某个已生成的 Word 文档

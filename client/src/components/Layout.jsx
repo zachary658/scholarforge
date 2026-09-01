@@ -3,9 +3,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
 import { navGroups } from '../lib/navigation.js';
 import {
-  Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Receipt, Layers,
-  Logout, Shield, ArrowRight, Menu, X,
-  FileText, Activity, Cpu, Lock, ChartBar,
+  Logo, Grid, Pen, Book, BookOpen, Receipt, Layers,
+  Logout, Shield, ArrowRight, Menu, X, Lock, ChevronRight,
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 
@@ -14,15 +13,8 @@ const NAV_ICONS = {
   grid: Grid,
   layers: Layers,
   pen: Pen,
-  fileword: FileWord,
   book: Book,
-  filetext: FileText,
-  activity: Activity,
-  shield: Shield,
-  globe: Globe,
   bookopen: BookOpen,
-  cpu: Cpu,
-  chartbar: ChartBar,
   receipt: Receipt,
 };
 
@@ -31,6 +23,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const [openKey, setOpenKey] = useState(null); // 当前展开的一级入口（手风琴）
 
   // 路由切换时关闭移动端侧边栏
   useEffect(() => {
@@ -72,37 +65,62 @@ export default function Layout() {
         </button>
       </div>
 
-      <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-2">
-        {navGroups.map((group) => (
-          <div key={group.label}>
-            <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              {group.label}
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+        {navGroups.map((group) => {
+          const Icon = NAV_ICONS[group.icon];
+          // 直接入口（工作台 / 我的论文）
+          if (group.to) {
+            return (
+              <NavLink
+                key={group.key}
+                to={group.to}
+                end={group.end}
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                    isActive ? 'bg-accent-50 text-accent' : 'text-slate-600 hover:bg-slate-50 hover:text-ink'
+                  }`
+                }
+              >
+                {Icon && <Icon className="h-[18px] w-[18px]" />}
+                {group.label}
+              </NavLink>
+            );
+          }
+          // 可展开分组：默认折叠，点击展开该分类下的二级工具
+          const open = openKey === group.key;
+          return (
+            <div key={group.key}>
+              <button
+                onClick={() => setOpenKey(open ? null : group.key)}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-ink"
+              >
+                {Icon && <Icon className="h-[18px] w-[18px]" />}
+                <span className="flex-1 text-left">{group.label}</span>
+                <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+              </button>
+              {open && (
+                <div className="mt-0.5 space-y-0.5 border-l border-slate-100 pl-3 ml-4">
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.end}
+                      onClick={() => setSidebarOpen(false)}
+                      className={({ isActive }) =>
+                        `block rounded-lg px-3 py-2 text-sm transition ${
+                          isActive ? 'bg-accent-50 text-accent' : 'text-slate-500 hover:bg-slate-50 hover:text-ink'
+                        }`
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="space-y-0.5">
-              {group.items.map((item) => {
-                const Icon = NAV_ICONS[item.icon];
-                return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  onClick={() => setSidebarOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-                      isActive
-                        ? 'bg-accent-50 text-accent'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-ink'
-                    }`
-                  }
-                >
-                  {Icon && <Icon className="h-[18px] w-[18px]" />}
-                  {item.label}
-                </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* 用户信息 */}

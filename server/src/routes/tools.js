@@ -16,7 +16,7 @@ import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAut
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import { claimOrderExecution } from '../services/order-claim.js';
-import { recordOrderEvent } from '../services/order-state.js';
+import { transitionServiceToFailed, transitionServiceToCompleted } from '../services/order-state.js';
 import db from '../db.js';
 
 const router = Router();
@@ -143,7 +143,7 @@ function bizError(message) {
 // generateDocxOptions: 写作类/开题报告等需要输出 Word 时传入
 // generatePptxOptions: 答辩等需要输出 .pptx 时传入（与 generateDocxOptions 互斥）
 // transformContent: 可选，对 AI 输出做后处理（如引用/图表占位符替换），在 docx/pptx 生成前执行
-async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null, materialIds = null }) {
+export async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null, materialIds = null }) {
   // 安全：校验工作区归属（防跨用户上下文注入），非本人工作区直接拒绝
   if (projectId && !isProjectOwned(userId, projectId)) {
     throw bizError('无权访问该工作区');
@@ -230,14 +230,7 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     // 失败标记订单服务失败（仅当订单仍处于 processing，防覆盖已完成状态；failed 可重试）。
     // 服务失败绝不改变支付状态（orders.status 保持 paid），二者为独立维度。
     if (order) {
-      const fr = db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
-      if (fr.changes === 1) {
-        recordOrderEvent({
-          orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
-          field: 'service_status', fromStatus: 'processing', toStatus: 'failed',
-          operatorId: null, operatorName: 'system', reason: 'AI 执行失败',
-        });
-      }
+      transitionServiceToFailed(order.id, { reason: 'AI 执行失败' });
     }
     // 记录失败日志
     try {
@@ -362,14 +355,7 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
 
   // 标记订单服务完成（仅当订单仍处于 processing，防并发场景下失败/完成互相覆盖）
   if (order) {
-    const cr = db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
-    if (cr.changes === 1) {
-      recordOrderEvent({
-        orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
-        field: 'service_status', fromStatus: 'processing', toStatus: 'completed',
-        operatorId: null, operatorName: 'system', reason: '生成完成',
-      });
-    }
+    transitionServiceToCompleted(order.id, { taskId, reason: '生成完成' });
   }
 
   return {
@@ -747,7 +733,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
     });
 
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
+      transitionServiceToCompleted(order.id, { taskId });
     }
 
     res.json({
@@ -771,7 +757,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         : `已检索 ${result.references.length} 篇相关论文并提取研究框架，可基于此大纲生成分章节论文`,
     });
   } catch (err) {
-    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+    if (order) transitionServiceToFailed(order.id);
     res.status(err.statusCode || 500).json({ error: '智能写作失败：' + err.message });
   }
 });
@@ -1085,7 +1071,7 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
       status: 'success',
     });
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
+      transitionServiceToCompleted(order.id, { taskId });
     }
     logUsage({
       userId: req.user.id,
@@ -1109,7 +1095,7 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
       orderNo: order?.order_no || null,
     });
   } catch (err) {
-    if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+    if (order) transitionServiceToFailed(order.id);
     res.status(err.statusCode || 500).json({ error: '表达优化失败：' + err.message });
   }
 });
@@ -1346,7 +1332,7 @@ async function handleDocRewrite(req, res, tool) {
     });
 
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+      transitionServiceToCompleted(order.id);
     }
 
     res.json({
@@ -1359,7 +1345,7 @@ async function handleDocRewrite(req, res, tool) {
     });
   } catch (err) {
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+      transitionServiceToFailed(order.id);
     }
     logger.error('tools', `文档改写失败: ${err.message}`);
     res.status(err.statusCode || 500).json({ error: '文档处理失败：' + err.message });

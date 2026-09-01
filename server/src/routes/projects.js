@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import {
   createProject, getProject, listProjects, updateProject, deleteProject,
-  buildProjectContext, listTasks, getTaskDetail, deleteTask, confirmOutline,
+  buildProjectContext, listTasks, getTaskDetail, deleteTask, confirmOutline, PAPER_STAGES,
 } from '../services/task-store.js';
 import {
   startChapterGeneration, regenerateChapter, editChapter, mergeChapters, isGenerating,
@@ -78,6 +78,17 @@ router.put('/:id', authRequired, (req, res) => {
     } else {
       const n = Number(updates.deadline);
       updates.deadline = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    }
+  }
+  // 论文阶段白名单：current_stage 只允许 PAPER_STAGES 中的值（禁止客户端伪造任意阶段）
+  if (updates.current_stage != null && !PAPER_STAGES.includes(updates.current_stage)) {
+    return res.status(400).json({ error: '阶段不合法' });
+  }
+  // 完成度校验：0–100 整数，非法直接 400（不静默归零）
+  if (updates.completion_percent != null) {
+    const pct = Number(updates.completion_percent);
+    if (!Number.isInteger(pct) || pct < 0 || pct > 100) {
+      return res.status(400).json({ error: '完成度必须在 0–100 之间' });
     }
   }
   if (updates.outline) {

@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
@@ -29,21 +28,6 @@ const ERROR_CODE_META = {
   internal_error: { label: '系统内部错误', retryable: false, hint: '请联系客服处理' },
 };
 
-// 工具类型 → 页面路由（重试时跳转回原工具页）
-const TOOL_PATH = {
-  writing: '/app/writing',
-  proposal: '/app/proposal',
-  polish: '/app/polish',
-  translate: '/app/polish',
-  grammar: '/app/polish',
-  rewrite: '/app/rewrite',
-  ai_reduce: '/app/ai-reduce',
-  literature_review: '/app/literature-review',
-  task_book: '/app/task-book',
-  defense: '/app/defense',
-  journal: '/app/journal',
-};
-
 function errorMeta(code) {
   return ERROR_CODE_META[code] || ERROR_CODE_META.internal_error;
 }
@@ -58,7 +42,6 @@ function fmtDate(ts) {
 export default function MyTasks() {
   const toast = useToast();
   const confirm = useConfirm();
-  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -68,6 +51,7 @@ export default function MyTasks() {
   const [toolType, setToolType] = useState('');
   const [detail, setDetail] = useState(null); // 查看详情的任务
   const [retentionDays, setRetentionDays] = useState(30);
+  const [retryingId, setRetryingId] = useState(null); // 正在重试的任务 id
   const loadSeqRef = useRef(0); // 列表请求序号：旧响应若已被更新请求超越则丢弃
 
   const load = useCallback(async () => {
@@ -135,16 +119,18 @@ export default function MyTasks() {
     }
   };
 
-  // 重新执行：跳回原工具页并携带原订单号（后端沿用原订单，不重复扣费）
-  const handleRetry = (task) => {
-    const path = TOOL_PATH[task.tool_type];
-    if (!path) {
-      toast.error('该任务类型暂不支持一键重试，请前往对应工具重新提交');
-      return;
+  // 重新执行：调用后端 /tasks/:id/retry 恢复原参数并自动重跑（沿用原订单，不重复扣费）
+  const handleRetry = async (task) => {
+    setRetryingId(task.id);
+    try {
+      await api.retryTask(task.id);
+      toast.success('已重新执行，结果已保存到任务列表');
+      load();
+    } catch (err) {
+      toast.error('重试失败：' + err.message);
+    } finally {
+      setRetryingId(null);
     }
-    const qs = task.order_no ? `?orderNo=${encodeURIComponent(task.order_no)}` : '';
-    navigate(path + qs);
-    toast.info('已回到原工具，重新提交将沿用原订单、不重复扣费');
   };
 
   return (
@@ -261,10 +247,11 @@ export default function MyTasks() {
                   {t.status === 'failed' && errorMeta(t.error_code).retryable && (
                     <button
                       onClick={() => handleRetry(t)}
-                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent hover:bg-accent-50"
+                      disabled={retryingId === t.id}
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent hover:bg-accent-50 disabled:opacity-50"
                       title="重新执行"
                     >
-                      <Refresh className="h-3.5 w-3.5" /> 重新执行
+                      <Refresh className={`h-3.5 w-3.5 ${retryingId === t.id ? 'animate-spin' : ''}`} /> {retryingId === t.id ? '重试中…' : '重新执行'}
                     </button>
                   )}
                   {t.status === 'failed' && !errorMeta(t.error_code).retryable && (

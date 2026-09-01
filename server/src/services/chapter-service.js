@@ -7,6 +7,7 @@ import { runAI } from '../ai-service.js';
 import { getProject } from './task-store.js';
 import { now } from '../utils.js';
 import { claimOrderExecution } from './order-claim.js';
+import { transitionServiceToCompleted, transitionServiceToFailed } from './order-state.js';
 import logger from '../logger.js';
 
 // 蒸馏产物注入：分章节生成消费工作区 sources（smart-writing 持久化的框架/文献/数据/表格）
@@ -176,7 +177,7 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
   const hasPending = chapters.some((c) => c.status !== 'done');
   if (!hasPending) {
     // 若订单正处于本次生成会话中（processing），补齐完成状态，防止残留 processing 被复用于其他项目
-    db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
+    transitionServiceToCompleted(bill.order.id);
     return { queued: false, chapters };
   }
 
@@ -208,13 +209,13 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
         saveChapters(projectId, cur, bill.order.id);
       }
       // 全部完成：标记订单服务完成（仅当仍处于 processing，防并发覆盖）
-      db.prepare("UPDATE orders SET service_status = 'completed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
+      transitionServiceToCompleted(bill.order.id);
     } catch (err) {
       logger.error('chapter', `章节生成失败 project=${projectId}: ${err.message}`);
       const cur = getChapters(projectId).map((c) => (c.status === 'processing' ? { ...c, status: 'failed' } : c));
       saveChapters(projectId, cur);
       // failed 状态允许用户重新发起生成（重试），不再永久锁死订单
-      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(bill.order.id);
+      transitionServiceToFailed(bill.order.id);
     } finally {
       running.delete(projectId);
     }

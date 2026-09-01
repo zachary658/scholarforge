@@ -9,7 +9,7 @@ import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice, get
 import { getFeatureCashPrice, materialFee } from './billing.js';
 import { computeCourseQuote } from './course-quote.js';
 import { now, datePrefix } from '../utils.js';
-import { assertTransition, recordOrderEvent, StateTransitionError, ORDER_STATUS } from './order-state.js';
+import { assertTransition, StateTransitionError, ORDER_STATUS, transitionStatus, transitionOrderToPaid } from './order-state.js';
 import { AlipaySdk } from 'alipay-sdk';
 import { Wechatpay, Aes, Rsa } from 'wechatpay-axios-plugin';
 
@@ -223,14 +223,15 @@ export function adminQuoteOrder(orderId, quotedPrice, quoteNote = '') {
   if (!order) throw new Error('订单不存在');
   if (order.type !== 'feature') throw new Error('仅功能订单支持报价');
   if (!['awaiting_quote', 'quoted'].includes(order.status)) throw new Error(`订单状态 ${order.status}，不能报价`);
-  db.prepare('UPDATE orders SET quoted_price = ?, quote_note = ?, amount = ?, status = ? WHERE id = ?')
-    .run(price, quoteNote, price, 'quoted', orderId);
-  // 记录报价状态事件
-  recordOrderEvent({
-    orderId: order.id, orderNo: order.order_no, domain: 'order', refType: 'orders', refId: order.id,
-    field: 'status', fromStatus: order.status, toStatus: 'quoted', operatorId: null, operatorName: 'admin',
-    reason: `管理员报价 ¥${price}`,
-  });
+  db.prepare('UPDATE orders SET quoted_price = ?, quote_note = ?, amount = ? WHERE id = ?')
+    .run(price, quoteNote, price, orderId);
+  // 状态变更走统一状态机：awaiting_quote → quoted（已 quoted 时仅更新报价，跳过）
+  if (order.status !== 'quoted') {
+    transitionStatus({
+      domain: 'order', table: 'orders', recordId: order.id, field: 'status', toStatus: 'quoted',
+      orderId: order.id, orderNo: order.order_no, operatorName: 'admin', reason: `管理员报价 ¥${price}`,
+    });
+  }
   return getOrderByNo(order.order_no);
 }
 
@@ -243,8 +244,9 @@ export function initiateOrderPayment(orderNo, paymentMethod) {
   if (order.quoted_price == null || order.quoted_price <= 0) throw new Error('订单尚未报价');
 
   const useChannel = resolveChannel(paymentMethod);
-  db.prepare('UPDATE orders SET amount = ?, payment_method = ?, payment_channel = ?, status = ? WHERE order_no = ?')
-    .run(order.quoted_price, useChannel, useChannel, 'quoted', orderNo);
+  // 状态仍是 quoted（此处仅回填支付渠道与金额，不改变状态）
+  db.prepare('UPDATE orders SET amount = ?, payment_method = ?, payment_channel = ? WHERE order_no = ?')
+    .run(order.quoted_price, useChannel, useChannel, orderNo);
 
   const updated = getOrder(orderNo);
   const payParams = buildPaymentParams(updated, useChannel);
@@ -321,114 +323,119 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
     if (dup) throw new Error(`交易号 ${transactionId} 已绑定订单 ${dup.order_no}，疑似重复回调`);
   }
 
-  const tx = db.transaction(() => {
-    const r = db.prepare(
-      `UPDATE orders SET status = 'paid', paid_at = ?, transaction_id = COALESCE(?, transaction_id),
-       payment_channel = COALESCE(?, payment_channel), service_status = ? WHERE order_no = ? AND status NOT IN ('paid', 'completed', 'cancelled', 'refunded')`
-    ).run(now(), transactionId, channel, 'pending', orderNo);
-    if (r.changes === 0) {
-      throw new StateTransitionError(`订单状态已变更，当前状态：${getOrder(orderNo).status}`);
-    }
-    // 记录支付状态事件（统一状态机时间线）
-    recordOrderEvent({
-      orderId: order.id,
-      orderNo: order.order_no,
-      domain: 'order',
-      refType: 'orders',
-      refId: order.id,
-      field: 'status',
-      fromStatus: order.status,
-      toStatus: 'paid',
-      operatorId: null,
-      operatorName: channel || 'payment',
-      reason: transactionId ? `支付成功，交易号 ${transactionId}` : '支付成功',
-    });
-
-    // 功能订单：固定价订单进入服务队列（service_status=processing，生成由工具调用触发）
-    if (order.type === 'feature') {
-      // 无需额外发放权益，服务在 tools 路由依据订单执行
-    }
-    // 课程订单 → 记录已购课程
-    if (order.type === 'course') {
-      const meta = JSON.parse(order.metadata || '{}');
-      if (meta.course_id) {
-        grantCourse(order.user_id, meta.course_id, meta.validity_days, order.id, meta.requirements ? JSON.stringify(meta.requirements) : null);
-      }
-    }
-    // 毕业作品订单 → 标记已支付并关联支付订单
-    if (order.type === 'graduation') {
-      const meta = JSON.parse(order.metadata || '{}');
-      if (meta.gp_order_id) {
-        const gp = db.prepare('SELECT user_id, status, quote_status, quoted_price FROM graduation_project_orders WHERE id = ?').get(meta.gp_order_id);
-        if (!gp) throw new Error('毕业作品订单不存在，支付已取消');
-        if (gp.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
-        if (gp.status !== 'pending') throw new Error(`毕业作品订单状态 ${gp.status}，不能支付`);
-        if (gp.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
-        if (gp.quoted_price == null || Number(gp.quoted_price) !== Number(order.amount)) {
-          throw new Error('报价已变更，请重新发起支付');
+  // 统一状态机：状态更新 + 事件 + 业务副作用在同一事务内原子完成
+  transitionOrderToPaid(order, {
+    transactionId,
+    channel,
+    effects: () => {
+      // 课程订单 → 记录已购课程
+      if (order.type === 'course') {
+        const meta = JSON.parse(order.metadata || '{}');
+        if (meta.course_id) {
+          grantCourse(order.user_id, meta.course_id, meta.validity_days, order.id, meta.requirements ? JSON.stringify(meta.requirements) : null);
         }
-        db.prepare('UPDATE graduation_project_orders SET status = ?, order_id = ? WHERE id = ?').run('paid', order.id, meta.gp_order_id);
       }
-    }
-    // 专利申请 / 期刊发表订单 → 标记已支付并关联支付订单
-    if (order.type === 'patent' || order.type === 'publication') {
-      const meta = JSON.parse(order.metadata || '{}');
-      const refId = order.type === 'patent' ? meta.patent_order_id : meta.publication_order_id;
-      const table = order.type === 'patent' ? 'patent_orders' : 'publication_orders';
-      const label = order.type === 'patent' ? '专利申请' : '期刊发表';
-      if (refId) {
-        const svc = db.prepare(`SELECT user_id, status, quote_status, quoted_price FROM ${table} WHERE id = ?`).get(refId);
-        if (!svc) throw new Error(`${label}服务订单不存在，支付已取消`);
-        if (svc.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
-        if (svc.status !== 'pending') throw new Error(`${label}订单状态 ${svc.status}，不能支付`);
-        if (svc.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
-        if (svc.quoted_price == null || Number(svc.quoted_price) !== Number(order.amount)) {
-          throw new Error('报价已变更，请重新发起支付');
+      // 毕业作品订单 → 标记已支付并关联支付订单
+      if (order.type === 'graduation') {
+        const meta = JSON.parse(order.metadata || '{}');
+        if (meta.gp_order_id) {
+          const gp = db.prepare('SELECT user_id, status, quote_status, quoted_price FROM graduation_project_orders WHERE id = ?').get(meta.gp_order_id);
+          if (!gp) throw new Error('毕业作品订单不存在，支付已取消');
+          if (gp.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
+          if (gp.status !== 'pending') throw new Error(`毕业作品订单状态 ${gp.status}，不能支付`);
+          if (gp.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
+          if (gp.quoted_price == null || Number(gp.quoted_price) !== Number(order.amount)) {
+            throw new Error('报价已变更，请重新发起支付');
+          }
+          db.prepare('UPDATE graduation_project_orders SET status = ?, order_id = ? WHERE id = ?').run('paid', order.id, meta.gp_order_id);
         }
-        db.prepare(`UPDATE ${table} SET status = ?, order_id = ? WHERE id = ?`).run('paid', order.id, refId);
       }
-    }
+      // 专利申请 / 期刊发表订单 → 标记已支付并关联支付订单
+      if (order.type === 'patent' || order.type === 'publication') {
+        const meta = JSON.parse(order.metadata || '{}');
+        const refId = order.type === 'patent' ? meta.patent_order_id : meta.publication_order_id;
+        const table = order.type === 'patent' ? 'patent_orders' : 'publication_orders';
+        const label = order.type === 'patent' ? '专利申请' : '期刊发表';
+        if (refId) {
+          const svc = db.prepare(`SELECT user_id, status, quote_status, quoted_price FROM ${table} WHERE id = ?`).get(refId);
+          if (!svc) throw new Error(`${label}服务订单不存在，支付已取消`);
+          if (svc.user_id !== order.user_id) throw new Error('订单归属异常，支付已取消');
+          if (svc.status !== 'pending') throw new Error(`${label}订单状态 ${svc.status}，不能支付`);
+          if (svc.quote_status !== 'approved') throw new Error('报价未通过审批，支付已取消');
+          if (svc.quoted_price == null || Number(svc.quoted_price) !== Number(order.amount)) {
+            throw new Error('报价已变更，请重新发起支付');
+          }
+          db.prepare(`UPDATE ${table} SET status = ?, order_id = ? WHERE id = ?`).run('paid', order.id, refId);
+        }
+      }
+    },
   });
-  tx();
 
   return { order: getOrder(orderNo) };
 }
 
-// 关闭超时未支付订单
+// 关闭超时未支付订单（走统一状态机，逐单记录事件；并发下状态已变则跳过）
 export function closeExpiredOrders() {
   const expired = db.prepare(
     `SELECT id, order_no, status FROM orders
      WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND expires_at IS NOT NULL AND expires_at < ?`
   ).all(now());
-  if (expired.length === 0) return 0;
-  const r = db.prepare(
-    `UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND expires_at IS NOT NULL AND expires_at < ?`
-  ).run(now());
+  let closed = 0;
   for (const o of expired) {
-    recordOrderEvent({
-      orderId: o.id, orderNo: o.order_no, domain: 'order', refType: 'orders', refId: o.id,
-      field: 'status', fromStatus: o.status, toStatus: 'cancelled', operatorId: null, operatorName: 'system',
-      reason: '订单超时未支付，自动关闭',
-    });
+    try {
+      transitionStatus({
+        domain: 'order', table: 'orders', recordId: o.id, field: 'status', toStatus: 'cancelled',
+        orderId: o.id, orderNo: o.order_no, operatorName: 'system', reason: '订单超时未支付，自动关闭',
+      });
+      closed++;
+    } catch (err) {
+      if (!(err instanceof StateTransitionError)) throw err;
+    }
   }
-  return r.changes;
+  return closed;
 }
 
 // 报价变更/审批状态变化时，作废该毕业作品订单关联的所有待支付 orders
 export function closePendingGraduationOrders(gpOrderId) {
   if (!gpOrderId) return 0;
-  return db.prepare(
-    "UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND type = 'graduation' AND target = ?"
-  ).run(String(gpOrderId)).changes;
+  const rows = db.prepare(
+    "SELECT id, order_no, status FROM orders WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND type = 'graduation' AND target = ?"
+  ).all(String(gpOrderId));
+  let closed = 0;
+  for (const o of rows) {
+    try {
+      transitionStatus({
+        domain: 'order', table: 'orders', recordId: o.id, field: 'status', toStatus: 'cancelled',
+        orderId: o.id, orderNo: o.order_no, operatorName: 'system', reason: '报价变更，待支付订单作废',
+      });
+      closed++;
+    } catch (err) {
+      if (!(err instanceof StateTransitionError)) throw err;
+    }
+  }
+  return closed;
 }
 
 // 报价变更/审批状态变化时，作废该专利/期刊服务订单关联的所有待支付 orders（对齐 graduation 实现）
 // type 为 'patent' / 'publication'，target 为订单关联的服务单 ID（orders.target）
 export function closePendingServiceOrders(type, target) {
   if (!type || !target) return 0;
-  return db.prepare(
-    "UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'quoted') AND type = ? AND target = ?"
-  ).run(String(type), String(target)).changes;
+  const rows = db.prepare(
+    "SELECT id, order_no, status FROM orders WHERE status IN ('pending', 'quoted') AND type = ? AND target = ?"
+  ).all(String(type), String(target));
+  let closed = 0;
+  for (const o of rows) {
+    try {
+      transitionStatus({
+        domain: 'order', table: 'orders', recordId: o.id, field: 'status', toStatus: 'cancelled',
+        orderId: o.id, orderNo: o.order_no, operatorName: 'system', reason: '报价变更，待支付订单作废',
+      });
+      closed++;
+    } catch (err) {
+      if (!(err instanceof StateTransitionError)) throw err;
+    }
+  }
+  return closed;
 }
 
 // ========== 支付宝：使用官方 alipay-sdk（电脑网站支付/当面付） ==========

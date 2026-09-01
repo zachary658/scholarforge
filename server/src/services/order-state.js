@@ -6,6 +6,7 @@
 //   4. 提供历史状态值的迁移兼容映射（订单 status 历史曾混入 processing/completed）
 import db from '../db.js';
 import { now } from '../utils.js';
+import { getSetting } from '../config-store.js';
 
 // ===== 状态常量 =====
 // 订单主状态（orders.status）：支付生命周期。pending 即「待支付」。
@@ -195,18 +196,109 @@ export function transitionStatus({
     where += ` AND ${extraWhere[0]}`;
     params = params.concat(extraWhere.slice(1));
   }
-  const r = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${where}`).run(toStatus, ...params);
-  if (r.changes === 0) {
-    throw new StateTransitionError(`状态已变更（并发冲突）：${from}`);
-  }
 
-  // 记录事件
-  recordOrderEvent({
-    orderId, orderNo, domain, refType, refId: recordId, field: col,
-    fromStatus: from, toStatus, operatorId, operatorName, reason,
+  // 更新 + 事件写入在同一 SQLite 事务内：任一失败则整体回滚，杜绝「状态已变但无时间线」。
+  const tx = db.transaction(() => {
+    const r = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${where}`).run(toStatus, ...params);
+    if (r.changes === 0) {
+      throw new StateTransitionError(`状态已变更（并发冲突）：${from}`);
+    }
+    recordOrderEvent({
+      orderId, orderNo, domain, refType, refId: recordId, field: col,
+      fromStatus: from, toStatus, operatorId, operatorName, reason,
+    });
+    return { from, to: toStatus };
   });
+  return tx();
+}
 
-  return { from, to: toStatus };
+// ===== orders 表专用状态转换（唯一入口，禁止其他文件直接 UPDATE orders.status / service_status）=====
+
+// 订单卡死判定超时：processing 超过该时长视为「卡死」，允许抢占重试。
+function getOrderClaimTimeoutSec() {
+  const min = parseInt(getSetting('order_claim_timeout_min', '30'), 10);
+  return (Number.isFinite(min) && min > 0 ? min : 30) * 60;
+}
+
+// 服务状态 → processing：原子抢占执行权（pending/failed → processing；processing 超时也允许抢占）。
+// 返回 true 表示本调用获得执行权；false 表示订单正被其他请求处理中。
+export function transitionServiceToProcessing(order, { projectId = null } = {}) {
+  if (!order) return true;
+  const cur = db.prepare('SELECT service_status AS s FROM orders WHERE id = ?').get(order.id);
+  const from = cur ? cur.s : null;
+  const tx = db.transaction(() => {
+    const r = db.prepare(
+      `UPDATE orders SET service_status = 'processing', updated_at = ?, project_id = COALESCE(?, project_id)
+        WHERE id = ? AND (service_status IN ('pending', 'failed')
+               OR (service_status = 'processing' AND (updated_at IS NULL OR updated_at < ?)))`
+    ).run(now(), projectId, order.id, now() - getOrderClaimTimeoutSec());
+    if (r.changes !== 1) return false;
+    recordOrderEvent({
+      orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
+      field: 'service_status', fromStatus: from, toStatus: 'processing',
+      operatorId: null, operatorName: 'system',
+      reason: from === 'failed' ? '失败后重新执行' : '开始执行',
+    });
+    return true;
+  });
+  return tx();
+}
+
+// 服务状态 → failed：仅当当前为 processing（并发下跳过不抛错）。
+export function transitionServiceToFailed(orderId, { reason = 'AI 执行失败' } = {}) {
+  const tx = db.transaction(() => {
+    const r = db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(orderId);
+    if (r.changes !== 1) return false;
+    const o = db.prepare('SELECT order_no FROM orders WHERE id = ?').get(orderId);
+    recordOrderEvent({
+      orderId, orderNo: o?.order_no ?? null, domain: 'service', refType: 'orders', refId: orderId,
+      field: 'service_status', fromStatus: 'processing', toStatus: 'failed',
+      operatorId: null, operatorName: 'system', reason,
+    });
+    return true;
+  });
+  return tx();
+}
+
+// 服务状态 → completed：仅当当前为 processing（可附带 task_id）。
+export function transitionServiceToCompleted(orderId, { taskId = null, reason = '生成完成' } = {}) {
+  const tx = db.transaction(() => {
+    const r = db.prepare(
+      "UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'"
+    ).run(taskId, orderId);
+    if (r.changes !== 1) return false;
+    const o = db.prepare('SELECT order_no FROM orders WHERE id = ?').get(orderId);
+    recordOrderEvent({
+      orderId, orderNo: o?.order_no ?? null, domain: 'service', refType: 'orders', refId: orderId,
+      field: 'service_status', fromStatus: 'processing', toStatus: 'completed',
+      operatorId: null, operatorName: 'system', reason,
+    });
+    return true;
+  });
+  return tx();
+}
+
+// 订单 → paid（支付成功）：原子地把状态改为 paid 并记录事件；effects 回调在事务内执行，
+// 保证「状态更新 + 业务副作用（发课程/关联子订单）」原子一致。
+export function transitionOrderToPaid(order, { transactionId = null, channel = null, effects = null } = {}) {
+  const tx = db.transaction(() => {
+    const r = db.prepare(
+      `UPDATE orders SET status = 'paid', paid_at = ?, transaction_id = COALESCE(?, transaction_id),
+       payment_channel = COALESCE(?, payment_channel), service_status = 'pending'
+       WHERE order_no = ? AND status NOT IN ('paid', 'completed', 'cancelled', 'refunded')`
+    ).run(now(), transactionId, channel, order.order_no);
+    if (r.changes === 0) {
+      throw new StateTransitionError(`订单状态已变更，当前状态：${db.prepare('SELECT status FROM orders WHERE order_no = ?').get(order.order_no)?.status}`);
+    }
+    recordOrderEvent({
+      orderId: order.id, orderNo: order.order_no, domain: 'order', refType: 'orders', refId: order.id,
+      field: 'status', fromStatus: order.status, toStatus: 'paid',
+      operatorId: null, operatorName: channel || 'payment',
+      reason: transactionId ? `支付成功，交易号 ${transactionId}` : '支付成功',
+    });
+    if (typeof effects === 'function') effects();
+  });
+  tx();
 }
 
 export default {
@@ -217,4 +309,8 @@ export default {
   assertTransition,
   recordOrderEvent,
   transitionStatus,
+  transitionServiceToProcessing,
+  transitionServiceToFailed,
+  transitionServiceToCompleted,
+  transitionOrderToPaid,
 };
