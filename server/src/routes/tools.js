@@ -12,10 +12,11 @@ import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
 import { isFreeUnlimitedFeature, materialFee, materialBillableTokens, MATERIAL_MAX_CHARS_PER, MATERIAL_TOTAL_CHARS_MAX } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned } from '../services/task-store.js';
+import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned, classifyTaskError } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import { claimOrderExecution } from '../services/order-claim.js';
+import { recordOrderEvent } from '../services/order-state.js';
 import db from '../db.js';
 
 const router = Router();
@@ -226,9 +227,17 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     const outCheck = await checkContent(aiResult.content);
     if (!outCheck.safe) throw new Error(outCheck.reason);
   } catch (err) {
-    // 失败标记订单服务失败（仅当订单仍处于 processing，防覆盖已完成状态；failed 可重试）
+    // 失败标记订单服务失败（仅当订单仍处于 processing，防覆盖已完成状态；failed 可重试）。
+    // 服务失败绝不改变支付状态（orders.status 保持 paid），二者为独立维度。
     if (order) {
-      db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+      const fr = db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
+      if (fr.changes === 1) {
+        recordOrderEvent({
+          orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
+          field: 'service_status', fromStatus: 'processing', toStatus: 'failed',
+          operatorId: null, operatorName: 'system', reason: 'AI 执行失败',
+        });
+      }
     }
     // 记录失败日志
     try {
@@ -247,6 +256,29 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
         message: err.message,
       });
     } catch {}
+    // 保存失败任务（带错误分类码，供任务中心展示「重新执行」或「联系客服」）
+    try {
+      const cls = classifyTaskError(err);
+      saveTask({
+        userId,
+        projectId: projectId || null,
+        toolType,
+        action,
+        inputText: inputText || JSON.stringify(params).slice(0, 2000),
+        outputText: '',
+        params: (() => { const p = { ...params }; delete p.context; return p; })(),
+        contextSummary,
+        modelName: '',
+        tokens: 0,
+        chargeType,
+        amount,
+        orderId: order?.id || null,
+        status: 'failed',
+        errorCode: cls.code,
+      });
+    } catch (e) {
+      logger.error('tools', `failed-task-save failed: ${e.message}`);
+    }
     throw err;
   }
 
@@ -330,7 +362,14 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
 
   // 标记订单服务完成（仅当订单仍处于 processing，防并发场景下失败/完成互相覆盖）
   if (order) {
-    db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
+    const cr = db.prepare("UPDATE orders SET service_status = 'completed', task_id = ? WHERE id = ? AND service_status = 'processing'").run(taskId, order.id);
+    if (cr.changes === 1) {
+      recordOrderEvent({
+        orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
+        field: 'service_status', fromStatus: 'processing', toStatus: 'completed',
+        operatorId: null, operatorName: 'system', reason: '生成完成',
+      });
+    }
   }
 
   return {
@@ -349,6 +388,66 @@ async function executeWithBilling({ userId, featureKey, toolType, action, params
     retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
     orderNo: order?.order_no || null,
   };
+}
+
+// ========== 统一文档生成器（P1-7）==========
+// 开题报告/文献综述/任务书/答辩/期刊论文等"提交参数 → AI 生成 → 输出文档"类工具，
+// 共享同一套模板加载、计费执行与标准响应，消除各端点间的重复代码。
+
+// 加载格式模板：仅本人上传或全局共享的模板可用；未传或无权返回 null
+function loadTemplate(templateId, userId) {
+  if (!templateId) return null;
+  return db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(templateId, userId);
+}
+
+// 执行文档类工具并返回标准响应（含 docx/pptx 生成；错误前缀用于统一报错文案）
+async function runDocumentTool(req, res, {
+  featureKey,
+  toolType,
+  action,
+  params,
+  inputText,
+  docTitle,
+  generateDocxOptions = null,
+  generatePptxOptions = null,
+  errorPrefix = '生成',
+}) {
+  try {
+    const result = await executeWithBilling({
+      userId: req.user.id,
+      featureKey,
+      toolType,
+      action,
+      params,
+      projectId: req.body?.projectId || null,
+      inputText,
+      generateDocxOptions,
+      generatePptxOptions,
+      orderNo: req.body?.orderNo || null,
+      materialIds: (req.body && req.body.material_ids) || null,
+    });
+    if (result.needOrder) {
+      return res.json({ ...result });
+    }
+    res.json({
+      content: result.content,
+      title: docTitle,
+      model: result.model,
+      tokens: result.tokens,
+      doc: result.doc,
+      chargeType: result.chargeType,
+      amount: result.amount,
+      orderId: result.orderId,
+      taskId: result.taskId,
+      projectId: result.projectId,
+      autoProject: result.autoProject,
+      autoProjectTitle: result.autoProjectTitle,
+      retention_days: result.retention_days,
+      orderNo: result.orderNo,
+    });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: `${errorPrefix}失败：` + err.message });
+  }
 }
 
 // ========== AI 论文写作（输出 Word） ==========
@@ -679,52 +778,22 @@ router.post('/smart-writing', authRequired, async (req, res) => {
 
 // ========== 开题报告撰写（输出 Word） ==========
 router.post('/proposal', authRequired, async (req, res) => {
-  const { topic, field, direction, keywords, objective, method, innovation, template_id, projectId, orderNo } = req.body || {};
+  const { topic, field, direction, keywords, objective, method, innovation, template_id } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   if (!field) return res.status(400).json({ error: '请选择学科领域' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(objective, MAX_INPUT_CHARS, '研究目标') || checkTextLen(method, MAX_INPUT_CHARS, '研究方法');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
-  const featureKey = 'proposal';
-
-  let template = null;
-  if (template_id) {
-    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
-  }
-
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey,
-      toolType: 'proposal',
-      action: 'proposal',
-      params: { topic, field, direction, keywords, objective, method, innovation },
-      projectId: projectId || null,
-      inputText: `【开题报告】题目：${topic} | 学科：${field}`,
-      generateDocxOptions: {
-        title: `${topic}开题报告`,
-        template,
-      },
-      orderNo: orderNo || null,
-      materialIds: (req.body && req.body.material_ids) || null,
-    });
-    if (result.needOrder) {
-      return res.json({ ...result });
-    }
-    res.json({
-      content: result.content,
-      title: `${topic}开题报告`,
-      model: result.model,
-      tokens: result.tokens,
-      doc: result.doc,
-      chargeType: result.chargeType,
-      amount: result.amount,
-      orderId: result.orderId,
-      orderNo: result.orderNo,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '开题报告生成失败：' + err.message });
-  }
+  await runDocumentTool(req, res, {
+    featureKey: 'proposal',
+    toolType: 'proposal',
+    action: 'proposal',
+    params: { topic, field, direction, keywords, objective, method, innovation },
+    inputText: `【开题报告】题目：${topic} | 学科：${field}`,
+    docTitle: `${topic}开题报告`,
+    generateDocxOptions: { title: `${topic}开题报告`, template: loadTemplate(template_id, req.user.id) },
+    errorPrefix: '开题报告生成',
+  });
 });
 
 // ========== 论文润色（纯文本） ==========
@@ -878,7 +947,7 @@ router.post('/format-reference', authRequired, (req, res) => {
 // ========== 论文降重（纯文本） ==========
 router.post('/rewrite', authRequired, async (req, res) => {
   const { text, projectId, orderNo } = req.body || {};
-  if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要降重的文本' });
+  if (!text || !text.trim()) return res.status(400).json({ error: '请输入需要优化的文本' });
   const lenErr = checkTextLen(text, MAX_INPUT_CHARS, '文本');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
@@ -925,7 +994,7 @@ router.post('/rewrite', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '降重失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '优化失败：' + err.message });
   }
 });
 
@@ -970,7 +1039,7 @@ router.post('/ai-reduce', authRequired, async (req, res) => {
       orderNo: result.orderNo,
     });
   } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '降AI率失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '表达优化失败：' + err.message });
   }
 });
 
@@ -1041,210 +1110,84 @@ router.post('/ai-reduce-versions', authRequired, async (req, res) => {
     });
   } catch (err) {
     if (order) db.prepare("UPDATE orders SET service_status = 'failed' WHERE id = ? AND service_status = 'processing'").run(order.id);
-    res.status(err.statusCode || 500).json({ error: '降AI率失败：' + err.message });
+    res.status(err.statusCode || 500).json({ error: '表达优化失败：' + err.message });
   }
 });
 
 // ========== 文献综述生成（输出 Word） ==========
 router.post('/literature-review', authRequired, async (req, res) => {
-  const { topic, field, keywords, years, template_id, projectId, orderNo } = req.body || {};
+  const { topic, field, keywords, years, template_id } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写研究主题' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '主题');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
-  let template = null;
-  if (template_id) {
-    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
-  }
-
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey: 'literature_review',
-      toolType: 'literature_review',
-      action: 'literature_review',
-      params: { topic, field, keywords, years },
-      projectId: projectId || null,
-      inputText: `【文献综述】主题：${topic}${field ? ' | 学科：' + field : ''}`,
-      generateDocxOptions: {
-        title: `${topic}文献综述`,
-        template,
-      },
-      orderNo: orderNo || null,
-      materialIds: (req.body && req.body.material_ids) || null,
-    });
-    if (result.needOrder) {
-      return res.json({ ...result });
-    }
-    res.json({
-      content: result.content,
-      title: `${topic}文献综述`,
-      model: result.model,
-      tokens: result.tokens,
-      doc: result.doc,
-      chargeType: result.chargeType,
-      amount: result.amount,
-      orderId: result.orderId,
-      taskId: result.taskId,
-      projectId: result.projectId,
-      autoProject: result.autoProject,
-      autoProjectTitle: result.autoProjectTitle,
-      retention_days: result.retention_days,
-      orderNo: result.orderNo,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '文献综述生成失败：' + err.message });
-  }
+  await runDocumentTool(req, res, {
+    featureKey: 'literature_review',
+    toolType: 'literature_review',
+    action: 'literature_review',
+    params: { topic, field, keywords, years },
+    inputText: `【文献综述】主题：${topic}${field ? ' | 学科：' + field : ''}`,
+    docTitle: `${topic}文献综述`,
+    generateDocxOptions: { title: `${topic}文献综述`, template: loadTemplate(template_id, req.user.id) },
+    errorPrefix: '文献综述生成',
+  });
 });
 
 // ========== 任务书生成（输出 Word） ==========
 router.post('/task-book', authRequired, async (req, res) => {
-  const { topic, student_name, student_id, field, advisor, template_id, projectId, orderNo } = req.body || {};
+  const { topic, student_name, student_id, field, advisor, template_id } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
-  let template = null;
-  if (template_id) {
-    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
-  }
-
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey: 'task_book',
-      toolType: 'task_book',
-      action: 'task_book',
-      params: { topic, student_name, student_id, field, advisor },
-      projectId: projectId || null,
-      inputText: `【任务书】题目：${topic}${student_name ? ' | 学生：' + student_name : ''}`,
-      generateDocxOptions: {
-        title: `${topic}任务书`,
-        template,
-      },
-      orderNo: orderNo || null,
-      materialIds: (req.body && req.body.material_ids) || null,
-    });
-    if (result.needOrder) {
-      return res.json({ ...result });
-    }
-    res.json({
-      content: result.content,
-      title: `${topic}任务书`,
-      model: result.model,
-      tokens: result.tokens,
-      doc: result.doc,
-      chargeType: result.chargeType,
-      amount: result.amount,
-      orderId: result.orderId,
-      taskId: result.taskId,
-      projectId: result.projectId,
-      autoProject: result.autoProject,
-      autoProjectTitle: result.autoProjectTitle,
-      retention_days: result.retention_days,
-      orderNo: result.orderNo,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '任务书生成失败：' + err.message });
-  }
+  await runDocumentTool(req, res, {
+    featureKey: 'task_book',
+    toolType: 'task_book',
+    action: 'task_book',
+    params: { topic, student_name, student_id, field, advisor },
+    inputText: `【任务书】题目：${topic}${student_name ? ' | 学生：' + student_name : ''}`,
+    docTitle: `${topic}任务书`,
+    generateDocxOptions: { title: `${topic}任务书`, template: loadTemplate(template_id, req.user.id) },
+    errorPrefix: '任务书生成',
+  });
 });
 
 // ========== 答辩PPT+演讲稿生成（输出 .pptx） ==========
 router.post('/defense', authRequired, async (req, res) => {
-  const { topic, field, research_content, innovation, duration, projectId, orderNo } = req.body || {};
+  const { topic, field, research_content, innovation, duration } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(research_content, MAX_INPUT_CHARS, '研究内容');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey: 'defense',
-      toolType: 'defense',
-      action: 'defense',
-      params: { topic, field, research_content, innovation, duration: duration || 10 },
-      projectId: projectId || null,
-      inputText: `【答辩】题目：${topic}${field ? ' | 学科：' + field : ''}`,
-      generatePptxOptions: {
-        title: `${topic}答辩PPT`,
-      },
-      orderNo: orderNo || null,
-      materialIds: (req.body && req.body.material_ids) || null,
-    });
-    if (result.needOrder) {
-      return res.json({ ...result });
-    }
-    res.json({
-      content: result.content,
-      title: `${topic}答辩PPT`,
-      model: result.model,
-      tokens: result.tokens,
-      doc: result.doc,
-      chargeType: result.chargeType,
-      amount: result.amount,
-      orderId: result.orderId,
-      taskId: result.taskId,
-      projectId: result.projectId,
-      autoProject: result.autoProject,
-      autoProjectTitle: result.autoProjectTitle,
-      retention_days: result.retention_days,
-      orderNo: result.orderNo,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '答辩材料生成失败：' + err.message });
-  }
+  await runDocumentTool(req, res, {
+    featureKey: 'defense',
+    toolType: 'defense',
+    action: 'defense',
+    params: { topic, field, research_content, innovation, duration: duration || 10 },
+    inputText: `【答辩】题目：${topic}${field ? ' | 学科：' + field : ''}`,
+    docTitle: `${topic}答辩PPT`,
+    generatePptxOptions: { title: `${topic}答辩PPT` },
+    errorPrefix: '答辩材料生成',
+  });
 });
 
 // ========== 期刊论文撰写（输出 Word） ==========
 router.post('/journal', authRequired, async (req, res) => {
-  const { topic, field, research_content, method, journal_type, template_id, projectId, orderNo } = req.body || {};
+  const { topic, field, research_content, method, journal_type, template_id } = req.body || {};
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目') || checkTextLen(research_content, MAX_INPUT_CHARS, '研究内容');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
-  let template = null;
-  if (template_id) {
-    template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, req.user.id);
-  }
-
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey: 'journal',
-      toolType: 'journal',
-      action: 'journal',
-      params: { topic, field, research_content, method, journal_type },
-      projectId: projectId || null,
-      inputText: `【期刊论文】题目：${topic}${field ? ' | 学科：' + field : ''}`,
-      generateDocxOptions: {
-        title: topic,
-        template,
-      },
-      orderNo: orderNo || null,
-      materialIds: (req.body && req.body.material_ids) || null,
-    });
-    if (result.needOrder) {
-      return res.json({ ...result });
-    }
-    res.json({
-      content: result.content,
-      title: topic,
-      model: result.model,
-      tokens: result.tokens,
-      doc: result.doc,
-      chargeType: result.chargeType,
-      amount: result.amount,
-      orderId: result.orderId,
-      taskId: result.taskId,
-      projectId: result.projectId,
-      autoProject: result.autoProject,
-      autoProjectTitle: result.autoProjectTitle,
-      retention_days: result.retention_days,
-      orderNo: result.orderNo,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '期刊论文生成失败：' + err.message });
-  }
+  await runDocumentTool(req, res, {
+    featureKey: 'journal',
+    toolType: 'journal',
+    action: 'journal',
+    params: { topic, field, research_content, method, journal_type },
+    inputText: `【期刊论文】题目：${topic}${field ? ' | 学科：' + field : ''}`,
+    docTitle: topic,
+    generateDocxOptions: { title: topic, template: loadTemplate(template_id, req.user.id) },
+    errorPrefix: '期刊论文生成',
+  });
 });
 
 // ========== 专利申请辅助：专利技术交底书撰写（输出 Word） ==========
@@ -1376,7 +1319,7 @@ async function handleDocRewrite(req, res, tool) {
     const { buffer, stats } = await rewriteDocxBuffer(req.file.buffer, tool);
 
     // 保存生成文档（docs 下载接口按用户鉴权，30 天保留）
-    const prefix = tool === 'rewrite' ? '降重' : '降AI';
+    const prefix = tool === 'rewrite' ? '重复表达优化' : '表达自然度优化';
     const safeName = String(req.file.originalname || '文档').replace(/\.docx$/i, '').replace(/[^\w\u4e00-\u9fa5.-]/g, '_').slice(0, 80);
     const fileName = `${req.user.id}_${Date.now()}_${featureKey}_${safeName}.docx`;
     const docsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'uploads', 'docs');

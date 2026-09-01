@@ -3,7 +3,7 @@ import { api } from '../lib/api.js';
 import { Shield, Refresh, X } from './Icons.jsx';
 
 // 学术诚信承诺书弹窗（阶段四 4.1）
-// 首次使用「全文生成 / 降AI率 / 降重」等敏感功能前强制勾选同意
+// 首次使用「全文生成 / 表达自然度优化 / 重复表达优化」等敏感功能前强制勾选同意
 export default function AcademicIntegrityModal({ onAgreed, onCancel }) {
   const [checked, setChecked] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -39,11 +39,12 @@ export default function AcademicIntegrityModal({ onAgreed, onCancel }) {
         <div className="flex-1 overflow-y-auto px-6 py-5 text-sm leading-relaxed text-slate-600">
           <p className="font-medium text-ink">为维护学术诚信，使用平台以下功能前，请您阅读并同意本承诺书。</p>
           <div className="mt-3 space-y-2 text-[13px]">
-            <p>1. 本平台提供的「全文生成」「降AI率」「降重」等 AI 写作辅助内容，均由人工智能模型生成，<strong>仅供学习、研究参考，不得直接作为学术成果提交</strong>。</p>
+            <p>1. 本平台提供的「全文生成」「表达自然度优化」「重复表达优化」等 AI 写作辅助内容，均由人工智能模型生成，<strong>仅供学习、研究参考，不得直接作为学术成果提交</strong>。</p>
             <p>2. 用户应遵守《中华人民共和国学位法》及所在学校、期刊的学术规范，对最终提交成果的真实性、原创性负责。</p>
-            <p>3. AI 生成内容可能存在事实性错误、引用偏差或表述局限，用户需自行核验、修改与完善。</p>
-            <p>4. 生成文档中的参考文献、数据与图表仅供示意，请务必核实其真实性与来源后再使用。</p>
-            <p>5. 因用户违反学术规范或相关法律法规产生的后果，由用户自行承担，平台不承担相应责任。</p>
+            <p>3. AI 生成内容可能存在事实性错误、引用偏差或表述局限，<strong>必须由用户审阅、修改与完善后方可使用</strong>。</p>
+            <p>4. 生成文档中的参考文献、数据与图表仅供示意，<strong>平台不编造数据与文献，引用内容请务必核验其真实性与来源</strong>后再使用。</p>
+            <p>5. <strong>平台不对任何查重、AI 检测等第三方检测结果作保证</strong>，亦不承诺通过任何检测。</p>
+            <p>6. 因用户违反学术规范或相关法律法规产生的后果，由用户自行承担，平台不承担相应责任。</p>
           </div>
         </div>
 

@@ -37,7 +37,7 @@ export default function Rewrite() {
 
   const run = (orderNo) => {
     if (!input.trim()) {
-      toast.warning('请输入需要降重的文本');
+      toast.warning('请输入需要优化的文本');
       return;
     }
     if (!integrity.ensure(() => run(orderNo))) return;
@@ -45,7 +45,7 @@ export default function Rewrite() {
   };
 
   const handleCopy = async () => {
-    const ok = await copyText(output, '降重结果');
+    const ok = await copyText(output, '优化结果');
     if (!ok) return;
     setCopied(true);
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -58,7 +58,7 @@ export default function Rewrite() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = '降重结果.txt';
+      a.download = '优化结果.txt';
       a.click();
       URL.revokeObjectURL(url);
       toast.success('结果已下载');
@@ -71,8 +71,8 @@ export default function Rewrite() {
     <div className="mx-auto flex h-full max-w-6xl flex-col px-8 py-8">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold text-ink">论文降重</h1>
-          <p className="mt-1 text-sm text-slate-500">通过同义词替换、句式变换与表达调整降低文本重复率，保持原意与学术性</p>
+          <h1 className="text-xl font-bold text-ink">重复表达优化</h1>
+          <p className="mt-1 text-sm text-slate-500">通过多样化句式与措辞优化重复表达，提升表达多样性，保持原意与学术性</p>
         </div>
         <div className="flex gap-1 rounded-lg border border-slate-200 p-1">
           <button
@@ -103,7 +103,7 @@ export default function Rewrite() {
           </div>
           <textarea
             className="flex-1 resize-none border-0 p-5 font-serif text-[14px] leading-[1.85] text-slate-700 focus:outline-none focus:ring-0"
-            placeholder="粘贴需要降重的论文段落…将自动进行同义改写与句式调整"
+            placeholder="粘贴需要优化的论文段落…将自动进行表达多样化调整"
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
@@ -112,10 +112,10 @@ export default function Rewrite() {
           </div>
         </div>
 
-        {/* 降重结果 */}
+        {/* 优化结果 */}
         <div className="card flex flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-            <span className="text-sm font-medium text-slate-600">降重结果</span>
+            <span className="text-sm font-medium text-slate-600">优化结果</span>
             {output && (
               <div className="flex items-center gap-1">
                 <button onClick={handleCopy} className="btn-ghost text-xs">
@@ -145,10 +145,10 @@ export default function Rewrite() {
                   <div className="mb-3 text-xs text-slate-500">本次改写由内置规则引擎完成，未调用 AI 模型</div>
                 )}
 
-                {/* 降重后文本 */}
+                {/* 优化后文本 */}
                 {output && (
                   <div className="mb-4">
-                    <div className="mb-2 text-xs font-semibold text-slate-500">降重后文本</div>
+                    <div className="mb-2 text-xs font-semibold text-slate-500">优化后文本</div>
                     <pre className="whitespace-pre-wrap rounded-lg border border-slate-100 bg-white p-4 font-serif text-[14px] leading-[1.85] text-slate-700">{output}</pre>
                   </div>
                 )}
@@ -180,8 +180,8 @@ export default function Rewrite() {
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <Refresh className="h-8 w-8 text-slate-300" />
-                <p className="mt-3 text-sm text-slate-400">粘贴文本后点击「开始降重」</p>
-                <p className="mt-1 text-xs text-slate-400">结果包含降重后文本与修改记录</p>
+                <p className="mt-3 text-sm text-slate-400">粘贴文本后点击「开始优化」</p>
+                <p className="mt-1 text-xs text-slate-400">结果包含优化后文本与修改记录</p>
               </div>
             )}
           </div>
@@ -193,9 +193,9 @@ export default function Rewrite() {
         <span className="text-xs text-slate-500">本功能为付费功能，先下单支付后再生成</span>
         <button onClick={() => run()} disabled={tool.loading} className="btn-primary px-6 py-2.5">
           {tool.loading ? (
-            <><Refresh className="h-4 w-4 animate-spin" /> 降重中…</>
+            <><Refresh className="h-4 w-4 animate-spin" /> 优化中…</>
           ) : (
-            <><Sparkle className="h-4 w-4" /> 开始降重</>
+            <><Sparkle className="h-4 w-4" /> 开始优化</>
           )}
         </button>
       </div>

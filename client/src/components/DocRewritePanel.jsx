@@ -6,7 +6,7 @@ import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { Refresh, FileText, Download, Check, FileWord, BadgeCheck } from './Icons.jsx';
 import { toast } from './Toast.jsx';
 
-// 整篇文档改写面板（降重 / 降AI率共用）
+// 整篇文档改写面板（重复表达优化 / 表达自然度优化共用）
 // mode: 'rewrite' | 'ai_reduce'
 // 上传 .docx → 后端仅改写正文段落（保留格式/标题/图表/图片/公式/表格）→ 下载处理后的文档
 export default function DocRewritePanel({ mode }) {
@@ -19,7 +19,7 @@ export default function DocRewritePanel({ mode }) {
   const [error, setError] = useState('');
 
   const isRewrite = mode === 'rewrite';
-  const label = isRewrite ? '降重' : '降AI率';
+  const label = isRewrite ? '重复表达优化' : '表达自然度优化';
 
   const pickFile = (e) => {
     const f = e.target.files?.[0];

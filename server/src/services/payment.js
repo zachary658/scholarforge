@@ -9,6 +9,7 @@ import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice, get
 import { getFeatureCashPrice, materialFee } from './billing.js';
 import { computeCourseQuote } from './course-quote.js';
 import { now, datePrefix } from '../utils.js';
+import { assertTransition, recordOrderEvent, StateTransitionError, ORDER_STATUS } from './order-state.js';
 import { AlipaySdk } from 'alipay-sdk';
 import { Wechatpay, Aes, Rsa } from 'wechatpay-axios-plugin';
 
@@ -47,8 +48,14 @@ function resolveChannel(channel) {
   if (channel === 'mock' && (cfg.mode !== 'mock' || isProd)) {
     throw new Error('模拟支付通道未开放');
   }
+  // 显式指定的通道必须有效：未知通道直接拒绝，绝不静默回退到 mock/真实通道
+  // （防止客户端传入伪造通道导致误导性支付或零成本绕过）
+  if (channel && !channels.includes(channel)) {
+    throw new Error('支付通道无效，请重新发起支付');
+  }
   let useChannel = channel;
-  if (!useChannel || !channels.includes(useChannel)) {
+  if (!useChannel) {
+    // 未指定通道时选择默认：优先配置的 mode，其次第一个真实通道
     const real = channels.find((c) => c !== 'mock');
     if (cfg.mode === 'alipay' && channels.includes('alipay')) useChannel = 'alipay';
     else if (cfg.mode === 'wechat' && channels.includes('wechat')) useChannel = 'wechat';
@@ -218,6 +225,12 @@ export function adminQuoteOrder(orderId, quotedPrice, quoteNote = '') {
   if (!['awaiting_quote', 'quoted'].includes(order.status)) throw new Error(`订单状态 ${order.status}，不能报价`);
   db.prepare('UPDATE orders SET quoted_price = ?, quote_note = ?, amount = ?, status = ? WHERE id = ?')
     .run(price, quoteNote, price, 'quoted', orderId);
+  // 记录报价状态事件
+  recordOrderEvent({
+    orderId: order.id, orderNo: order.order_no, domain: 'order', refType: 'orders', refId: order.id,
+    field: 'status', fromStatus: order.status, toStatus: 'quoted', operatorId: null, operatorName: 'admin',
+    reason: `管理员报价 ¥${price}`,
+  });
   return getOrderByNo(order.order_no);
 }
 
@@ -291,8 +304,11 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
     }
     return { alreadyPaid: true, order };
   }
-  if (order.status === 'cancelled') throw new Error('订单已取消，不能改为已支付');
-  if (order.status === 'completed') throw new Error('订单已完成');
+  if (order.status === 'cancelled') throw new StateTransitionError('订单已取消，不能改为已支付');
+  if (order.status === 'completed') throw new StateTransitionError('订单已完成');
+  if (order.status === 'refunded') throw new StateTransitionError('订单已退款，不能改为已支付');
+  // 统一状态机校验：支付成功只能从允许状态（pending/awaiting_quote/quoted）进入 paid
+  assertTransition('order', order.status, ORDER_STATUS.PAID);
   // 网关回调必须与下单时选定的渠道一致；后台人工入账是唯一例外。
   // 防止通过另一个二维码端点或跨渠道回调篡改订单支付渠道与对账记录。
   if (channel && channel !== 'manual' && order.payment_channel && channel !== order.payment_channel) {
@@ -308,11 +324,25 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
   const tx = db.transaction(() => {
     const r = db.prepare(
       `UPDATE orders SET status = 'paid', paid_at = ?, transaction_id = COALESCE(?, transaction_id),
-       payment_channel = COALESCE(?, payment_channel), service_status = ? WHERE order_no = ? AND status NOT IN ('paid', 'completed', 'cancelled')`
+       payment_channel = COALESCE(?, payment_channel), service_status = ? WHERE order_no = ? AND status NOT IN ('paid', 'completed', 'cancelled', 'refunded')`
     ).run(now(), transactionId, channel, 'pending', orderNo);
     if (r.changes === 0) {
-      throw new Error(`订单状态已变更，当前状态：${getOrder(orderNo).status}`);
+      throw new StateTransitionError(`订单状态已变更，当前状态：${getOrder(orderNo).status}`);
     }
+    // 记录支付状态事件（统一状态机时间线）
+    recordOrderEvent({
+      orderId: order.id,
+      orderNo: order.order_no,
+      domain: 'order',
+      refType: 'orders',
+      refId: order.id,
+      field: 'status',
+      fromStatus: order.status,
+      toStatus: 'paid',
+      operatorId: null,
+      operatorName: channel || 'payment',
+      reason: transactionId ? `支付成功，交易号 ${transactionId}` : '支付成功',
+    });
 
     // 功能订单：固定价订单进入服务队列（service_status=processing，生成由工具调用触发）
     if (order.type === 'feature') {
@@ -366,9 +396,21 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
 
 // 关闭超时未支付订单
 export function closeExpiredOrders() {
+  const expired = db.prepare(
+    `SELECT id, order_no, status FROM orders
+     WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND expires_at IS NOT NULL AND expires_at < ?`
+  ).all(now());
+  if (expired.length === 0) return 0;
   const r = db.prepare(
     `UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'awaiting_quote', 'quoted') AND expires_at IS NOT NULL AND expires_at < ?`
   ).run(now());
+  for (const o of expired) {
+    recordOrderEvent({
+      orderId: o.id, orderNo: o.order_no, domain: 'order', refType: 'orders', refId: o.id,
+      field: 'status', fromStatus: o.status, toStatus: 'cancelled', operatorId: null, operatorName: 'system',
+      reason: '订单超时未支付，自动关闭',
+    });
+  }
   return r.changes;
 }
 

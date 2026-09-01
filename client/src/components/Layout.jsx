@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
+import { navGroups } from '../lib/navigation.js';
 import {
   Logo, Grid, Pen, Globe, Book, BookOpen, FileWord, Receipt, Layers,
   Logout, Shield, ArrowRight, Menu, X,
@@ -8,56 +9,22 @@ import {
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 
-// 按场景分组的导航
-const navGroups = [
-  {
-    label: '工作台',
-    items: [
-      { to: '/app', label: '概览', icon: Grid, end: true },
-      { to: '/app/projects', label: '论文工作区', icon: Layers, end: false },
-    ],
-  },
-  {
-    label: '1对1指导',
-    items: [
-      { to: '/app/courses', label: '论文1对1指导', icon: BookOpen, end: false },
-      { to: '/app/graduation', label: '毕业作品指导', icon: Cpu, end: false },
-      { to: '/app/patent', label: '专利申请', icon: Shield, end: false },
-      { to: '/app/publication', label: '期刊论文发表', icon: Book, end: false },
-    ],
-  },
-  {
-    label: 'AI 写作',
-    items: [
-      { to: '/app/writing', label: '论文写作', icon: Pen, end: false },
-      { to: '/app/proposal', label: '开题报告', icon: FileWord, end: false },
-      { to: '/app/literature-review', label: '文献综述', icon: Book, end: false },
-      { to: '/app/task-book', label: '任务书', icon: FileText, end: false },
-      { to: '/app/defense', label: '答辩PPT+演讲稿', icon: FileWord, end: false },
-      { to: '/app/journal', label: '期刊论文', icon: FileText, end: false },
-    ],
-  },
-  {
-    label: '文本优化',
-    items: [
-      { to: '/app/rewrite', label: '论文降重', icon: Activity, end: false },
-      { to: '/app/ai-reduce', label: '降AI率', icon: Shield, end: false },
-      { to: '/app/polish', label: '润色翻译', icon: Globe, end: false },
-    ],
-  },
-  {
-    label: '资源与账户',
-    items: [
-      { to: '/app/references', label: '文献管理', icon: Book, end: false },
-      { to: '/app/charts', label: '数据图表', icon: ChartBar, end: false },
-      { to: '/app/templates', label: '格式模板', icon: Layers, end: false },
-      { to: '/app/tasks', label: '我的任务', icon: Activity, end: false },
-      { to: '/app/docs', label: '我的文档', icon: FileWord, end: false },
-      { to: '/app/orders', label: '我的订单', icon: Receipt, end: false },
-      { to: '/app/graduation-orders', label: '毕业作品订单', icon: FileWord, end: false },
-    ],
-  },
-];
+// 导航字符串图标键 → 实际图标组件（与 navigation.js 的 icon 键一一对应）
+const NAV_ICONS = {
+  grid: Grid,
+  layers: Layers,
+  pen: Pen,
+  fileword: FileWord,
+  book: Book,
+  filetext: FileText,
+  activity: Activity,
+  shield: Shield,
+  globe: Globe,
+  bookopen: BookOpen,
+  cpu: Cpu,
+  chartbar: ChartBar,
+  receipt: Receipt,
+};
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -112,7 +79,9 @@ export default function Layout() {
               {group.label}
             </div>
             <div className="space-y-0.5">
-              {group.items.map((item) => (
+              {group.items.map((item) => {
+                const Icon = NAV_ICONS[item.icon];
+                return (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -126,10 +95,11 @@ export default function Layout() {
                     }`
                   }
                 >
-                  <item.icon className="h-[18px] w-[18px]" />
+                  {Icon && <Icon className="h-[18px] w-[18px]" />}
                   {item.label}
                 </NavLink>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

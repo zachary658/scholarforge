@@ -32,7 +32,6 @@ const TaskBook = lazy(() => import('./pages/TaskBook.jsx'));
 const Journal = lazy(() => import('./pages/Journal.jsx'));
 const Charts = lazy(() => import('./pages/Charts.jsx'));
 const GraduationProjects = lazy(() => import('./pages/GraduationProjects.jsx'));
-const MyGraduationOrders = lazy(() => import('./pages/MyGraduationOrders.jsx'));
 const Patent = lazy(() => import('./pages/Patent.jsx'));
 const Publication = lazy(() => import('./pages/Publication.jsx'));
 
@@ -133,7 +132,8 @@ export default function App() {
         <Route path="docs" element={<Suspense fallback={<PageFallback />}><MyDocs /></Suspense>} />
         <Route path="orders" element={<Suspense fallback={<PageFallback />}><MyOrders /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><GraduationProjects /></Suspense>} />
-        <Route path="graduation-orders" element={<Suspense fallback={<PageFallback />}><MyGraduationOrders /></Suspense>} />
+        {/* P1-6：毕业作品订单已合并到「我的订单」，旧入口重定向 */}
+        <Route path="graduation-orders" element={<Navigate to="/app/orders" replace />} />
         <Route path="patent" element={<Suspense fallback={<PageFallback />}><Patent /></Suspense>} />
         <Route path="publication" element={<Suspense fallback={<PageFallback />}><Publication /></Suspense>} />
       </Route>

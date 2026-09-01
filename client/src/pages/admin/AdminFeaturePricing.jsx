@@ -5,7 +5,7 @@ import { toast } from '../../components/Toast.jsx';
 
 const CATEGORY_LABEL = {
   writing: '论文写作',
-  polish: '润色降重',
+  polish: '润色优化',
   translate: '翻译',
   grammar: '语法纠错',
   reference: '文献',

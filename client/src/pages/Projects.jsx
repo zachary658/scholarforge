@@ -10,6 +10,7 @@ import {
   Refresh, Plus, Trash, Edit, Layers, BookOpen, Eye, X,
   Save, ChevronRight, Brain, FileText, Pen, ArrowRight, FileWord, Check, Book,
 } from '../components/Icons.jsx';
+import { PAPER_STAGES } from '../lib/constants.js';
 
 const FIELDS = [
   '计算机科学', '电子信息', '机械工程', '材料科学', '生物医学',
@@ -17,11 +18,27 @@ const FIELDS = [
   '法学', '文学', '历史学', '哲学', '教育学', '其他',
 ];
 
+const DEGREES = ['本科', '硕士', '博士', '其他'];
+
 function fmtDate(ts) {
   if (!ts) return '';
   const d = new Date(ts * 1000);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// 截止时间：Unix 秒级时间戳 ↔ <input type="date"> 的 YYYY-MM-DD 互转
+function tsToDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function dateToTs(dateStr) {
+  if (!dateStr) return null;
+  const t = new Date(`${dateStr}T23:59:59`).getTime() / 1000;
+  return Number.isFinite(t) ? Math.floor(t) : null;
 }
 
 export default function Projects() {
@@ -119,11 +136,23 @@ export default function Projects() {
                   <BookOpen className="h-4 w-4 flex-shrink-0 text-accent" />
                   <h3 className="truncate font-semibold text-ink">{p.title}</h3>
                 </div>
-                {p.field && (
-                  <span className="mt-1.5 inline-block rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                    {p.field}
-                  </span>
-                )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {p.field && (
+                    <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                      {p.field}
+                    </span>
+                  )}
+                  {p.degree && (
+                    <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                      {p.degree}
+                    </span>
+                  )}
+                  {p.deadline && (
+                    <span className="inline-block rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-600">
+                      截止 {tsToDate(p.deadline)}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex gap-1">
                 <button
@@ -198,8 +227,10 @@ function ProjectModal({ project, onClose, onSaved }) {
   const [form, setForm] = useState({
     title: project?.title || '',
     field: project?.field || '',
+    degree: project?.degree || '',
     description: project?.description || '',
     writingRequirements: project?.writing_requirements || '',
+    deadline: tsToDate(project?.deadline),
     outline: project?.outline || [],
   });
   const [saving, setSaving] = useState(false);
@@ -211,12 +242,13 @@ function ProjectModal({ project, onClose, onSaved }) {
       return;
     }
     setSaving(true);
+    const payload = { ...form, deadline: dateToTs(form.deadline) };
     try {
       if (project) {
-        await api.updateProject(project.id, form);
+        await api.updateProject(project.id, payload);
         toast.success('已保存');
       } else {
-        await api.createProject(form);
+        await api.createProject(payload);
         toast.success('工作区已创建');
       }
       onSaved();
@@ -257,6 +289,28 @@ function ProjectModal({ project, onClose, onSaved }) {
               {FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-ink">学历</label>
+              <select
+                value={form.degree}
+                onChange={(e) => setForm({ ...form, degree: e.target.value })}
+                className="input mt-1.5"
+              >
+                <option value="">请选择</option>
+                {DEGREES.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-ink">截止时间</label>
+              <input
+                type="date"
+                value={form.deadline}
+                onChange={(e) => setForm({ ...form, deadline: e.target.value })}
+                className="input mt-1.5"
+              />
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-medium text-ink">论文描述</label>
             <textarea
@@ -294,7 +348,7 @@ function ProjectModal({ project, onClose, onSaved }) {
 function ProjectDetail({ project, onClose, onEdit }) {
   const toast = useToast();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('tasks'); // 默认展示生成记录（纯成果存放区）
+  const [tab, setTab] = useState('pipeline'); // 默认展示主流程步骤导航
   const [tasks, setTasks] = useState([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [materials, setMaterials] = useState([]);
@@ -324,25 +378,44 @@ function ProjectDetail({ project, onClose, onEdit }) {
 
   useEffect(() => stopPolling, [stopPolling]);
 
-  // 借鉴千笔写作：全流程步骤导航（点击跳转到对应工具，并自动带上 projectId）
-  const pipelineSteps = [
-    { key: 'outline', title: '大纲生成', desc: '免费不限次，3 级结构化大纲', icon: Layers, to: '/app/writing', free: true },
-    { key: 'paragraph', title: '段落/全文', desc: '基于大纲撰写正文段落', icon: FileWord, to: '/app/writing' },
-    { key: 'literature', title: '文献综述', desc: '主题分类梳理+真实文献引用', icon: BookOpen, to: '/app/literature-review' },
-    { key: 'rewrite', title: '论文降重', desc: '同义改写降低重复率', icon: Refresh, to: '/app/rewrite' },
-    { key: 'ai_reduce', title: '降AI率', desc: '一键改写消除AI痕迹', icon: Refresh, to: '/app/ai-reduce' },
-    { key: 'defense', title: '答辩PPT', desc: '生成答辩PPT+演讲稿', icon: FileWord, to: '/app/defense' },
-  ];
+  // P1-4 论文主流程步骤导航：把每个阶段映射到具体工具入口（点击自动带上 projectId）
+  const STAGE_NAV = {
+    materials: { to: '/app/writing' },
+    outline: { to: '/app/writing', type: 'outline' },
+    literature: { to: '/app/literature-review' },
+    writing: { to: '/app/writing', type: 'paragraph' },
+    review: { to: '/app/rewrite' },
+    defense: { to: '/app/defense' },
+  };
 
-  // 根据已有任务判断每个步骤是否已完成
-  const completedTools = new Set(tasks.map((t) => t.tool_type));
+  const currentStageIdx = Math.max(0, PAPER_STAGES.findIndex((s) => s.key === (project.current_stage || 'create')));
 
-  const goStep = (step) => {
+  // 每一步的完成状态：优先用实际产物判定，其次回退到 current_stage 位置
+  const stageStatus = (stage, i) => {
+    const dataDone = {
+      create: true,
+      materials: materials.length > 0,
+      outline: outline.length > 0,
+      literature: tasks.some((t) => t.tool_type === 'literature_review'),
+      writing: chapters.length > 0,
+      review: tasks.some((t) => t.tool_type === 'rewrite' || t.tool_type === 'ai_reduce'),
+      defense: tasks.some((t) => t.tool_type === 'defense'),
+      export: false,
+    }[stage.key];
+    if (dataDone) return 'done';
+    if (i === currentStageIdx) return 'current';
+    return 'pending';
+  };
+
+  const goStage = (stage) => {
+    if (stage.key === 'create') { onEdit(); return; }
+    if (stage.key === 'export') { setTab('chapters'); return; }
+    const nav = STAGE_NAV[stage.key];
+    if (!nav) return;
     const params = new URLSearchParams();
     params.set('projectId', project.id);
-    if (step.key === 'outline') params.set('type', 'outline');
-    if (step.key === 'paragraph') params.set('type', 'paragraph');
-    navigate(`${step.to}?${params.toString()}`);
+    if (nav.type) params.set('type', nav.type);
+    navigate(`${nav.to}?${params.toString()}`);
   };
 
   const loadTasks = useCallback(async () => {
@@ -394,6 +467,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
     if (tab === 'materials') loadMaterials();
     if (tab === 'chapters') loadChapters();
     if (tab === 'outline') loadProject();
+    if (tab === 'pipeline') { loadTasks(); loadMaterials(); loadChapters(); }
   }, [tab, loadTasks, loadMaterials, loadChapters, loadProject]);
 
   const handleSaveOutline = async () => {
@@ -530,9 +604,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
           </div>
         </div>
 
-        {/* Tab：工作区为纯成果存放区（生成记录/大纲/章节/资料），写作流程在 AI 写作区推进 */}
+        {/* Tab：主流程步骤导航 + 成果存放区（生成记录/大纲/章节/资料） */}
         <div className="flex gap-1 border-b border-slate-100 px-6">
           {[
+            { key: 'pipeline', label: '流程' },
             { key: 'tasks', label: `生成记录 (${tasks.length})` },
             { key: 'outline', label: '大纲' },
             { key: 'chapters', label: '章节内容' },
@@ -553,6 +628,79 @@ function ProjectDetail({ project, onClose, onEdit }) {
 
         {/* 内容 */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          {tab === 'pipeline' && (
+            <div className="space-y-4">
+              {/* 总进度：completion_percent 优先，否则按当前阶段位置估算 */}
+              <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
+                    <Brain className="h-4 w-4" /> 论文进度
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {project.deadline ? `截止 ${tsToDate(project.deadline)}` : '未设置截止时间'}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-blue-100">
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all"
+                    style={{ width: `${Math.min(100, project.completion_percent > 0 ? project.completion_percent : Math.round(((currentStageIdx + 1) / PAPER_STAGES.length) * 100))}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-slate-500">
+                  当前阶段：{PAPER_STAGES[currentStageIdx]?.label || '创建论文'}
+                </p>
+              </div>
+
+              {/* 步骤导航：每步展示输入要求、完成状态与下一步入口 */}
+              <div className="space-y-2">
+                {PAPER_STAGES.map((stage, i) => {
+                  const status = stageStatus(stage, i);
+                  return (
+                    <div
+                      key={stage.key}
+                      className={`flex items-start gap-3 rounded-lg border p-3 ${
+                        status === 'done' ? 'border-green-100 bg-green-50/40' :
+                        status === 'current' ? 'border-accent/30 bg-accent-50/40' :
+                        'border-slate-100 bg-white'
+                      }`}
+                    >
+                      <div className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                        status === 'done' ? 'bg-green-500 text-white' :
+                        status === 'current' ? 'bg-accent text-white' :
+                        'bg-slate-100 text-slate-400'
+                      }`}>
+                        {status === 'done' ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-ink">{stage.label}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-xs ${
+                            status === 'done' ? 'bg-green-100 text-green-600' :
+                            status === 'current' ? 'bg-accent/10 text-accent' :
+                            'bg-slate-100 text-slate-400'
+                          }`}>
+                            {status === 'done' ? '已完成' : status === 'current' ? '进行中' : '未开始'}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-slate-500">{stage.desc}</p>
+                      </div>
+                      <button
+                        onClick={() => goStage(stage)}
+                        className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                          status === 'done' ? 'btn-ghost' : 'btn-primary !py-1.5'
+                        }`}
+                      >
+                        {stage.key === 'create' ? '编辑信息' :
+                         stage.key === 'export' ? '去导出' :
+                         status === 'done' ? '重做' : '去完成'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {tab === 'overview' && (
             <div className="space-y-4">
               {project.description && (
@@ -565,6 +713,18 @@ function ProjectDetail({ project, onClose, onEdit }) {
                 <div>
                   <h4 className="text-sm font-semibold text-ink">写作要求</h4>
                   <p className="mt-1.5 text-sm text-slate-600">{project.writing_requirements}</p>
+                </div>
+              )}
+              {(project.degree || project.deadline || project.current_stage) && (
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <h4 className="text-sm font-semibold text-ink">基本信息</h4>
+                  <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
+                    {project.degree && <span>学历：{project.degree}</span>}
+                    {project.deadline && <span>截止：{tsToDate(project.deadline)}</span>}
+                    {project.current_stage && (
+                      <span>当前阶段：{PAPER_STAGES.find((s) => s.key === project.current_stage)?.label || project.current_stage}</span>
+                    )}
+                  </div>
                 </div>
               )}
               <div className="grid grid-cols-3 gap-3">

@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { Refresh, Download } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
 import PayModal from '../components/PayModal.jsx';
+import GraduationOrdersPanel from './MyGraduationOrders.jsx';
 import {
   ORDER_STATUS_LABEL, ORDER_STATUS_CLASS, SERVICE_STATUS_LABEL, PAYMENT_METHOD_LABEL,
 } from '../lib/constants.js';
@@ -37,6 +38,7 @@ export default function MyOrders() {
   const [error, setError] = useState('');
   const [payState, setPayState] = useState(null);
   const [payingNo, setPayingNo] = useState(null);
+  const [tab, setTab] = useState('feature'); // feature=功能订单 / graduation=毕业作品订单
   const SIZE = 20;
 
   const load = async (p = page, st = status) => {
@@ -82,13 +84,41 @@ export default function MyOrders() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">我的订单</h1>
-          <p className="mt-1 text-sm text-slate-500">共 {total} 条订单记录</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {tab === 'feature' ? `共 ${total} 条订单记录` : '功能订单与毕业作品订单统一管理'}
+          </p>
         </div>
-        <button onClick={() => load(page)} className="btn-ghost text-xs">
-          <Refresh className="h-4 w-4" /> 刷新
-        </button>
+        {tab === 'feature' && (
+          <button onClick={() => load(page)} className="btn-ghost text-xs">
+            <Refresh className="h-4 w-4" /> 刷新
+          </button>
+        )}
       </div>
 
+      {/* 订单类型切换（P1-6：合并客户侧订单入口） */}
+      <div className="mt-5 flex gap-1 border-b border-slate-200">
+        {[
+          { key: 'feature', label: '功能订单' },
+          { key: 'graduation', label: '毕业作品订单' },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+              tab === t.key ? 'border-accent text-accent' : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'graduation' ? (
+        <div className="mt-6">
+          <GraduationOrdersPanel />
+        </div>
+      ) : (
+        <>
       {/* 状态筛选 */}
       <div className="mt-6 flex flex-wrap items-center gap-2">
         {STATUS_FILTERS.map(([value, label]) => (
@@ -215,6 +245,8 @@ export default function MyOrders() {
           onClose={() => setPayState(null)}
           onPaid={() => { setPayState(null); load(page); toast.success('支付成功'); }}
         />
+      )}
+        </>
       )}
     </div>
   );

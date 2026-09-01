@@ -348,6 +348,16 @@ addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
 addColumnIfMissing('projects', 'sources_json', "TEXT DEFAULT '{}'");
 // ===== 自动工作区：用户首次生成内容时系统自动创建（auto_created=1），防止内容散落丢失 =====
 addColumnIfMissing('projects', 'auto_created', 'INTEGER NOT NULL DEFAULT 0');
+// ===== 论文工作区主流程：阶段推进 / 截止时间 / 完成度 =====
+addColumnIfMissing('projects', 'degree', 'TEXT');
+addColumnIfMissing('projects', 'current_stage', "TEXT NOT NULL DEFAULT 'create'");
+addColumnIfMissing('projects', 'deadline', 'INTEGER');
+addColumnIfMissing('projects', 'completion_percent', 'INTEGER NOT NULL DEFAULT 0');
+// ===== 失败任务恢复：进度 / 阶段 / 错误码 / 重试次数（P0 任务重试路径） =====
+addColumnIfMissing('ai_tasks', 'progress', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('ai_tasks', 'stage', 'TEXT');
+addColumnIfMissing('ai_tasks', 'error_code', 'TEXT');
+addColumnIfMissing('ai_tasks', 'retry_count', 'INTEGER NOT NULL DEFAULT 0');
 // ===== 用户上传资料（写作参考材料：docx/pdf/txt 解读后存储文本与 token 量）=====
 db.exec(`
   CREATE TABLE IF NOT EXISTS materials (
@@ -466,6 +476,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_order_notes ON order_notes(order_type, order_ref_id, created_at DESC);
 `);
 
+// ===== 订单状态时间线（统一状态机每次变更都会落一条事件） =====
+// domain: order(订单主状态) / service(服务状态) / contact(客服状态) / quote(报价状态)
+// ref_type: 来源表；ref_id: 来源记录 id；operator_id: 操作人（系统事件为 NULL）
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER,
+    order_no TEXT,
+    domain TEXT NOT NULL,
+    ref_type TEXT NOT NULL,
+    ref_id INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT NOT NULL,
+    operator_id INTEGER,
+    operator_name TEXT,
+    reason TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_events_ref ON order_events(ref_type, ref_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events(order_id, created_at DESC);
+`);
+
 // ===== 认证安全：token_version 用于主动失效 JWT（修改密码/登出时 +1）=====
 addColumnIfMissing('users', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
 
@@ -566,8 +599,8 @@ const featuresSeed = [
   ['grammar', '语法纠错', 2, '次', 'grammar', '语法问题检测', 0, 7],
   ['ref_search', '文献检索', 0, '次', 'reference', '检索学术文献', 1, 8],
   ['ref_format', '文献格式化', 0, '次', 'reference', '引用格式导出', 1, 9],
-  ['rewrite', '论文降重', 3, '次', 'polish', '同义改写降低重复率', 0, 11],
-  ['ai_reduce', '降AI率', 4, '次', 'polish', '智能改写消除AI痕迹，让文本更像人类写作', 0, 13],
+  ['rewrite', '重复表达优化', 3, '次', 'polish', '优化重复表达，提升表达多样性', 0, 11],
+  ['ai_reduce', '表达自然度优化', 4, '次', 'polish', '识别并优化机械化表达，让文本更自然流畅', 0, 13],
   ['literature_review', '文献综述', 6, '次', 'writing', '生成结构化文献综述，含主题分类与文献引用', 0, 14],
   ['task_book', '任务书生成', 4, '次', 'writing', '生成毕业论文任务书，含进度安排与考核指标', 0, 15],
   ['defense', '答辩PPT+演讲稿', 8, '次', 'writing', '生成答辩PPT大纲与配套演讲稿', 0, 16],
@@ -578,8 +611,20 @@ const featuresSeed = [
 ];
 for (const f of featuresSeed) seedFeature.run(...f);
 
-// 下架已废弃的功能（查重检测、AI率检测已移除，仅保留降重与降AI率）
+// 下架已废弃的功能（查重检测、AI率检测已移除，仅保留重复表达优化与表达自然度优化）
 db.prepare(`UPDATE feature_prices SET is_active = 0 WHERE feature_key IN ('plagiarism', 'ai_check')`).run();
+
+// ========== 高风险产品文案迁移：把「降重/降AI率/消除AI痕迹」替换为合规中性表述 ==========
+// 已存在的数据库可能在迁移前用了旧文案，此处统一替换（settings 记录版本，仅执行一次）
+const COPY_MIGRATION_KEY = 'migration_compliance_copy_v1';
+const copyMigRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(COPY_MIGRATION_KEY);
+if (!copyMigRow || copyMigRow.value !== 'done') {
+  db.prepare("UPDATE feature_prices SET name = ?, description = ? WHERE feature_key = 'rewrite'")
+    .run('重复表达优化', '优化重复表达，提升表达多样性');
+  db.prepare("UPDATE feature_prices SET name = ?, description = ? WHERE feature_key = 'ai_reduce'")
+    .run('表达自然度优化', '识别并优化机械化表达，让文本更自然流畅');
+  db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(COPY_MIGRATION_KEY);
+}
 
 // 版本化迁移：把 writing_outline / ref_search / ref_format 标记为 is_unlimited=1（免费不限次）
 // 重要：仅在首次迁移时执行，避免覆盖管理员在后台调整过的价格

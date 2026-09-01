@@ -19,16 +19,23 @@ router.get('/', authRequired, (req, res) => {
 });
 
 router.post('/', authRequired, (req, res) => {
-  const { title, field, description, writingRequirements, outline } = req.body || {};
+  const { title, field, description, writingRequirements, outline, degree, deadline } = req.body || {};
   if (!title) return res.status(400).json({ error: '请填写论文标题' });
-  // 入库长度校验：标题/领域 ≤200，描述/写作要求 ≤5000，超限 400
+  // 入库长度校验：标题/领域/学历 ≤200，描述/写作要求 ≤5000，超限 400
   const lenErr = checkTextLength([
     { value: title, label: '论文标题', max: TEXT_MAX_SHORT },
     { value: field, label: '学科领域', max: TEXT_MAX_SHORT },
+    { value: degree, label: '学历', max: TEXT_MAX_SHORT },
     { value: description, label: '论文描述', max: TEXT_MAX_LONG },
     { value: writingRequirements, label: '写作要求', max: TEXT_MAX_LONG },
   ]);
   if (lenErr) return res.status(400).json({ error: lenErr });
+  // 截止时间：可选，须为合法时间戳（空值/非法值置空，不阻断创建）
+  let safeDeadline = null;
+  if (deadline) {
+    const n = Number(deadline);
+    safeDeadline = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
   const p = createProject({
     userId: req.user.id,
     title,
@@ -36,6 +43,8 @@ router.post('/', authRequired, (req, res) => {
     description: description || '',
     writingRequirements: writingRequirements || '',
     outline: Array.isArray(outline) ? outline : [],
+    degree: degree || '',
+    deadline: safeDeadline,
   });
   res.json({ ok: true, project: p });
 });
@@ -48,10 +57,11 @@ router.get('/:id', authRequired, (req, res) => {
 
 router.put('/:id', authRequired, (req, res) => {
   const updates = { ...req.body };
-  // 入库长度校验：标题/领域 ≤200，描述/写作要求 ≤5000（兼容驼峰与下划线两种字段名），超限 400
+  // 入库长度校验：标题/领域/学历 ≤200，描述/写作要求 ≤5000（兼容驼峰与下划线两种字段名），超限 400
   const lenErr = checkTextLength([
     { value: updates.title, label: '论文标题', max: TEXT_MAX_SHORT },
     { value: updates.field, label: '学科领域', max: TEXT_MAX_SHORT },
+    { value: updates.degree, label: '学历', max: TEXT_MAX_SHORT },
     { value: updates.description, label: '论文描述', max: TEXT_MAX_LONG },
     { value: updates.writingRequirements ?? updates.writing_requirements, label: '写作要求', max: TEXT_MAX_LONG },
   ]);
@@ -60,6 +70,15 @@ router.put('/:id', authRequired, (req, res) => {
   if (updates.writingRequirements) {
     updates.writing_requirements = updates.writingRequirements;
     delete updates.writingRequirements;
+  }
+  // 截止时间：可选，须为合法时间戳（空值清空，非法值丢弃不更新）
+  if ('deadline' in updates) {
+    if (updates.deadline == null || updates.deadline === '') {
+      updates.deadline = null;
+    } else {
+      const n = Number(updates.deadline);
+      updates.deadline = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    }
   }
   if (updates.outline) {
     // 大纲更新校验：数组长度 ≤15（与生成侧硬上限一致），元素结构合法

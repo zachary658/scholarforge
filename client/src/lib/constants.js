@@ -6,8 +6,8 @@ export const FIELDS = [
 
 export const TOOL_LABEL = {
   writing: '论文写作', proposal: '开题报告', polish: '论文润色',
-  translate: '中英翻译', grammar: '语法纠错', rewrite: '论文降重',
-  ai_reduce: '降AI率',
+  translate: '中英翻译', grammar: '语法纠错', rewrite: '重复表达优化',
+  ai_reduce: '表达自然度优化',
   literature_review: '文献综述', task_book: '任务书',
   defense: '答辩PPT+演讲稿', journal: '期刊论文',
 };
@@ -39,6 +39,7 @@ export const ORDER_STATUS_LABEL = {
   processing: '服务中',
   completed: '已完成',
   cancelled: '已取消',
+  refunded: '已退款',
 };
 
 export const ORDER_STATUS_CLASS = {
@@ -49,14 +50,28 @@ export const ORDER_STATUS_CLASS = {
   processing: 'bg-blue-50 text-blue-600',
   completed: 'bg-emerald-50 text-emerald-600',
   cancelled: 'bg-slate-100 text-slate-500',
+  refunded: 'bg-slate-100 text-slate-500',
 };
 
-// 服务执行状态
+// 服务执行状态（统一状态机 service_status）
 export const SERVICE_STATUS_LABEL = {
   pending: '待处理',
+  queued: '已排队',
   processing: '处理中',
+  awaiting_customer: '待客户补充',
   completed: '已完成',
   failed: '失败',
+  after_sales: '售后中',
+  closed: '已关闭',
+};
+
+// 客服状态（统一状态机 contact_status）
+export const CONTACT_STATUS_LABEL = {
+  pending: '待对接',
+  contacted: '已对接',
+  in_service: '服务中',
+  completed: '已完成',
+  closed: '已关闭',
 };
 
 // 支付方式
@@ -66,6 +81,18 @@ export const PAYMENT_METHOD_LABEL = {
   wechat: '微信支付',
   manual: '手动标记',
 };
+
+// 论文主流程阶段（工作区步骤导航，P1-4）
+export const PAPER_STAGES = [
+  { key: 'create', label: '创建论文', desc: '录入专业、题目、学历、截止时间' },
+  { key: 'materials', label: '上传资料', desc: '上传参考材料与文献' },
+  { key: 'outline', label: '生成大纲', desc: '生成并确认结构化大纲' },
+  { key: 'literature', label: '文献综述', desc: '梳理文献综述' },
+  { key: 'writing', label: '正文与图表', desc: '撰写正文与数据图表' },
+  { key: 'review', label: '全文审校', desc: '润色、优化与审校' },
+  { key: 'defense', label: '答辩材料', desc: '答辩 PPT 与演讲稿' },
+  { key: 'export', label: '导出交付', desc: '按模板导出 Word 交付' },
+];
 
 export const CHARGE_LABEL = {
   free_course: '课程额度', paid: '已付费',

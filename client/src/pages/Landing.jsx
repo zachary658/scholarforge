@@ -12,8 +12,8 @@ const pipeline = [
   { step: 1, title: '选题立意', desc: '工作区记录题目、学科、写作要求', icon: Pen, to: '/app/projects' },
   { step: 2, title: '大纲生成', desc: '免费不限次，3 级结构化大纲', icon: Layers, free: true, to: '/app/writing?type=outline' },
   { step: 3, title: '正文撰写', desc: '段落续写 / 全文生成 / 文献综述', icon: FileWord, to: '/app/writing' },
-  { step: 4, title: '论文降重', desc: '同义改写降低重复率', icon: Refresh, to: '/app/rewrite' },
-  { step: 5, title: '降AI率', desc: '智能改写消除 AI 痕迹', icon: Shield, to: '/app/ai-reduce' },
+  { step: 4, title: '重复表达优化', desc: '优化重复表达，提升表达多样性', icon: Refresh, to: '/app/rewrite' },
+  { step: 5, title: '表达自然度优化', desc: '识别并优化机械化表达', icon: Shield, to: '/app/ai-reduce' },
   { step: 6, title: '格式导出', desc: '按高校模板一键导出 Word', icon: FileText, to: '/app/templates' },
 ];
 
@@ -59,8 +59,8 @@ export default function Landing() {
             <a href="#services" className="text-sm font-medium text-slate-300 transition hover:text-white">专业服务</a>
             <a href="#graduation" className="text-sm font-medium text-slate-300 transition hover:text-white">作品设计辅导</a>
             <a href="#pipeline" className="text-sm font-medium text-slate-300 transition hover:text-white">AI写作</a>
-            <Link to={user ? '/app/rewrite' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">论文降重</Link>
-            <Link to={user ? '/app/ai-reduce' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">降AI率</Link>
+            <Link to={user ? '/app/rewrite' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">重复表达优化</Link>
+            <Link to={user ? '/app/ai-reduce' : '/login'} className="text-sm font-medium text-slate-300 transition hover:text-white">表达自然度优化</Link>
             {user?.is_admin && <Link to="/admin" className="text-sm font-medium text-indigo-300 transition hover:text-white">管理后台</Link>}
             {user && !user?.is_admin && <Link to="/app" className="text-sm font-medium text-slate-300 transition hover:text-white">工作台</Link>}
             {!user && <Link to="/login" className="text-sm font-medium text-slate-300 transition hover:text-white">登录</Link>}
@@ -101,7 +101,7 @@ export default function Landing() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-sky-300 bg-clip-text text-transparent">真实文献可溯源</span>
               </h1>
               <p className="animate-fade-up mt-6 max-w-md text-lg leading-relaxed text-slate-400" style={{ animationDelay: '0.16s' }}>
-                集成 AI 论文写作、开题报告、文献综述、答辩PPT、降重、降AI率于一体。真实参考文献可溯源，写作内容一键导出 Word。
+                集成 AI 论文写作、开题报告、文献综述、答辩PPT、重复表达优化、表达自然度优化于一体。真实参考文献可溯源，写作内容一键导出 Word。
               </p>
 
               {/* 核心卖点标签 */}

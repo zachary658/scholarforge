@@ -48,6 +48,10 @@ export function saveTask({
   orderId = null,
   usageLogId = null,
   status = 'success',
+  progress = null,
+  stage = null,
+  errorCode = null,
+  retryCount = 0,
 }) {
   // 安全（纵深防御）：任务只能写入本人工作区；跨用户 projectId 直接丢弃关联，
   // 防止任何调用路径（含未来新增）把内容注入他人项目上下文
@@ -65,18 +69,44 @@ export function saveTask({
   const info = db.prepare(
     `INSERT INTO ai_tasks
       (user_id, project_id, tool_type, action, title, input_text, output_text, params_json, context_summary,
-       model_name, tokens, charge_type, amount, order_id, usage_log_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       model_name, tokens, charge_type, amount, order_id, usage_log_id, status, progress, stage, error_code, retry_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     userId, projectId, toolType, action, autoTitle,
     safeInput, safeOutput, safeParams, safeCtx,
-    modelName, tokens, chargeType, amount, orderId, usageLogId, status
+    modelName, tokens, chargeType, amount, orderId, usageLogId, status,
+    progress == null ? (status === 'success' ? 100 : 0) : progress,
+    stage == null ? null : String(stage),
+    errorCode == null ? null : String(errorCode),
+    retryCount
   );
   // 更新工作区的 updated_at
   if (projectId) {
     db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now(), projectId);
   }
   return info.lastInsertRowid;
+}
+
+// ===== 失败任务错误分类（面向客户的错误码） =====
+// 把内部异常归类为可理解的 error_code 与可重试标记，供前端展示「重新执行」或「联系客服」。
+export function classifyTaskError(err) {
+  const msg = String((err && err.message) || (err && err.code) || '');
+  if (/timeout|超时|etimedout|econnreset|abort|网络/i.test(msg)) {
+    return { code: 'network_timeout', retryable: true, label: '网络超时，请重试' };
+  }
+  if (/过长|超限|too\s*long|exceed|超过|字符数|字数/i.test(msg)) {
+    return { code: 'input_too_long', retryable: false, label: '输入内容过长' };
+  }
+  if (/资料|解析|parse|material|文件|读取/i.test(msg)) {
+    return { code: 'material_parse_failed', retryable: false, label: '资料解析失败' };
+  }
+  if (/余额|订单|无权|配额|quota|insufficient|payment|付费|收费|购买/i.test(msg)) {
+    return { code: 'order_error', retryable: false, label: '余额或订单异常' };
+  }
+  if (/AI|模型|model|服务暂不可用|429|rate.?limit|service\s*unavailable|provider|上游/i.test(msg)) {
+    return { code: 'ai_unavailable', retryable: true, label: 'AI 服务暂不可用' };
+  }
+  return { code: 'internal_error', retryable: false, label: '系统内部错误' };
 }
 
 // 查询任务历史（分页+筛选）
@@ -94,12 +124,14 @@ export function listTasks({ userId, projectId = null, toolType = null, keyword =
   const total = db.prepare(`SELECT COUNT(*) as c FROM ai_tasks t ${where}`).get(...params).c;
   const tasks = db.prepare(
     `SELECT t.id, t.project_id, t.tool_type, t.action, t.title, t.model_name, t.tokens,
-            t.charge_type, t.amount, t.status, t.created_at,
+            t.charge_type, t.amount, t.status, t.created_at, t.order_id, o.order_no,
+            t.progress, t.stage, t.error_code, t.retry_count,
             LENGTH(t.input_text) as input_len, LENGTH(t.output_text) as output_len,
             SUBSTR(t.output_text, 1, 200) as output_preview,
             p.title as project_title
      FROM ai_tasks t
      LEFT JOIN projects p ON p.id = t.project_id
+     LEFT JOIN orders o ON o.id = t.order_id
      ${where}
      ORDER BY t.created_at DESC
      LIMIT ? OFFSET ?`
@@ -183,11 +215,25 @@ export function ensureAutoProject(userId, title) {
   return info.lastInsertRowid;
 }
 
-export function createProject({ userId, title, field = '', description = '', writingRequirements = '', outline = [] }) {
+export function createProject({
+  userId,
+  title,
+  field = '',
+  description = '',
+  writingRequirements = '',
+  outline = [],
+  degree = '',
+  deadline = null,
+  current_stage = 'create',
+  completion_percent = 0,
+}) {
   const info = db.prepare(
-    `INSERT INTO projects (user_id, title, field, description, writing_requirements, outline_json)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(userId, title, field, description, writingRequirements, JSON.stringify(outline));
+    `INSERT INTO projects (user_id, title, field, description, writing_requirements, outline_json, degree, deadline, current_stage, completion_percent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    userId, title, field, description, writingRequirements, JSON.stringify(outline),
+    degree || null, deadline ? Number(deadline) : null, current_stage || 'create', Number(completion_percent) || 0
+  );
   return getProject(info.lastInsertRowid, userId);
 }
 
@@ -223,7 +269,7 @@ export function listProjects(userId) {
 }
 
 export function updateProject(projectId, userId, updates) {
-  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status'];
+  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent'];
   const sets = [];
   const params = [];
   let outlineChanged = false;
@@ -235,6 +281,17 @@ export function updateProject(projectId, userId, updates) {
       outlineChanged = true;
       sets.push(`${col} = ?`);
       params.push(JSON.stringify(Array.isArray(v) ? v : []));
+      continue;
+    }
+    if (col === 'deadline') {
+      // 截止时间为 Unix 秒级时间戳，空值清空，其余强转数字
+      sets.push(`${col} = ?`);
+      params.push(v ? Number(v) : null);
+      continue;
+    }
+    if (col === 'completion_percent') {
+      sets.push(`${col} = ?`);
+      params.push(Number(v) || 0);
       continue;
     }
     sets.push(`${col} = ?`);

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
@@ -17,6 +18,36 @@ const TOOL_ICON = {
   defense: FileWord, journal: FileText,
 };
 
+// 失败任务错误分类（对应后端 classifyTaskError 的 error_code）：
+// 客户端绝不展示内部异常堆栈，只展示可理解文案与下一步指引。
+const ERROR_CODE_META = {
+  network_timeout: { label: '网络超时', retryable: true, hint: '网络不稳定导致生成超时，可重新执行（不重复扣费）' },
+  ai_unavailable: { label: 'AI 服务暂不可用', retryable: true, hint: 'AI 服务繁忙，可稍后重新执行（不重复扣费）' },
+  input_too_long: { label: '输入内容过长', retryable: false, hint: '请精简输入后重新提交' },
+  material_parse_failed: { label: '资料解析失败', retryable: false, hint: '请检查上传资料格式后重试' },
+  order_error: { label: '余额或订单异常', retryable: false, hint: '请联系客服处理' },
+  internal_error: { label: '系统内部错误', retryable: false, hint: '请联系客服处理' },
+};
+
+// 工具类型 → 页面路由（重试时跳转回原工具页）
+const TOOL_PATH = {
+  writing: '/app/writing',
+  proposal: '/app/proposal',
+  polish: '/app/polish',
+  translate: '/app/polish',
+  grammar: '/app/polish',
+  rewrite: '/app/rewrite',
+  ai_reduce: '/app/ai-reduce',
+  literature_review: '/app/literature-review',
+  task_book: '/app/task-book',
+  defense: '/app/defense',
+  journal: '/app/journal',
+};
+
+function errorMeta(code) {
+  return ERROR_CODE_META[code] || ERROR_CODE_META.internal_error;
+}
+
 function fmtDate(ts) {
   if (!ts) return '';
   const d = new Date(ts * 1000);
@@ -27,6 +58,7 @@ function fmtDate(ts) {
 export default function MyTasks() {
   const toast = useToast();
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -101,6 +133,18 @@ export default function MyTasks() {
     } catch {
       toast.error('复制失败，请手动复制');
     }
+  };
+
+  // 重新执行：跳回原工具页并携带原订单号（后端沿用原订单，不重复扣费）
+  const handleRetry = (task) => {
+    const path = TOOL_PATH[task.tool_type];
+    if (!path) {
+      toast.error('该任务类型暂不支持一键重试，请前往对应工具重新提交');
+      return;
+    }
+    const qs = task.order_no ? `?orderNo=${encodeURIComponent(task.order_no)}` : '';
+    navigate(path + qs);
+    toast.info('已回到原工具，重新提交将沿用原订单、不重复扣费');
   };
 
   return (
@@ -203,8 +247,31 @@ export default function MyTasks() {
                     <span>输入 {t.input_len || 0} 字</span>
                     <span>输出 {t.output_len || 0} 字</span>
                   </div>
+                  {t.status === 'failed' && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        {errorMeta(t.error_code).label}
+                      </span>
+                      <span className="text-xs text-slate-500">{errorMeta(t.error_code).hint}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-shrink-0 gap-1">
+                  {t.status === 'failed' && errorMeta(t.error_code).retryable && (
+                    <button
+                      onClick={() => handleRetry(t)}
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent hover:bg-accent-50"
+                      title="重新执行"
+                    >
+                      <Refresh className="h-3.5 w-3.5" /> 重新执行
+                    </button>
+                  )}
+                  {t.status === 'failed' && !errorMeta(t.error_code).retryable && (
+                    <span className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-slate-500" title="联系客服">
+                      联系客服
+                    </span>
+                  )}
                   <button
                     onClick={() => handleViewDetail(t.id)}
                     className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-accent"
@@ -272,6 +339,16 @@ export default function MyTasks() {
                   <span className="rounded bg-blue-50 px-2 py-1 text-blue-600">上下文: {detail.context_summary}</span>
                 )}
               </div>
+
+              {detail.status === 'failed' && (
+                <div className="mb-4 rounded-lg bg-red-50 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-red-600">
+                    <AlertCircle className="h-4 w-4" />
+                    {errorMeta(detail.error_code).label}
+                  </div>
+                  <p className="mt-1 text-xs text-red-500">{errorMeta(detail.error_code).hint}</p>
+                </div>
+              )}
 
               <div className="mb-4">
                 <div className="mb-2 flex items-center justify-between">

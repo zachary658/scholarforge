@@ -9,11 +9,16 @@ const CHANNEL_LABEL = {
   wechat: '微信支付',
 };
 
+// 已知支付通道白名单：未知通道一律提示重新发起支付，绝不默认 mock
+const KNOWN_CHANNELS = new Set(['mock', 'alipay', 'wechat']);
+
 const POLL_INTERVAL = 2000;
 const POLL_MAX_DURATION = 15 * 60 * 1000; // 15 分钟超时
 
 export default function PayModal({ order, payParams, onClose, onPaid }) {
-  const channel = payParams?.channel || order?.payment_channel || 'mock';
+  // 通道缺失时保持为空字符串，由下方「未知通道」分支提示，绝不默认 mock
+  const channel = payParams?.channel || order?.payment_channel || '';
+  const isKnown = KNOWN_CHANNELS.has(channel);
   const [qrDataUrl, setQrDataUrl] = useState(null);
   const [loadingQr, setLoadingQr] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -147,13 +152,19 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
   useEffect(() => stopPolling, [stopPolling]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="确认支付"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="w-[420px] max-w-full rounded-xl bg-white shadow-card">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-base font-semibold text-ink">
             {done ? '支付成功' : '确认支付'}
           </h3>
-          <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink">
+          <button onClick={onClose} aria-label="关闭" className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-ink">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -186,7 +197,12 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
           {/* 支付区域 */}
           {!done && (
             <div className="mt-5">
-              {channel === 'mock' ? (
+              {!isKnown ? (
+                <div className="flex flex-col items-center py-6 text-center">
+                  <p className="text-sm font-medium text-red-600">支付通道无效，请重新发起支付</p>
+                  <p className="mt-1 text-xs text-slate-400">关闭窗口后重新下单</p>
+                </div>
+              ) : channel === 'mock' ? (
                 <div className="text-center">
                   <p className="text-xs text-slate-400">演示模式：点击下方按钮立即完成支付</p>
                   <button onClick={handleMockPay} disabled={paying} className="btn-primary mt-3 w-full py-3">

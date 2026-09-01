@@ -4,6 +4,7 @@
 import db from '../db.js';
 import { now } from '../utils.js';
 import { getSetting } from '../config-store.js';
+import { recordOrderEvent } from './order-state.js';
 
 // 订单卡死判定超时：进入 processing 超过该时长视为「卡死」（进程崩溃/重启遗留），允许抢占重试。
 // 默认 30 分钟，可经 settings 表 order_claim_timeout_min（分钟）配置。
@@ -21,6 +22,8 @@ function getOrderClaimTimeoutSec() {
  */
 export function claimOrderExecution(order, { projectId = null } = {}) {
   if (!order) return true;
+  const cur = db.prepare('SELECT service_status AS s FROM orders WHERE id = ?').get(order.id);
+  const from = cur ? cur.s : null;
   const r = db.prepare(
     `UPDATE orders
         SET service_status = 'processing', updated_at = ?,
@@ -29,5 +32,15 @@ export function claimOrderExecution(order, { projectId = null } = {}) {
         AND (service_status IN ('pending', 'failed')
              OR (service_status = 'processing' AND (updated_at IS NULL OR updated_at < ?)))`
   ).run(now(), projectId, order.id, now() - getOrderClaimTimeoutSec());
-  return r.changes === 1;
+  if (r.changes === 1) {
+    // 记录服务状态事件（失败重试时 from=failed → processing）
+    recordOrderEvent({
+      orderId: order.id, orderNo: order.order_no, domain: 'service', refType: 'orders', refId: order.id,
+      field: 'service_status', fromStatus: from, toStatus: 'processing',
+      operatorId: null, operatorName: 'system',
+      reason: from === 'failed' ? '失败后重新执行' : '开始执行',
+    });
+    return true;
+  }
+  return false;
 }

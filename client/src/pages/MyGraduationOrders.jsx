@@ -44,7 +44,7 @@ function fmtDateTime(ts) {
   return d.toLocaleString('zh-CN');
 }
 
-export default function MyGraduationOrders() {
+export default function GraduationOrdersPanel() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -89,12 +89,9 @@ export default function MyGraduationOrders() {
   });
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-8">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-ink">我的毕业作品订单</h1>
-          <p className="mt-1 text-sm text-slate-500">共 {orders.length} 条订单记录</p>
-        </div>
+    <div>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">共 {orders.length} 条订单记录</p>
         <button onClick={load} className="btn-ghost text-xs">
           <Refresh className="h-4 w-4" /> 刷新
         </button>

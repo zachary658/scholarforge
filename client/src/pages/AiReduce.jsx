@@ -35,7 +35,7 @@ export default function AiReduce() {
 
   const run = (orderNo) => {
     if (!input.trim()) {
-      toast.warning('请输入需要降AI的文本');
+      toast.warning('请输入需要优化的文本');
       return;
     }
     if (!integrity.ensure(() => run(orderNo))) return;
@@ -57,7 +57,7 @@ export default function AiReduce() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = '降AI结果.txt';
+      a.download = '优化结果.txt';
       a.click();
       URL.revokeObjectURL(url);
       toast.success('结果已下载');
@@ -70,8 +70,8 @@ export default function AiReduce() {
     <div className="mx-auto flex h-full max-w-6xl flex-col px-8 py-8">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold text-ink">降AI率</h1>
-          <p className="mt-1 text-sm text-slate-500">智能改写消除 AI 痕迹，让文本读起来更像人类写作，同时保留原意与学术性</p>
+          <h1 className="text-xl font-bold text-ink">表达自然度优化</h1>
+          <p className="mt-1 text-sm text-slate-500">识别并优化机械化表达，让文本读起来更自然流畅，同时保留原意与学术性</p>
         </div>
         <div className="flex gap-1 rounded-lg border border-slate-200 p-1">
           <button
@@ -102,7 +102,7 @@ export default function AiReduce() {
           </div>
           <textarea
             className="flex-1 resize-none border-0 p-5 font-serif text-[14px] leading-[1.85] text-slate-700 focus:outline-none focus:ring-0"
-            placeholder="粘贴需要降AI的论文段落…将自动消除 AI 写作痕迹"
+            placeholder="粘贴需要优化的论文段落…将自动优化机械化表达"
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
@@ -111,10 +111,10 @@ export default function AiReduce() {
           </div>
         </div>
 
-        {/* 降AI结果 */}
+        {/* 优化结果 */}
         <div className="card flex flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-            <span className="text-sm font-medium text-slate-600">降AI后文本</span>
+            <span className="text-sm font-medium text-slate-600">优化后文本</span>
             {output && (
               <div className="flex items-center gap-1">
                 <button onClick={handleCopy} className="btn-ghost text-xs">
