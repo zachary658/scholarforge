@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
@@ -32,7 +31,7 @@ import { closeExpiredOrders } from './services/payment.js';
 import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
-import { makeLimiter } from './middleware/rateLimit.js';
+import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
 import logger from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -103,12 +102,12 @@ app.use(cors({
 }));
 
 // 全局速率限制：每个 IP 每分钟最多 120 次请求（防暴力扫描/DoS）
-app.use(rateLimit({
+// 通过 makeLimiter 创建：配置 REDIS_URL 时自动使用集中式 Redis 存储（多实例共享计数）
+app.use(makeLimiter({
   windowMs: 60 * 1000,
   max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '请求过于频繁，请稍后再试' },
+  keyType: 'ip',
+  message: '请求过于频繁，请稍后再试',
   // 仅跳过支付异步回调（网关重试不应被限流）和健康检查；用户端点（下单/扫码）仍受限流保护
   skip: (req) =>
     req.path === '/api/payment/alipay/notify' ||
@@ -249,7 +248,7 @@ const intervalCleanup = setInterval(() => {
 
 // 优雅关闭：收到终止信号时停止接受新连接，清理定时器，等待进行中请求完成
 let shuttingDown = false;
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info('shutdown', `received ${signal}, closing gracefully...`);
@@ -257,6 +256,8 @@ function shutdown(signal) {
   clearInterval(intervalTasks);
   clearInterval(intervalDocs);
   clearInterval(intervalCleanup);
+  // 断开限流 Redis 连接（若配置了 REDIS_URL），避免连接句柄阻塞进程退出
+  await closeRateLimitStore();
   server.close((err) => {
     if (err) {
       logger.error('shutdown', `server close error: ${err.message}`);

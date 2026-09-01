@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import db from '../db.js';
+import { makeLimiter } from '../middleware/rateLimit.js';
 import {
   hashPassword,
   verifyPassword,
@@ -26,39 +26,36 @@ import logger from '../logger.js';
 const router = Router();
 
 // 登录速率限制：每个 IP 15 分钟最多 10 次尝试，防暴力破解
-const loginLimiter = rateLimit({
+// 通过 makeLimiter 创建：配置 REDIS_URL 时自动使用集中式 Redis 存储（多实例共享计数）
+const loginLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
   max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '登录尝试过于频繁，请 15 分钟后再试' },
+  keyType: 'ip',
+  message: '登录尝试过于频繁，请 15 分钟后再试',
 });
 
 // 注册速率限制：每个 IP 每小时最多 5 次注册，防批量薅额度
-const registerLimiter = rateLimit({
+const registerLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '注册过于频繁，请稍后再试' },
+  keyType: 'ip',
+  message: '注册过于频繁，请稍后再试',
 });
 
 // 密码重置请求速率限制：每个 IP 每小时最多 5 次，防邮箱枚举/轰炸
-const forgotLimiter = rateLimit({
+const forgotLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '请求过于频繁，请稍后再试' },
+  keyType: 'ip',
+  message: '请求过于频繁，请稍后再试',
 });
 
 // 修改密码速率限制：每个 IP 15 分钟最多 5 次，防当前密码被暴力破解（尤其管理员账号）
-const changePasswordLimiter = rateLimit({
+const changePasswordLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: '操作过于频繁，请稍后再试' },
+  keyType: 'ip',
+  message: '操作过于频繁，请稍后再试',
 });
 
 // ===== 登录账号维度防爆破（与 IP 限流互补）=====

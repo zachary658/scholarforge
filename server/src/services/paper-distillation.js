@@ -661,7 +661,7 @@ function rebuildLines(items) {
 // 下载 OA PDF（SSRF 防护 + 大小限制 + 超时；失败抛错由调用方降级）
 // 安全：所有外站 URL 先经 assertSafeAiResolvedUrl 校验，拒绝回环/链路本地/云元数据/私网；
 // 并禁止重定向（redirect:'manual'）以防攻击者在校验后通过 3xx 跳转到内网/元数据端点。
-async function downloadPdfBytes(url) {
+export async function downloadPdfBytes(url) {
   await assertSafeAiResolvedUrl(url, { allowPrivate: false });
   const resp = await pdfDownloadSem.run(() => fetch(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
