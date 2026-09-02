@@ -548,8 +548,8 @@ router.post('/writing', authRequired, async (req, res) => {
         template,
       },
       transformContent: async (content) => {
-        const { replaceCitePlaceholders, replaceChartPlaceholders } = await import('../services/paper-distillation.js');
-        return replaceChartPlaceholders(replaceCitePlaceholders(content, sourceRefs), sourceBenchmarks);
+        const { replaceCitePlaceholdersCsl, replaceChartPlaceholders } = await import('../services/paper-distillation.js');
+        return replaceChartPlaceholders(await replaceCitePlaceholdersCsl(content, sourceRefs), sourceBenchmarks);
       },
       orderNo: orderNo || null,
       materialIds: (req.body && req.body.material_ids) || null,

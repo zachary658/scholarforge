@@ -1,0 +1,9 @@
+# 完整模式依赖：在 requirements.txt 基础上增加 PaperQA2 及文档解析能力。
+# 注意：paper-qa 会拉取较多传递依赖（langchain、pydantic 等）与模型，请评估部署环境。
+-r requirements.txt
+
+# PaperQA2 核心（Apache-2.0）
+paper-qa>=5.0.0
+
+# PDF 文本抽取（PaperQA2 索引 PDF 时需要）
+pymupdf>=1.24.0

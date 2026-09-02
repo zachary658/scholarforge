@@ -7,7 +7,9 @@ import { authRequired } from '../middleware.js';
 import { makeLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { estimateTextTokens } from '../services/billing.js';
-import { parsePdfViaPdfjs } from '../services/paper-distillation.js';
+// PDF 解析统一走 document-parser 的四通道路由（MinerU / Docling / GROBID / pdfjs 自动降级），
+// 取代原先直接调 parsePdfViaPdfjs，让中文复杂版式与英文论文都能拿到更好的结构化结果
+import { parseDocument } from '../services/document-parser.js';
 import { isProjectOwned } from '../services/task-store.js';
 import { FILE_SIGNATURES } from '../utils.js';
 import logger from '../logger.js';
@@ -35,8 +37,10 @@ async function extractText(buffer, filename) {
     return res.value || '';
   }
   if (ext === 'pdf') {
-    const lines = await parsePdfViaPdfjs(buffer);
-    return lines.join('\n');
+    // 解析失败（所有通道都不可用）时 parseDocument 会抛错，由 upload 的 catch 统一转 400，
+    // 与原先直接调 pdfjs 的对外错误提示保持一致
+    const result = await parseDocument(buffer, { filename, wantTables: true });
+    return result.blocks.map((b) => b.text).join('\n');
   }
   throw new Error('仅支持 .docx / .pdf / .txt 格式');
 }

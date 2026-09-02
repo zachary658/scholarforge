@@ -25,6 +25,13 @@ services:
       # 可选：AI 模型、MinerU、SMTP、CORS、TRUST_PROXY 等
       CORS_ALLOW_ORIGINS: "${CORS_ALLOW_ORIGINS:-http://localhost:3001}"
       TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # 可选插件：段落级 RAG / 出版级导出（未配置则静默降级，见 .env.example）
+      CSL_STYLE: "${CSL_STYLE:-}"
+      ZOTERO_TRANSLATION_URL: "${ZOTERO_TRANSLATION_URL:-}"
+      ZOTERO_TRANSLATION_TIMEOUT_MS: "${ZOTERO_TRANSLATION_TIMEOUT_MS:-30000}"
+      QUARTO_BIN: "${QUARTO_BIN:-}"
+      PANDOC_BIN: "${PANDOC_BIN:-}"
+      QUARTO_TIMEOUT_MS: "${QUARTO_TIMEOUT_MS:-120000}"
     env_file:
       - .env
     volumes:

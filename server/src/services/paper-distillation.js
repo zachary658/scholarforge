@@ -29,6 +29,9 @@ import { dedupKeyOf, assertSafeAiResolvedUrl, createSemaphore } from '../utils.j
 // 出站 PDF 下载并发上限：防止大量并发外站请求拖垮出网带宽 / 触发目标站限流（L-3）
 const pdfDownloadSem = createSemaphore(Number(process.env.PDF_MAX_CONCURRENCY) || 5);
 import logger from '../logger.js';
+// 学术文档统一解析层：extractPdfText 改走它的四通道路由（含 MinerU 通道），
+// 原先的「MinerU → pdfjs」两通道判断由它统一负责
+import { parseDocument } from './document-parser.js';
 
 // pdfjs 动态导入（Node 18+ 兼容）；仅在需要解析 OA PDF 时加载，避免拖慢常规路径
 async function loadPdfjs() {
@@ -775,16 +778,22 @@ async function parsePdfViaPdfjsCore(pdfBytes) {
   return lines;
 }
 
-// 统一入口：传入已下载的 PDF 字节，走 MinerU（若配置）或 pdfjs 通道
-// 返回 { lines, mineruTables }；MinerU 通道失败会由调用方捕获后回退 pdfjs（复用同一 buffer）
+// 统一入口：传入已下载的 PDF 字节，走 document-parser 的四通道路由
+// （MinerU / Docling / GROBID / pdfjs，由它负责语言驱动的优先级与逐级降级）。
+// 这里只做「统一结构 → 行数组 + 结构化表格」的适配，对外返回契约
+// { lines, mineruTables } 保持不变（enrichSourcesFromOpenAccess 依赖它）。
+// 注意：解析全部失败时 parseDocument 会抛错，与上层的 MinerU→pdfjs 回退逻辑衔接。
 async function extractPdfText(buf) {
-  if (MINERU_API_URL) {
-    const { markdown, data } = await parsePdfViaMinerU(buf);
-    const lines = markdown.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (lines.length === 0) throw new Error('MinerU 返回空内容');
-    return { lines, mineruTables: tablesFromMinerUData(data) };
+  const result = await parseDocument(buf, { filename: 'paper.pdf', wantTables: true });
+  const lines = [];
+  for (const block of result.blocks) {
+    // 块文本本身可能含换行（pdfjs 逐页通道一页就是一个块），展开成行以喂给指标/表格挖掘
+    lines.push(...String(block.text || '').split('\n'));
   }
-  return { lines: await parsePdfViaPdfjs(buf), mineruTables: [] };
+  // 通道自带的结构化表格（Docling grid / MinerU content_list）质量最高，直接采用
+  const tables = Array.isArray(result.tables) ? result.tables : [];
+  if (lines.length === 0 && tables.length === 0) throw new Error('解析结果为空');
+  return { lines: lines.map((s) => s.trim()).filter(Boolean), mineruTables: tables };
 }
 
 // 从重建行中提取数据表：连续出现 ≥3 个数值 token 的行视为表格行
@@ -943,6 +952,35 @@ export function replaceCitePlaceholders(content, references, { appendReferences 
   });
   if (appendReferences && hasRefs && !/参考文献|References/i.test(replaced)) {
     replaced = `${replaced}\n\n## 参考文献\n\n${formatReferencesGB(references)}`;
+  }
+  return replaced;
+}
+
+// 引用占位符替换（CSL 官方样式版）：先复用同步替换逻辑处理 [CITE:n]，
+// 再用官方 GB/T 7714-2015 样式引擎追加参考文献列表；CSL 不可用/渲染失败时
+// 自动回退到 formatReferencesGB 手写版，绝不阻断导出流程。
+// 仅在全文本/全文生成路径（appendReferences=true）需要调用；分章节场景仍用同步版。
+export async function replaceCitePlaceholdersCsl(content, references, { appendReferences = true } = {}) {
+  if (!content) return content;
+  const hasRefs = Array.isArray(references) && references.length > 0;
+  // 占位符替换与同步版完全一致（纯字符串处理，无依赖）
+  let replaced = content.replace(/\[CITE:(\d+)\]/g, (_m, n) => {
+    const idx = parseInt(n, 10);
+    if (!hasRefs || idx < 1 || idx > references.length) return '';
+    return `[${idx}]`;
+  });
+  if (appendReferences && hasRefs && !/参考文献|References/i.test(replaced)) {
+    let refText = '';
+    try {
+      const { formatReferencesGBWithCsl, isCslAvailable } = await import('./csl-formatter.js');
+      if (isCslAvailable()) {
+        refText = await formatReferencesGBWithCsl(references);
+      }
+    } catch (err) {
+      // CSL 引擎失败：静默回退手写版
+    }
+    if (!refText) refText = formatReferencesGB(references);
+    replaced = `${replaced}\n\n## 参考文献\n\n${refText}`;
   }
   return replaced;
 }

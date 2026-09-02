@@ -1,0 +1,150 @@
+# 维度 2：每条事实能否定位到证据
+# 断言：assertEvidenceTraceable —— 声明性段落需带 [EVIDENCE:id source=... page=... chunk=...]
+#       标记，可溯源段落占比即 score，低于 minCoverage 判 fail。
+# 参考：https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/
+
+- description: '计算机/医学影像分割 综述：6 个声明性段落全部带证据标记'
+  vars:
+    fixture: good-literature-review
+    tool: literature_review
+    topic: '深度学习在医学影像分割中的应用'
+    field: '计算机科学'
+    keywords: '深度学习,医学影像,分割'
+    outline: '["引言","主题分类梳理","研究述评","研究展望"]'
+    terms: '医学影像分割'
+    references: '[{"authors":"Ronneberger O., Fischer P., Brox T.","title":"U-Net: Convolutional Networks for Biomedical Image Segmentation","journal":"MICCAI","year":"2015","abstract":"该文提出编码器-解码器结构的 U-Net 分割网络，在公开医学影像分割数据集上取得显著进展，Dice 系数达到 87.4%。"},{"authors":"Chen J., Lu Y., Yu Q.","title":"TransUNet: Transformers Make Strong Encoders for Medical Image Segmentation","journal":"arXiv","year":"2021","abstract":"该文将视觉 Transformer 引入医学影像分割，在 Synapse 多器官分割数据集上平均 Dice 系数达到 84.3%。"},{"authors":"李文, 张涛, 陈静","title":"半监督医学影像分割方法综述","journal":"自动化学报","year":"2022","abstract":"该文综述一致性正则化与伪标签两类半监督医学影像分割方法，指出在标注受限场景下分割准确率可达 91.2%。"},{"authors":"王磊, 孙明","title":"医学影像分割的域泛化问题研究","journal":"计算机学报","year":"2023","abstract":"该文分析多中心数据分布偏移对分割模型泛化能力的影响，指出跨域泛化与小目标分割仍是主要难点。"},{"authors":"Isensee F., Jaeger P.","title":"nnU-Net: a self-configuring method for biomedical image segmentation","journal":"Nature Methods","year":"2021","abstract":"该文提出医学影像分割的自动化配置流程，强调构建多中心大规模评测基准是后续研究的关键方向。"}]'
+    benchmarks: '[{"paperTitle":"U-Net","paperYear":"2015","metrics":[{"label":"Dice","value":87.4}]},{"paperTitle":"TransUNet","paperYear":"2021","metrics":[{"label":"Dice","value":84.3}]},{"paperTitle":"半监督一致性正则化","paperYear":"2022","metrics":[{"label":"准确率","value":91.2}]}]'
+  metadata:
+    dimension: evidence
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      config:
+        minCoverage: 1
+
+- description: '医学/心血管风险预测：证据覆盖率要求 100%'
+  vars:
+    fixture: good-medical
+    tool: journal
+    topic: '基于电子病历的心血管疾病风险预测模型研究'
+    field: '临床医学'
+    keywords: '电子病历,风险预测,机器学习'
+    outline: '["摘要","引言","研究方法","结果与分析","结论"]'
+    terms: '心血管疾病'
+    references: '[{"authors":"张宏, 李静","title":"基于电子病历的心血管疾病风险预测模型研究","journal":"中华心血管病杂志","year":"2022","abstract":"该文基于电子病历构建心血管疾病风险预测模型，在随访队列中 AUC 达到 0.86。"},{"authors":"Wang Y., Liu H.","title":"Machine learning for cardiovascular risk prediction: a systematic review","journal":"The Lancet Digital Health","year":"2023","abstract":"该综述比较多种机器学习心血管风险预测模型，指出外部验证不足导致预测准确率普遍下降。"},{"authors":"陈立, 周敏","title":"心血管风险预测模型的外部验证与校准研究","journal":"中华流行病学杂志","year":"2024","abstract":"该文对心血管风险预测模型进行外部验证，结果显示校准之后预测准确率提升至 82.6%。"},{"authors":"赵鹏, 吴桐","title":"可解释机器学习在临床预测模型中的应用","journal":"中国医院管理","year":"2023","abstract":"该文讨论可解释机器学习在临床预测模型中的应用，强调可解释性是临床预测模型落地的必要条件。"}]'
+    benchmarks: '[{"paperTitle":"电子病历基线模型","paperYear":"2022","metrics":[{"label":"AUC","value":0.86}]},{"paperTitle":"外部验证校准模型","paperYear":"2024","metrics":[{"label":"准确率","value":82.6}]}]'
+  metadata:
+    dimension: evidence
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      config:
+        minCoverage: 1
+
+- description: '教育学/在线学习投入度：证据覆盖率要求 100%'
+  vars:
+    fixture: good-education
+    tool: literature_review
+    topic: '在线学习投入度影响因素研究'
+    field: '教育技术学'
+    keywords: '在线学习,学习投入度,支持服务'
+    outline: '["引言","理论基础与测评","影响因素梳理","研究述评与展望"]'
+    terms: '学习投入度'
+    references: '[{"authors":"刘敏, 何静","title":"在线学习投入度的影响因素实证研究","journal":"电化教育研究","year":"2022","abstract":"该文通过问卷调查检验在线学习投入度的影响因素，结果显示教师支持对学习投入度的解释率达到 37.8%。"},{"authors":"Sun Q., Zhao L.","title":"Student engagement in online learning: a meta-analysis","journal":"Computers & Education","year":"2023","abstract":"该元分析综合在线学习投入度的实证研究，指出互动频率与课程完成率显著正相关。"},{"authors":"吴倩, 郑凯","title":"混合式教学中学习投入度的测评工具开发","journal":"中国电化教育","year":"2021","abstract":"该文开发混合式教学中学习投入度的测评量表，为实证测量提供了可靠工具。"},{"authors":"胡蝶, 马超","title":"在线学习辍学率与学习支持服务的关系研究","journal":"开放教育研究","year":"2024","abstract":"该文分析在线学习辍学率与学习支持服务的关系，发现完善支持服务之后辍学率下降至 11.3%。"}]'
+    benchmarks: '[{"paperTitle":"教师支持模型","paperYear":"2022","metrics":[{"label":"解释率","value":37.8}]},{"paperTitle":"支持服务改进","paperYear":"2024","metrics":[{"label":"辍学率","value":11.3}]}]'
+  metadata:
+    dimension: evidence
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      config:
+        minCoverage: 1
+
+- description: '经管/ESG 信息披露：证据覆盖率要求 100%'
+  vars:
+    fixture: good-law-economics
+    tool: journal
+    topic: 'ESG 信息披露对企业融资约束的影响研究'
+    field: '公司金融'
+    keywords: 'ESG,信息披露,融资约束'
+    outline: '["引言","制度背景与文献回顾","实证设计与结果","结论与启示"]'
+    terms: '融资约束'
+    references: '[{"authors":"周涛, 林曦","title":"ESG 信息披露与制造业企业融资约束","journal":"会计研究","year":"2023","abstract":"该文检验 ESG 信息披露与企业融资约束的关系，发现披露质量提升之后融资约束指数下降 18.6%。"},{"authors":"Green T., Ma L.","title":"Mandatory ESG disclosure and capital market consequences","journal":"Journal of Accounting Research","year":"2022","abstract":"该文研究强制 ESG 信息披露的资本市场后果，指出强制披露降低了信息不对称程度。"},{"authors":"许静, 高远","title":"绿色信贷政策对企业债务融资成本的影响","journal":"金融研究","year":"2021","abstract":"该文评估绿色信贷政策对企业债务融资成本的影响，结果显示政策实施之后债务融资成本明显下降。"},{"authors":"范平, 苏萌","title":"企业 ESG 评级分歧与资本市场定价效率","journal":"经济管理","year":"2024","abstract":"该文分析企业 ESG 评级分歧对资本市场定价效率的影响，发现评级分歧会削弱 ESG 信息的定价作用。"}]'
+    benchmarks: '[{"paperTitle":"ESG 披露质量提升","paperYear":"2023","metrics":[{"label":"融资约束指数","value":18.6}]}]'
+  metadata:
+    dimension: evidence
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+
+- description: '反例：联邦学习实验稿通篇无 [EVIDENCE:...] 标记，可溯源占比为 0'
+  vars:
+    fixture: fabricated-data
+    tool: journal
+    topic: '联邦学习在医疗数据协同中的实验研究'
+    field: '计算机科学'
+    keywords: '联邦学习,医疗数据'
+    references: '[{"authors":"周涛","title":"联邦学习研究综述","journal":"计算机学报","year":"2021","abstract":"综述联邦学习在医疗数据协同中的技术路线。"}]'
+    benchmarks: '[{"paperTitle":"FedAvg 基线","paperYear":"2019","metrics":[{"label":"准确率","value":82.4}]}]'
+  metadata:
+    dimension: evidence
+    expectation: fail
+    defect: 'no-evidence-marker'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+
+- description: '反例：城市碳排放稿无证据标记，且阈值提高到 0.9 仍不达标'
+  vars:
+    fixture: missing-chapters
+    tool: journal
+    topic: '城市碳排放影响因素研究'
+    field: '环境经济'
+    keywords: '碳排放,产业结构'
+    references: '[{"authors":"何青","title":"城市碳排放影响因素研究","journal":"中国人口资源与环境","year":"2022","abstract":"分析产业结构与能源强度对城市碳排放的影响。"}]'
+  metadata:
+    dimension: evidence
+    expectation: fail
+    defect: 'no-evidence-marker'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      config:
+        minCoverage: 0.9
+
+- description: '反例：智能客服实证稿无证据标记（含互斥结论，证据同样缺失）'
+  vars:
+    fixture: contradiction
+    tool: journal
+    topic: '智能客服对话系统满意度实证研究'
+    field: '管理科学与工程'
+    keywords: '智能客服,满意度'
+    references: '[{"authors":"钱宇","title":"智能客服对话系统满意度研究","journal":"管理科学","year":"2023","abstract":"研究智能客服对话系统的用户满意度测量。"}]'
+  metadata:
+    dimension: evidence
+    expectation: fail
+    defect: 'no-evidence-marker'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+
+- description: '宽松阈值回归：同一优秀输出在 minCoverage 0.5 下必须仍然通过'
+  vars:
+    fixture: good-literature-review
+    tool: literature_review
+    topic: '深度学习在医学影像分割中的应用'
+    field: '计算机科学'
+    keywords: '深度学习,医学影像,分割'
+    references: '[{"authors":"Ronneberger O., Fischer P., Brox T.","title":"U-Net: Convolutional Networks for Biomedical Image Segmentation","journal":"MICCAI","year":"2015","abstract":"该文提出编码器-解码器结构的 U-Net 分割网络，在公开医学影像分割数据集上取得显著进展，Dice 系数达到 87.4%。"},{"authors":"Chen J., Lu Y., Yu Q.","title":"TransUNet: Transformers Make Strong Encoders for Medical Image Segmentation","journal":"arXiv","year":"2021","abstract":"该文将视觉 Transformer 引入医学影像分割，在 Synapse 多器官分割数据集上平均 Dice 系数达到 84.3%。"},{"authors":"李文, 张涛, 陈静","title":"半监督医学影像分割方法综述","journal":"自动化学报","year":"2022","abstract":"该文综述一致性正则化与伪标签两类半监督医学影像分割方法，指出在标注受限场景下分割准确率可达 91.2%。"},{"authors":"王磊, 孙明","title":"医学影像分割的域泛化问题研究","journal":"计算机学报","year":"2023","abstract":"该文分析多中心数据分布偏移对分割模型泛化能力的影响，指出跨域泛化与小目标分割仍是主要难点。"},{"authors":"Isensee F., Jaeger P.","title":"nnU-Net: a self-configuring method for biomedical image segmentation","journal":"Nature Methods","year":"2021","abstract":"该文提出医学影像分割的自动化配置流程，强调构建多中心大规模评测基准是后续研究的关键方向。"}]'
+  metadata:
+    dimension: evidence
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      config:
+        minCoverage: 0.5

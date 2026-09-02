@@ -11,7 +11,7 @@ import { transitionServiceToCompleted, transitionServiceToFailed } from './order
 import logger from '../logger.js';
 
 // 蒸馏产物注入：分章节生成消费工作区 sources（smart-writing 持久化的框架/文献/数据/表格）
-async function buildChapterAIParams(project, ch, context) {
+async function buildChapterAIParams(project, ch, context, userId, projectId) {
   const sources = project.sources || {};
   const params = {
     type: 'paragraph',
@@ -38,6 +38,26 @@ async function buildChapterAIParams(project, ch, context) {
   }
   if (Array.isArray(sources.tables) && sources.tables.length > 0) {
     params.dataTables = sources.tables;
+  }
+
+  // 3. 段落级证据检索注入（方案优先级 2 的核心缺口：生成段落必须绑定检索到的证据）
+  //    按「章节标题 + 小节标题」作为查询，走 Qdrant+BGE-M3+reranker 混合检索（未配置则本地 BM25），
+  //    把带 [EVIDENCE:id source=... page=... chunk=...] 标记的证据块注入上下文，
+  //    供 AI 在陈述事实时引用，从而支撑「结论—证据—论文—页码」的溯源与评测断言。
+  if (userId && projectId) {
+    try {
+      const { buildEvidenceContext } = await import('./evidence-engine.js');
+      const evidenceQuery = [ch.chapter, ...(ch.sections || []).map((s) => s.title || s)].filter(Boolean).join(' ');
+      const ev = await buildEvidenceContext(userId, projectId, evidenceQuery, { maxChars: 5000, limit: 8 });
+      if (ev.count > 0) {
+        context += `\n\n${ev.context}`;
+        // 证据编号白名单交给 AI：只允许引用这些编号，评测断言据此校验可溯源性
+        params.evidenceIds = ev.ids;
+      }
+    } catch (err) {
+      // 证据检索失败不阻断生成，仅降级为无证据段落（评测会据此提示证据覆盖不足）
+      logger.warn('chapter', `段落级证据检索失败（降级为无证据生成）: ${err.message}`);
+    }
   }
 
   params.context = `当前要撰写章节：${ch.chapter}\n\n${context}`;
@@ -113,6 +133,7 @@ function buildChapters(outline) {
 
 // 生成单章内容
 async function generateChapter(project, chapters, idx) {
+  const userId = project.user_id;
   const ch = chapters[idx];
   const outlineText = (project.outline || []).map((c) => {
     const secs = (c.sections || []).map((s) => `  - ${s.title || ''}`).join('\n');
@@ -129,7 +150,7 @@ async function generateChapter(project, chapters, idx) {
     prevContent ? `\n【前序章节（供衔接参考）】\n${prevContent}` : '',
   ].filter(Boolean).join('\n');
 
-  const params = await buildChapterAIParams(project, ch, context);
+  const params = await buildChapterAIParams(project, ch, context, userId, project.id);
   const result = await runAI('writing', params);
   let content = result.content || '';
 

@@ -317,6 +317,18 @@ function buildUserPrompt(tool, params) {
 6. 语言学术规范，符合中文毕业论文写作规范`
         : '';
       const header = `写作类型：${typeMap[params.type] || params.type}\n论文题目：${params.topic}\n学科领域：${params.field || '综合'}\n\n请生成对应的学术内容。${fullTextGuide}`;
+      // 段落级证据引用规范：当「参考上下文」含 [EVIDENCE:id source=... page=... chunk=...] 标记时，
+      // 陈述事实（尤其是有出处的结论、数据、方法归属）必须紧邻该事实附上对应证据标记，
+      // 且只能引用 evidenceIds 白名单内的编号（若提供）。这是「结论—证据—论文—页码」溯源的前提。
+      if (params.evidenceIds && params.evidenceIds.length > 0) {
+        const evidenceGuide = `
+【证据引用规范（必须遵守）】
+- 「参考上下文」中提供了带 [EVIDENCE:编号 source=... page=... chunk=...] 标记的项目证据片段。
+- 你在陈述事实、结论、数据或方法归属时，必须紧邻该陈述附上对应的证据标记（原样保留标记，不要改动其中任何字段）。
+- 只能引用上下文里确实出现的证据编号（${params.evidenceIds.join('、')}），严禁编造或引用上下文之外的证据编号。
+- 若某个陈述没有对应证据支撑，不要强行附证据标记，改用客观、不确定的表述，且不得给出具体数值或编造结论。`;
+        return header + evidenceGuide + ctx;
+      }
       return header + ctx;
     }
     case 'polish':

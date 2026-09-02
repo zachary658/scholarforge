@@ -148,6 +148,13 @@ server {
 - 备份：直接复制 db 文件 + uploads 目录（建议每天一次）
 - 日志：`server/logs/`（按天滚动，注意磁盘空间）
 - 可选增强：`MINERU_API_URL`（PDF 高质量解析）、`CNKI_MCP_COMMAND`（知网文献，注意合规）
+- 段落级学术 RAG / 出版级导出（均为可选插件，未配置则静默降级到内置实现，详见 `.env.example`）：
+  - `QDRANT_URL` / `QDRANT_API_KEY` + `BGE_M3_API_URL` / `RERANKER_API_URL`：段落级证据索引（稠密+稀疏混合检索、重排）
+  - `DOCLING_API_URL` / `GROBID_API_URL`：全文结构与引用解析
+  - `PAPERQA_API_URL` / `PAPERQA_API_KEY`：PaperQA2 研究引擎（独立 Python 服务，见 `research-engine/`）
+  - `CSL_STYLE`：参考文献样式（默认内置官方 GB/T 7714-2015 数字制，可切换 apa/vancouver/harvard1 或本地 .csl 路径）
+  - `ZOTERO_TRANSLATION_URL`：Zotero Translation Server 文献导入
+  - `QUARTO_BIN` / `PANDOC_BIN`：出版级导出（DOCX/PDF/LaTeX/HTML 等，二者都未配置则走内置 docx-generator）
 
 ### 6. 进程守护
 

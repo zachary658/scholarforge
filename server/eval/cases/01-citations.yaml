@@ -1,0 +1,166 @@
+# 维度 1：引用是否真实存在
+# 断言：assertCitationsExist —— 正文 [n] 编号必须能映射到检索返回的真实文献列表，
+#       且第 n 条文献确实出现在文末参考文献里；正文出现的 DOI 也必须能在文献列表中找到。
+# 参考：https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/
+
+- description: '计算机/医学影像分割 综述：引文编号 [1]-[5] 全部可映射到真实文献'
+  vars:
+    fixture: good-literature-review
+    tool: literature_review
+    topic: '深度学习在医学影像分割中的应用'
+    field: '计算机科学'
+    keywords: '深度学习,医学影像,分割'
+    years: '近5年'
+    outline: '["引言","主题分类梳理","研究述评","研究展望"]'
+    terms: '医学影像分割'
+    references: '[{"authors":"Ronneberger O., Fischer P., Brox T.","title":"U-Net: Convolutional Networks for Biomedical Image Segmentation","journal":"MICCAI","year":"2015","doi":"10.1007/978-3-319-24574-4_28","abstract":"该文提出编码器-解码器结构的 U-Net 分割网络，在公开医学影像分割数据集上取得显著进展，Dice 系数达到 87.4%。"},{"authors":"Chen J., Lu Y., Yu Q.","title":"TransUNet: Transformers Make Strong Encoders for Medical Image Segmentation","journal":"arXiv","year":"2021","doi":"10.48550/arXiv.2102.04306","abstract":"该文将视觉 Transformer 引入医学影像分割，在 Synapse 多器官分割数据集上平均 Dice 系数达到 84.3%。"},{"authors":"李文, 张涛, 陈静","title":"半监督医学影像分割方法综述","journal":"自动化学报","year":"2022","doi":"10.16383/j.aas.c200100","abstract":"该文综述一致性正则化与伪标签两类半监督医学影像分割方法，指出在标注受限场景下分割准确率可达 91.2%。"},{"authors":"王磊, 孙明","title":"医学影像分割的域泛化问题研究","journal":"计算机学报","year":"2023","doi":"10.11897/SP.J.1016.2023.00001","abstract":"该文分析多中心数据分布偏移对分割模型泛化能力的影响，指出跨域泛化与小目标分割仍是主要难点。"},{"authors":"Isensee F., Jaeger P.","title":"nnU-Net: a self-configuring method for biomedical image segmentation","journal":"Nature Methods","year":"2021","doi":"10.1038/s41592-020-01008-z","abstract":"该文提出医学影像分割的自动化配置流程，强调构建多中心大规模评测基准是后续研究的关键方向。"}]'
+    benchmarks: '[{"paperTitle":"U-Net","paperYear":"2015","metrics":[{"label":"Dice","value":87.4}]},{"paperTitle":"TransUNet","paperYear":"2021","metrics":[{"label":"Dice","value":84.3}]},{"paperTitle":"半监督一致性正则化","paperYear":"2022","metrics":[{"label":"准确率","value":91.2}]}]'
+  metadata:
+    dimension: citations
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+
+- description: '医学/心血管风险预测 期刊论文：4 条引文均可映射且题名出现在文末参考文献'
+  vars:
+    fixture: good-medical
+    tool: journal
+    topic: '基于电子病历的心血管疾病风险预测模型研究'
+    field: '临床医学'
+    keywords: '电子病历,风险预测,机器学习'
+    outline: '["摘要","引言","研究方法","结果与分析","结论"]'
+    terms: '心血管疾病'
+    references: '[{"authors":"张宏, 李静","title":"基于电子病历的心血管疾病风险预测模型研究","journal":"中华心血管病杂志","year":"2022","doi":"10.3760/cma.j.cn112148-20220101-00012","abstract":"该文基于电子病历构建心血管疾病风险预测模型，在随访队列中 AUC 达到 0.86。"},{"authors":"Wang Y., Liu H.","title":"Machine learning for cardiovascular risk prediction: a systematic review","journal":"The Lancet Digital Health","year":"2023","doi":"10.1016/S2589-7500(23)00012-3","abstract":"该综述比较多种机器学习心血管风险预测模型，指出外部验证不足导致预测准确率普遍下降。"},{"authors":"陈立, 周敏","title":"心血管风险预测模型的外部验证与校准研究","journal":"中华流行病学杂志","year":"2024","doi":"10.3760/cma.j.cn112338-20240101-00033","abstract":"该文对心血管风险预测模型进行外部验证，结果显示校准之后预测准确率提升至 82.6%。"},{"authors":"赵鹏, 吴桐","title":"可解释机器学习在临床预测模型中的应用","journal":"中国医院管理","year":"2023","doi":"10.3969/j.issn.1001-5329.2023.05.018","abstract":"该文讨论可解释机器学习在临床预测模型中的应用，强调可解释性是临床预测模型落地的必要条件。"}]'
+    benchmarks: '[{"paperTitle":"电子病历基线模型","paperYear":"2022","metrics":[{"label":"AUC","value":0.86}]},{"paperTitle":"外部验证校准模型","paperYear":"2024","metrics":[{"label":"准确率","value":82.6}]}]'
+  metadata:
+    dimension: citations
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      config:
+        checkDoi: true
+
+- description: '教育学/在线学习投入度 综述：引文编号可映射，开启 DOI 校验'
+  vars:
+    fixture: good-education
+    tool: literature_review
+    topic: '在线学习投入度影响因素研究'
+    field: '教育技术学'
+    keywords: '在线学习,学习投入度,支持服务'
+    outline: '["引言","理论基础与测评","影响因素梳理","研究述评与展望"]'
+    terms: '学习投入度'
+    references: '[{"authors":"刘敏, 何静","title":"在线学习投入度的影响因素实证研究","journal":"电化教育研究","year":"2022","doi":"10.13811/j.cnki.eer.2022.05.014","abstract":"该文通过问卷调查检验在线学习投入度的影响因素，结果显示教师支持对学习投入度的解释率达到 37.8%。"},{"authors":"Sun Q., Zhao L.","title":"Student engagement in online learning: a meta-analysis","journal":"Computers & Education","year":"2023","doi":"10.1016/j.compedu.2023.104722","abstract":"该元分析综合在线学习投入度的实证研究，指出互动频率与课程完成率显著正相关。"},{"authors":"吴倩, 郑凯","title":"混合式教学中学习投入度的测评工具开发","journal":"中国电化教育","year":"2021","doi":"10.3969/j.issn.1006-9860.2021.08.009","abstract":"该文开发混合式教学中学习投入度的测评量表，为实证测量提供了可靠工具。"},{"authors":"胡蝶, 马超","title":"在线学习辍学率与学习支持服务的关系研究","journal":"开放教育研究","year":"2024","doi":"10.13966/j.cnki.kfjyyj.2024.02.010","abstract":"该文分析在线学习辍学率与学习支持服务的关系，发现完善支持服务之后辍学率下降至 11.3%。"}]'
+    benchmarks: '[{"paperTitle":"教师支持模型","paperYear":"2022","metrics":[{"label":"解释率","value":37.8}]},{"paperTitle":"支持服务改进","paperYear":"2024","metrics":[{"label":"辍学率","value":11.3}]}]'
+  metadata:
+    dimension: citations
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      config:
+        checkDoi: true
+
+- description: '经管/ESG 信息披露 论文：引文编号可映射（边界值：最大编号等于文献总数）'
+  vars:
+    fixture: good-law-economics
+    tool: journal
+    topic: 'ESG 信息披露对企业融资约束的影响研究'
+    field: '公司金融'
+    keywords: 'ESG,信息披露,融资约束'
+    outline: '["引言","制度背景与文献回顾","实证设计与结果","结论与启示"]'
+    terms: '融资约束'
+    references: '[{"authors":"周涛, 林曦","title":"ESG 信息披露与制造业企业融资约束","journal":"会计研究","year":"2023","doi":"10.3969/j.issn.1003-2886.2023.04.007","abstract":"该文检验 ESG 信息披露与企业融资约束的关系，发现披露质量提升之后融资约束指数下降 18.6%。"},{"authors":"Green T., Ma L.","title":"Mandatory ESG disclosure and capital market consequences","journal":"Journal of Accounting Research","year":"2022","doi":"10.1111/1475-679X.12456","abstract":"该文研究强制 ESG 信息披露的资本市场后果，指出强制披露降低了信息不对称程度。"},{"authors":"许静, 高远","title":"绿色信贷政策对企业债务融资成本的影响","journal":"金融研究","year":"2021","doi":"10.3969/j.issn.1002-7246.2021.12.006","abstract":"该文评估绿色信贷政策对企业债务融资成本的影响，结果显示政策实施之后债务融资成本明显下降。"},{"authors":"范平, 苏萌","title":"企业 ESG 评级分歧与资本市场定价效率","journal":"经济管理","year":"2024","doi":"10.19616/j.cnki.bmj.2024.06.009","abstract":"该文分析企业 ESG 评级分歧对资本市场定价效率的影响，发现评级分歧会削弱 ESG 信息的定价作用。"}]'
+    benchmarks: '[{"paperTitle":"ESG 披露质量提升","paperYear":"2023","metrics":[{"label":"融资约束指数","value":18.6}]}]'
+  metadata:
+    dimension: citations
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+
+- description: '法学/个人信息保护 任务书：无编号引用时不误判（未提供文献列表应跳过而非报错）'
+  vars:
+    tool: task_book
+    topic: '个人信息保护法实施后的企业合规义务研究'
+    field: '法学'
+    student_name: '林岚'
+    student_id: '20240118'
+    advisor: '周教授'
+    min_length: '300'
+    outline: '["课题背景与意义","研究内容与范围","进度安排"]'
+  metadata:
+    dimension: citations
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      config:
+        requireCitations: false
+
+- description: '反例：计算机/金融风控 综述出现越界引文编号 [7][9]（文献总数仅 2）'
+  vars:
+    fixture: fabricated-citations
+    tool: literature_review
+    topic: '大模型在金融风控中的应用'
+    field: '金融学'
+    keywords: '大模型,金融风控,反欺诈'
+    references: '[{"authors":"陈曦","title":"大模型在金融风控中的应用综述","journal":"金融研究","year":"2023","doi":"10.19999/fake.2023.001","abstract":"综述大模型在金融风控反欺诈场景中的应用与合规约束。"},{"authors":"刘洋","title":"智能风控系统设计与实现","journal":"计算机工程","year":"2022","abstract":"介绍智能风控系统的架构设计与工程实现。"}]'
+  metadata:
+    dimension: citations
+    expectation: fail
+    defect: 'fabricated-citation-index'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+
+- description: '反例：同一输出开启 DOI 校验，正文出现文献列表中不存在的 DOI'
+  vars:
+    fixture: fabricated-citations
+    tool: literature_review
+    topic: '大模型在金融风控中的应用'
+    field: '金融学'
+    keywords: '大模型,金融风控,反欺诈'
+    references: '[{"authors":"陈曦","title":"大模型在金融风控中的应用综述","journal":"金融研究","year":"2023","doi":"10.19999/fake.2023.001","abstract":"综述大模型在金融风控反欺诈场景中的应用与合规约束。"},{"authors":"刘洋","title":"智能风控系统设计与实现","journal":"计算机工程","year":"2022","abstract":"介绍智能风控系统的架构设计与工程实现。"}]'
+  metadata:
+    dimension: citations
+    expectation: fail
+    defect: 'fabricated-doi'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      config:
+        checkDoi: true
+
+- description: '反例：正文引用编号在范围内，但喂入不相关学科文献集（题名与文末参考文献对不上）'
+  vars:
+    fixture: good-literature-review
+    tool: literature_review
+    topic: '深度学习在医学影像分割中的应用'
+    field: '计算机科学'
+    keywords: '深度学习,医学影像,分割'
+    references: '[{"authors":"王国维","title":"宋元戏曲考","journal":"商务印书馆","year":"1913","abstract":"考述宋元戏曲的源流与体制。"},{"authors":"鲁迅","title":"中国小说史略","journal":"北新书局","year":"1923","abstract":"梳理中国古代小说的发展脉络。"},{"authors":"钱钟书","title":"谈艺录","journal":"开明书店","year":"1948","abstract":"论诗艺与诗学传统。"},{"authors":"陈寅恪","title":"隋唐制度渊源略论稿","journal":"商务印书馆","year":"1944","abstract":"考辨隋唐制度的渊源流变。"},{"authors":"朱光潜","title":"诗论","journal":"正中书局","year":"1942","abstract":"讨论诗歌的节奏与意境。"}]'
+  metadata:
+    dimension: citations
+    expectation: fail
+    defect: 'citation-bibliography-mismatch'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+
+- description: '反例：医学输出喂入截断的文献列表（仅 2 条，正文却引用到 [3][4]）'
+  vars:
+    fixture: good-medical
+    tool: journal
+    topic: '基于电子病历的心血管疾病风险预测模型研究'
+    field: '临床医学'
+    keywords: '电子病历,风险预测'
+    references: '[{"authors":"张宏, 李静","title":"基于电子病历的心血管疾病风险预测模型研究","journal":"中华心血管病杂志","year":"2022","doi":"10.3760/cma.j.cn112148-20220101-00012","abstract":"该文基于电子病历构建心血管疾病风险预测模型，在随访队列中 AUC 达到 0.86。"},{"authors":"Wang Y., Liu H.","title":"Machine learning for cardiovascular risk prediction: a systematic review","journal":"The Lancet Digital Health","year":"2023","doi":"10.1016/S2589-7500(23)00012-3","abstract":"该综述比较多种机器学习心血管风险预测模型，指出外部验证不足导致预测准确率普遍下降。"}]'
+  metadata:
+    dimension: citations
+    expectation: fail
+    defect: 'truncated-reference-list'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist

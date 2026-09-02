@@ -70,6 +70,28 @@ const PROJECT_RESOURCE_COLUMNS = [
   ['orders', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
 ];
 
+const EVIDENCE_LIBRARY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS evidence_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_title TEXT NOT NULL DEFAULT '',
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    page_number INTEGER,
+    section_title TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    traceable INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(project_id, source_type, source_id, chunk_index)
+  );
+  CREATE INDEX IF NOT EXISTS idx_evidence_project ON evidence_chunks(project_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence_chunks(project_id, source_type, source_id);
+`;
+
 // 守卫式加列：仅当列不存在时 ALTER，保证对旧库幂等
 function addColumnIfMissing(db, table, column, def) {
   const tableName = table.replaceAll('"', '');
@@ -119,6 +141,14 @@ const MIGRATIONS = [
       for (const [table, sql] of indexes) {
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.exec(sql);
       }
+    },
+  },
+  {
+    version: '006_evidence_library',
+    name: '可追溯证据分块库',
+    up(db) {
+      addColumnIfMissing(db, '"references"', 'abstract', "TEXT NOT NULL DEFAULT ''");
+      db.exec(EVIDENCE_LIBRARY_SCHEMA);
     },
   },
 ];

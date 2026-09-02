@@ -39,3 +39,9 @@ Thumbs.db
 *.zip
 .trae-html-share-packages/
 scholarforge-deliverable/
+
+# Python（research-engine 独立服务）
+__pycache__/
+*.pyc
+.venv/
+venv/

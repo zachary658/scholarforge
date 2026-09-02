@@ -1,0 +1,144 @@
+# 维度 5：大纲与正文是否一致
+# 断言：assertOutlineConsistency —— 正文的 Markdown 标题序列需覆盖 vars.outline 中的
+#       章节（归一化后支持「一、」「2.1」「第3章」等序号前缀），且顺序保持一致。
+# 参考：https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/
+
+- description: '计算机/医学影像分割 综述：正文覆盖 引言-主题分类梳理-研究述评-研究展望'
+  vars:
+    fixture: good-literature-review
+    tool: literature_review
+    topic: '深度学习在医学影像分割中的应用'
+    field: '计算机科学'
+    keywords: '深度学习,医学影像,分割'
+    outline: '["引言","主题分类梳理","研究述评","研究展望"]'
+    references: '[{"authors":"Ronneberger O., Fischer P., Brox T.","title":"U-Net: Convolutional Networks for Biomedical Image Segmentation","journal":"MICCAI","year":"2015","abstract":"该文提出编码器-解码器结构的 U-Net 分割网络，在公开医学影像分割数据集上取得显著进展，Dice 系数达到 87.4%。"}]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '医学/心血管风险预测：正文覆盖 摘要-引言-研究方法-结果与分析-结论'
+  vars:
+    fixture: good-medical
+    tool: journal
+    topic: '基于电子病历的心血管疾病风险预测模型研究'
+    field: '临床医学'
+    keywords: '电子病历,风险预测'
+    outline: '["摘要","引言","研究方法","结果与分析","结论"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '教育学/在线学习投入度：正文覆盖四个大纲章节且顺序一致'
+  vars:
+    fixture: good-education
+    tool: literature_review
+    topic: '在线学习投入度影响因素研究'
+    field: '教育技术学'
+    keywords: '在线学习,学习投入度'
+    outline: '["引言","理论基础与测评","影响因素梳理","研究述评与展望"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '经管/ESG 信息披露：正文覆盖四个大纲章节'
+  vars:
+    fixture: good-law-economics
+    tool: journal
+    topic: 'ESG 信息披露对企业融资约束的影响研究'
+    field: '公司金融'
+    keywords: 'ESG,信息披露,融资约束'
+    outline: '["引言","制度背景与文献回顾","实证设计与结果","结论与启示"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '实时生成/计算机 文献综述：内置引擎输出覆盖 引言-研究述评-研究展望'
+  vars:
+    tool: literature_review
+    topic: '图神经网络在推荐系统中的应用'
+    field: '计算机科学'
+    keywords: '图神经网络,推荐系统,协同过滤'
+    years: '近5年'
+    outline: '["引言","研究述评","研究展望"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '实时生成/医学 期刊论文：内置引擎输出覆盖 引言-文献综述-研究方法-结论'
+  vars:
+    tool: journal
+    topic: '基于深度学习的肺癌早期筛查方法研究'
+    field: '医学'
+    research_content: '改进肺部 CT 影像的结节检测精度'
+    method: '实验对比'
+    journal_type: '核心期刊'
+    outline: '["引言","文献综述","研究方法","结论"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '实时生成/经管 任务书：内置引擎输出覆盖 课题背景-研究内容-进度安排'
+  vars:
+    tool: task_book
+    topic: '数字化转型对制造业企业绩效的影响研究'
+    field: '工商管理'
+    student_name: '陈亦'
+    student_id: '20240225'
+    advisor: '孙教授'
+    outline: '["课题背景与意义","研究内容与范围","进度安排"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '实时生成/法学 答辩稿：内置引擎输出覆盖 封面-研究背景与意义-创新点'
+  vars:
+    tool: defense
+    topic: '算法推荐的个人信息保护边界研究'
+    field: '法学'
+    research_content: '界定算法推荐场景下的告知同意边界'
+    innovation: '场景化分级同意框架'
+    duration: 12
+    outline: '["封面","研究背景与意义","创新点"]'
+  metadata:
+    dimension: outline
+    expectation: pass
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+
+- description: '反例：城市碳排放稿缺少大纲要求的 文献综述 与 实验结果 两章'
+  vars:
+    fixture: missing-chapters
+    tool: journal
+    topic: '城市碳排放影响因素研究'
+    field: '环境经济'
+    keywords: '碳排放,产业结构'
+    outline: '["引言","文献综述","研究方法","实验结果","结论"]'
+  metadata:
+    dimension: outline
+    expectation: fail
+    defect: 'missing-chapters'
+  assert:
+    - type: javascript
+      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
