@@ -16,12 +16,12 @@ export default function Journal() {
         fields: [
           { key: 'topic', label: '论文题目', type: 'textarea', required: true, placeholder: '例如：基于深度学习的医学影像分割方法研究' },
           { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
-          { key: 'content', label: '研究内容', type: 'textarea', placeholder: '描述研究的核心内容、数据与主要发现' },
+          { key: 'research_content', label: '研究内容', type: 'textarea', placeholder: '描述研究的核心内容、数据与主要发现' },
         ],
         advancedLabel: '更多选项（可选）',
         advancedFields: [
           { key: 'method', label: '研究方法', type: 'text', placeholder: '例如：实证分析、案例研究' },
-          { key: 'journalType', label: '目标期刊类型', type: 'select', defaultValue: '核心期刊', options: JOURNAL_TYPES },
+          { key: 'journal_type', label: '目标期刊类型', type: 'select', defaultValue: '核心期刊', options: JOURNAL_TYPES },
         ],
         resultLabel: (form) => (form.topic ? `${form.topic} · 期刊论文` : '生成结果'),
         downloadName: (form) => form.topic || '期刊论文',

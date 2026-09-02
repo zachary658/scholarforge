@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTool } from '../lib/useTool.js';
-import { downloadDocFile } from '../lib/api.js';
+import { api, downloadDocFile } from '../lib/api.js';
 import FeaturePay from './FeaturePay.jsx';
 import GeneratorForm from './GeneratorForm.jsx';
 import GenerationProgress from './GenerationProgress.jsx';
@@ -25,7 +26,35 @@ function buildInitialForm(config) {
 
 export default function DocumentGenerator({ config }) {
   const tool = useTool();
+  const [searchParams] = useSearchParams();
   const [form, setForm] = useState(() => buildInitialForm(config));
+  const [linkedProject, setLinkedProject] = useState(null);
+  const projectId = searchParams.get('projectId');
+
+  // 从论文工作区进入时自动关联并带入已有信息，避免客户重复填写，
+  // 同时确保生成任务、文档和上下文真正归档到该工作区。
+  useEffect(() => {
+    if (!projectId) {
+      setLinkedProject(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api.getProject(projectId).then(({ project }) => {
+      if (cancelled || !project) return;
+      setLinkedProject(project);
+      setForm((current) => ({
+        ...current,
+        ...(Object.hasOwn(current, 'topic') && project.title ? { topic: project.title } : {}),
+        ...(Object.hasOwn(current, 'field') && project.field ? { field: project.field } : {}),
+        ...(Object.hasOwn(current, 'research_content') && project.description
+          ? { research_content: project.description }
+          : {}),
+      }));
+    }).catch((err) => {
+      if (!cancelled) tool.setError(`加载论文工作区失败：${err.message}`);
+    });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   const result = tool.result;
   const docInfo = result?.doc || null;
@@ -42,6 +71,7 @@ export default function DocumentGenerator({ config }) {
     tool.run(() => config.apiCall({
       ...form,
       template_id: form.template_id || undefined,
+      projectId: projectId || undefined,
       orderNo: orderNo || undefined,
     }));
   };
@@ -63,6 +93,11 @@ export default function DocumentGenerator({ config }) {
         <div>
           <h1 className="text-xl font-bold text-ink">{config.title}</h1>
           <p className="mt-1 text-sm text-slate-500">{config.subtitle}</p>
+          {linkedProject && (
+            <p className="mt-2 text-xs font-medium text-blue-600">
+              已关联论文工作区：{linkedProject.title}
+            </p>
+          )}
         </div>
       </div>
 

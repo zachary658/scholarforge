@@ -489,6 +489,7 @@ export function saveProjectSources(projectId, userId, sources) {
   const r = db.prepare(
     'UPDATE projects SET sources_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
   ).run(JSON.stringify(sources || {}), now(), projectId, userId);
+  if (r.changes > 0) syncProjectStage(userId, projectId);
   return r.changes > 0;
 }
 
@@ -499,6 +500,7 @@ export function saveProjectOutline(projectId, userId, outline) {
   const r = db.prepare(
     'UPDATE projects SET outline_json = ?, outline_confirmed_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?'
   ).run(JSON.stringify(outline), now(), projectId, userId);
+  if (r.changes > 0) syncProjectStage(userId, projectId);
   return r.changes > 0;
 }
 

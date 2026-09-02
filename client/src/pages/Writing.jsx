@@ -32,6 +32,7 @@ export default function Writing() {
   const [templates, setTemplates] = useState([]);
   const [copied, setCopied] = useState(false);
   const [projectId, setProjectId] = useState(null);
+  const [linkedProject, setLinkedProject] = useState(null);
   const copyTimerRef = useRef(null);
   // 深度文献调研（大纲生成后的付费升级）：多角度检索 → 解析研究框架/文献/数据
   const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
@@ -96,10 +97,27 @@ export default function Writing() {
   useEffect(() => {
     const pid = searchParams.get('projectId');
     const tp = searchParams.get('type');
-    if (pid) setProjectId(pid);
+    setProjectId(pid || null);
     if (tp && writeTypes.some((t) => t.value === tp)) {
       setForm((f) => ({ ...f, type: tp }));
     }
+    if (!pid) {
+      setLinkedProject(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api.getProject(pid).then(({ project }) => {
+      if (cancelled || !project) return;
+      setLinkedProject(project);
+      setForm((f) => ({
+        ...f,
+        topic: project.title || f.topic,
+        field: project.field || f.field,
+      }));
+    }).catch((err) => {
+      if (!cancelled) tool.setError(`加载论文工作区失败：${err.message}`);
+    });
+    return () => { cancelled = true; };
   }, [searchParams]);
 
   useEffect(() => {
@@ -186,6 +204,9 @@ export default function Writing() {
         <div>
           <h1 className="text-xl font-bold text-ink">AI 论文写作</h1>
           <p className="mt-1 text-sm text-slate-500">选择写作类型，输入题目与学科领域，一键生成学术内容并导出 Word</p>
+          {linkedProject && (
+            <p className="mt-2 text-xs font-medium text-blue-600">已关联论文工作区：{linkedProject.title}</p>
+          )}
         </div>
       </div>
 

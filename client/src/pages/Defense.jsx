@@ -20,7 +20,7 @@ export default function Defense() {
         fields: [
           { key: 'topic', label: '论文题目', type: 'textarea', required: true, placeholder: '例如：基于深度学习的医学影像分割方法研究' },
           { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
-          { key: 'summary', label: '研究内容摘要', type: 'textarea', placeholder: '简要描述研究的主要内容与结论' },
+          { key: 'research_content', label: '研究内容摘要', type: 'textarea', placeholder: '简要描述研究的主要内容与结论' },
         ],
         advancedLabel: '更多选项（可选）',
         advancedFields: [

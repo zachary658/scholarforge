@@ -13,8 +13,8 @@ export default function TaskBook() {
         validate: (form) => (!form.topic.trim() ? '请填写论文题目' : null),
         fields: [
           { key: 'topic', label: '论文题目', type: 'textarea', required: true, placeholder: '例如：基于深度学习的医学影像分割方法研究' },
-          { key: 'studentName', label: '学生姓名', type: 'text', placeholder: '请输入学生姓名' },
-          { key: 'studentId', label: '学号', type: 'text', placeholder: '请输入学号' },
+          { key: 'student_name', label: '学生姓名', type: 'text', placeholder: '请输入学生姓名' },
+          { key: 'student_id', label: '学号', type: 'text', placeholder: '请输入学号' },
           { key: 'field', label: '学科专业', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
           { key: 'advisor', label: '指导教师', type: 'text', placeholder: '请输入指导教师姓名' },
         ],

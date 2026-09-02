@@ -11,7 +11,7 @@ process.env.DB_PATH = path.join(tmpDir, 'test.db');
 process.env.NODE_ENV = 'test';
 
 const db = (await import('../src/db.js')).default;
-const { createProject, getProject, confirmOutline, saveProjectSources, computeSystemProgress } = await import('../src/services/task-store.js');
+const { createProject, getProject, confirmOutline, saveProjectOutline, saveProjectSources, computeSystemProgress } = await import('../src/services/task-store.js');
 const { hashPassword } = await import('../src/auth.js');
 
 async function createTestUser(email) {
@@ -57,4 +57,15 @@ test('系统进度：getProject/listProjects 返回 system_progress 字段', asy
   const { listProjects } = await import('../src/services/task-store.js');
   const list = listProjects(uid);
   assert.ok(list.every((x) => typeof x.system_progress === 'number'));
+});
+
+test('保存大纲或文献产物后同步推进持久化阶段', async () => {
+  const uid = await createTestUser(`prog4-${Date.now()}@example.com`);
+  const p = createProject({ userId: uid, title: '阶段同步测试' });
+
+  saveProjectOutline(p.id, uid, [{ title: '第一章 绪论', children: [] }]);
+  assert.equal(getProject(p.id, uid).current_stage, 'outline');
+
+  saveProjectSources(p.id, uid, { references: [{ title: '真实文献' }] });
+  assert.equal(getProject(p.id, uid).current_stage, 'literature');
 });

@@ -389,19 +389,26 @@ function ProjectDetail({ project, onClose, onEdit }) {
     defense: { to: '/app/defense' },
   };
 
-  const currentStageIdx = Math.max(0, PAPER_STAGES.findIndex((s) => s.key === (project.current_stage || 'create')));
+  // 展示时以“人工阶段”和“实际产物推导阶段”中更靠后的为准，
+  // 避免出现进度 25% 但仍显示“当前阶段：创建论文”的矛盾状态。
+  const storedStageIdx = PAPER_STAGES.findIndex((s) => s.key === (project.current_stage || 'create'));
+  const systemStageIdx = PAPER_STAGES.findIndex((s) => s.key === (project.system_stage || 'create'));
+  const currentStageIdx = Math.max(0, storedStageIdx, systemStageIdx);
 
-  // 每一步的完成状态：优先用实际产物判定，其次回退到 current_stage 位置
+  const successfulTask = (predicate) => tasks.some((task) => task.status === 'success' && predicate(task));
+  const hasFulltext = successfulTask((task) => task.tool_type === 'writing' && task.action === 'fulltext');
+
+  // 每一步只按成功产物判定完成；大纲必须由用户确认后才能进入下一阶段。
   const stageStatus = (stage, i) => {
     const dataDone = {
       create: true,
       materials: materials.length > 0,
-      outline: outline.length > 0,
-      literature: tasks.some((t) => t.tool_type === 'literature_review'),
-      writing: chapters.length > 0,
-      review: tasks.some((t) => t.tool_type === 'rewrite' || t.tool_type === 'ai_reduce'),
-      defense: tasks.some((t) => t.tool_type === 'defense'),
-      export: false,
+      outline: Boolean(confirmedAt),
+      literature: successfulTask((task) => task.tool_type === 'literature_review'),
+      writing: chapters.length > 0 || hasFulltext,
+      review: successfulTask((task) => ['polish', 'rewrite', 'ai_reduce', 'grammar'].includes(task.tool_type)),
+      defense: successfulTask((task) => task.tool_type === 'defense'),
+      export: (chapters.length > 0 || hasFulltext) && Boolean(confirmedAt),
     }[stage.key];
     if (dataDone) return 'done';
     if (i === currentStageIdx) return 'current';
@@ -410,6 +417,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
 
   const goStage = (stage) => {
     if (stage.key === 'create') { onEdit(); return; }
+    if (stage.key === 'outline' && outline.length > 0 && !confirmedAt) { setTab('outline'); return; }
     if (stage.key === 'export') { setTab('chapters'); return; }
     const nav = STAGE_NAV[stage.key];
     if (!nav) return;
@@ -697,6 +705,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
                         }`}
                       >
                         {stage.key === 'create' ? '编辑信息' :
+                         stage.key === 'outline' && outline.length > 0 && !confirmedAt ? '去确认' :
                          stage.key === 'export' ? '去导出' :
                          status === 'done' ? '重做' : '去完成'}
                       </button>

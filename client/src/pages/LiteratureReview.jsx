@@ -18,7 +18,7 @@ export default function LiteratureReview() {
         ],
         advancedLabel: '更多选项（可选）',
         advancedFields: [
-          { key: 'timeRange', label: '文献时间范围', type: 'text', defaultValue: '近5年', placeholder: '例如：近5年 / 2018-2023' },
+          { key: 'years', label: '文献时间范围', type: 'text', defaultValue: '近5年', placeholder: '例如：近5年 / 2018-2023' },
         ],
         resultLabel: (form) => (form.topic ? `${form.topic} · 文献综述` : '生成结果'),
         downloadName: (form) => `${form.topic || '研究'}文献综述`,
