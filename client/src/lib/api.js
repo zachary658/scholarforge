@@ -395,7 +395,7 @@ export const api = {
   generateChapters: (id, payload) => request(`/projects/${id}/chapters/generate`, { method: 'POST', body: payload }),
   regenerateChapter: (id, chapterId, payload) => request(`/projects/${id}/chapters/${chapterId}/regenerate`, { method: 'POST', body: payload }),
   editChapter: (id, chapterId, content) => request(`/projects/${id}/chapters/${chapterId}`, { method: 'PUT', body: { content } }),
-  mergeChapters: (id, body = {}) => request(`/projects/${id}/chapters/merge`, { method: 'POST', body: JSON.stringify(body) }),
+  mergeChapters: (id, body = {}) => request(`/projects/${id}/chapters/merge`, { method: 'POST', body }),
 
   // ===== 数据图表 =====
   uploadChart: (file) => upload('/charts/upload', file),

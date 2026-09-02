@@ -28,3 +28,9 @@ test('论文流程展示优先采用实际产物推导的阶段', () => {
   const projects = read('../src/pages/Projects.jsx');
   assert.match(projects, /Math\.max\(0, storedStageIdx, systemStageIdx\)/);
 });
+
+test('合并导出请求只由通用请求层序列化一次', () => {
+  const api = read('../src/lib/api.js');
+  assert.match(api, /mergeChapters:[^\n]+body\s*}\)/);
+  assert.doesNotMatch(api, /mergeChapters:[^\n]+JSON\.stringify\(body\)/);
+});
