@@ -28,6 +28,9 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
   const [retryCount, setRetryCount] = useState(0);
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
+  const pollInFlightRef = useRef(false);
+  const completedRef = useRef(false);
+  const mockInFlightRef = useRef(false);
 
   const amount = Number(order?.amount || 0);
   const isReal = channel === 'alipay' || channel === 'wechat';
@@ -58,6 +61,8 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
     let cancelled = false;
 
     const fetchQr = async () => {
+      completedRef.current = false;
+      pollInFlightRef.current = false;
       setLoadingQr(true);
       setError('');
       try {
@@ -90,6 +95,9 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
       stopPolling();
       pollStartRef.current = Date.now();
       pollRef.current = setInterval(async () => {
+        // 网络慢于轮询间隔时跳过本轮，避免多个状态请求并发返回 paid，
+        // 从而重复触发 onPaid 和后续文档生成。
+        if (pollInFlightRef.current || completedRef.current) return;
         // 超时检查
         if (Date.now() - pollStartRef.current > POLL_MAX_DURATION) {
           stopPolling();
@@ -97,6 +105,7 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
           setStatus('cancelled');
           return;
         }
+        pollInFlightRef.current = true;
         try {
           const s = await api.orderStatus(order.order_no);
           if (cancelled) return;
@@ -109,10 +118,13 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
             setError('订单已取消');
           }
         } catch { /* ignore poll errors */ }
+        finally { pollInFlightRef.current = false; }
       }, POLL_INTERVAL);
     };
 
     const finishReal = async (s) => {
+      if (completedRef.current) return;
+      completedRef.current = true;
       setDone(true);
       setPaying(false);
       onPaid?.({ order: { ...order, status: 'paid' } });
@@ -128,16 +140,20 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
 
   // mock 支付
   const handleMockPay = async () => {
+    if (mockInFlightRef.current || completedRef.current) return;
+    mockInFlightRef.current = true;
     setPaying(true);
     setError('');
     try {
       const data = await api.mockPay(order.order_no);
+      completedRef.current = true;
       setStatus('paid');
       setDone(true);
       onPaid?.({ order: data.order || { ...order, status: 'paid' } });
     } catch (err) {
       setError(err.message);
     } finally {
+      mockInFlightRef.current = false;
       setPaying(false);
     }
   };

@@ -368,6 +368,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const integrity = useAcademicIntegrity();
   // 轮询定时器：用 ref 管理，防重复创建 interval；组件卸载时清理（此前存在内存泄漏）
   const pollRef = useRef(null);
+  const pollInFlightRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -500,12 +501,15 @@ function ProjectDetail({ project, onClose, onEdit }) {
       // 防重入：已有轮询则复用，避免多次点击产生多个并行 interval
       if (pollRef.current) return;
       pollRef.current = setInterval(async () => {
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
         try {
           const d = await api.getChapters(project.id);
           setChapters(d.chapters || []);
           setGenerating(!!d.generating);
           if (!d.generating) { stopPolling(); toast.success('章节生成完成'); }
         } catch { stopPolling(); }
+        finally { pollInFlightRef.current = false; }
       }, 3000);
     } catch (err) {
       // 402 契约：后端返回 { error, needOrder, itemType, amount }，api.js 将其放入 err.data

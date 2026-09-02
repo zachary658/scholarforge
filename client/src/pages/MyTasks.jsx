@@ -54,6 +54,17 @@ export default function MyTasks() {
   const [retentionDays, setRetentionDays] = useState(30);
   const [retryingId, setRetryingId] = useState(null); // 正在重试的任务 id
   const loadSeqRef = useRef(0); // 列表请求序号：旧响应若已被更新请求超越则丢弃
+  const retryPollRef = useRef(null);
+
+  const stopRetryPolling = useCallback(() => {
+    if (retryPollRef.current) {
+      clearTimeout(retryPollRef.current);
+      retryPollRef.current = null;
+    }
+  }, []);
+
+  // 离开页面后停止后台请求，避免已卸载页面继续轮询并更新状态。
+  useEffect(() => stopRetryPolling, [stopRetryPolling]);
 
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current;
@@ -122,30 +133,34 @@ export default function MyTasks() {
 
   // 轮询后台任务状态：retry 返回 202 后，前端轮询 GET /tasks/:id 直到 success/failed
   const pollTask = useCallback((id) => {
+    stopRetryPolling();
     const started = Date.now();
-    const timer = setInterval(async () => {
+    const poll = async () => {
       try {
         const d = await api.getTask(id);
         const t = d.task;
         if (t.status !== 'processing') {
-          clearInterval(timer);
+          retryPollRef.current = null;
           setRetryingId(null);
           if (t.status === 'success') toast.success('重新执行完成');
           else toast.error('重新执行失败：' + errorMeta(t.error_code).label);
           load();
         } else if (Date.now() - started > 10 * 60 * 1000) {
-          clearInterval(timer);
+          retryPollRef.current = null;
           setRetryingId(null);
           toast.error('处理超时，请稍后在任务列表查看结果');
           load();
+        } else {
+          retryPollRef.current = setTimeout(poll, 2000);
         }
       } catch {
-        clearInterval(timer);
+        retryPollRef.current = null;
         setRetryingId(null);
         load();
       }
-    }, 2000);
-  }, [load]);
+    };
+    retryPollRef.current = setTimeout(poll, 2000);
+  }, [load, stopRetryPolling]);
 
   // 重新执行：后端 202 立即返回，后台执行，前端轮询结果
   const handleRetry = async (task) => {
