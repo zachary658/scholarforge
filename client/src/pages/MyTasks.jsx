@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
+import Modal from '../components/Modal.jsx';
 import { TOOL_LABEL, TOOL_COLOR, CHARGE_LABEL } from '../lib/constants.js';
 import {
   Refresh, Search, Trash, Eye, Download, Filter, ChevronLeft, ChevronRight,
@@ -119,16 +120,42 @@ export default function MyTasks() {
     }
   };
 
-  // 重新执行：调用后端 /tasks/:id/retry 恢复原参数并自动重跑（沿用原订单，不重复扣费）
+  // 轮询后台任务状态：retry 返回 202 后，前端轮询 GET /tasks/:id 直到 success/failed
+  const pollTask = useCallback((id) => {
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const d = await api.getTask(id);
+        const t = d.task;
+        if (t.status !== 'processing') {
+          clearInterval(timer);
+          setRetryingId(null);
+          if (t.status === 'success') toast.success('重新执行完成');
+          else toast.error('重新执行失败：' + errorMeta(t.error_code).label);
+          load();
+        } else if (Date.now() - started > 10 * 60 * 1000) {
+          clearInterval(timer);
+          setRetryingId(null);
+          toast.error('处理超时，请稍后在任务列表查看结果');
+          load();
+        }
+      } catch {
+        clearInterval(timer);
+        setRetryingId(null);
+        load();
+      }
+    }, 2000);
+  }, [load]);
+
+  // 重新执行：后端 202 立即返回，后台执行，前端轮询结果
   const handleRetry = async (task) => {
     setRetryingId(task.id);
     try {
       await api.retryTask(task.id);
-      toast.success('已重新执行，结果已保存到任务列表');
-      load();
+      toast.info('已提交重新执行，正在后台处理…');
+      pollTask(task.id);
     } catch (err) {
       toast.error('重试失败：' + err.message);
-    } finally {
       setRetryingId(null);
     }
   };
@@ -233,6 +260,11 @@ export default function MyTasks() {
                     <span>输入 {t.input_len || 0} 字</span>
                     <span>输出 {t.output_len || 0} 字</span>
                   </div>
+                  {t.status === 'processing' && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
+                      <Refresh className="h-3.5 w-3.5 animate-spin" /> 处理中…
+                    </div>
+                  )}
                   {t.status === 'failed' && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
@@ -303,11 +335,7 @@ export default function MyTasks() {
 
       {/* 详情弹窗 */}
       {detail && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={(e) => e.target === e.currentTarget && setDetail(null)}
-        >
-          <div className="flex max-h-[85vh] w-[700px] max-w-full flex-col rounded-xl bg-white shadow-card">
+        <Modal onClose={() => setDetail(null)} label="任务详情" panelClassName="flex max-h-[85vh] w-[700px] flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <h3 className="font-semibold text-ink">任务详情</h3>
               <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -365,8 +393,7 @@ export default function MyTasks() {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

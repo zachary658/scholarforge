@@ -11,7 +11,7 @@ import { dirname, join } from 'path';
 import { getSetting } from '../config-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const docsDir = join(__dirname, '..', 'uploads', 'docs');
+const docsDir = join(__dirname, '..', '..', 'uploads', 'docs');
 
 // 上下文最大字符数（防止 token 暴涨）
 const MAX_CONTEXT_CHARS = 4000;
@@ -83,8 +83,42 @@ export function saveTask({
   // 更新工作区的 updated_at
   if (projectId) {
     db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now(), projectId);
+    // 任务成功后，若系统推导进度已跨过当前阶段，自动前推 current_stage（只进不退）
+    if (status === 'success') syncProjectStage(userId, projectId);
   }
   return info.lastInsertRowid;
+}
+
+// 更新既有任务的执行结果（后台任务/重试用：不再新建记录，原地改写状态与产物）
+// fields 可含：status / outputText / modelName / tokens / progress / stage / errorCode
+export function updateTaskResult(taskId, userId, fields = {}) {
+  const map = {
+    status: 'status',
+    outputText: 'output_text',
+    modelName: 'model_name',
+    tokens: 'tokens',
+    progress: 'progress',
+    stage: 'stage',
+    errorCode: 'error_code',
+  };
+  const sets = [];
+  const params = [];
+  for (const [k, col] of Object.entries(map)) {
+    if (!(k in fields)) continue;
+    let v = fields[k];
+    if (col === 'output_text' && typeof v === 'string') v = v.slice(0, MAX_TASK_TEXT);
+    sets.push(`${col} = ?`);
+    params.push(v);
+  }
+  if (sets.length === 0) return false;
+  params.push(taskId, userId);
+  const r = db.prepare(`UPDATE ai_tasks SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
+  // 后台重试成功后同步推进阶段（与 saveTask 成功路径一致）
+  if (fields.status === 'success') {
+    const projId = db.prepare('SELECT project_id FROM ai_tasks WHERE id = ? AND user_id = ?').get(taskId, userId)?.project_id;
+    if (projId) syncProjectStage(userId, projId);
+  }
+  return r.changes > 0;
 }
 
 // ===== 失败任务错误分类（面向客户的错误码） =====
@@ -227,6 +261,71 @@ export function cleanupOldDocs() {
 // 论文主流程阶段白名单（与前端 PAPER_STAGES 对齐；current_stage 只允许这些值）
 export const PAPER_STAGES = ['create', 'materials', 'outline', 'literature', 'writing', 'review', 'defense', 'export'];
 
+// 系统进度映射：每个里程碑对应的完成度（由已完成任务/产物自动推导，与用户手工标记区分）
+const STAGE_PROGRESS = { create: 5, materials: 15, outline: 25, literature: 40, writing: 70, review: 85, defense: 95, export: 100 };
+
+// 由工作区实际产物/已完成任务推导「系统进度」，与客户端可手工修改的 completion_percent 解耦。
+// 证据规则（任一命中即认为该里程碑达成）：
+//   materials   上传了参考材料
+//   outline     大纲已确认（或已有大纲结构）
+//   literature  蒸馏出文献/框架（sources.references 或 sources.framework）
+//   writing     生成过章节草稿或全文
+//   review      做过润色/优化/语法类审校
+//   defense     生成过答辩材料
+//   export      已生成全文（写作完成，具备导出交付条件）
+// 返回 { percent, stage }，percent 为最高达成里程碑的完成度（下限 5%，上限 100%）。
+export function computeSystemProgress(userId, projectId) {
+  const p = db.prepare('SELECT id, outline_confirmed_at, outline_json, chapters_json, sources_json FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  if (!p) return { percent: 0, stage: 'create' };
+
+  let outline = []; try { outline = JSON.parse(p.outline_json || '[]'); } catch {}
+  let chapters = []; try { chapters = JSON.parse(p.chapters_json || '[]'); } catch {}
+  let sources = {}; try { sources = JSON.parse(p.sources_json || '{}'); } catch {}
+
+  const materials = db.prepare('SELECT COUNT(*) AS c FROM materials WHERE project_id = ?').get(projectId).c;
+  const taskFlags = db.prepare(
+    `SELECT
+       MAX(CASE WHEN tool_type = 'writing' AND action = 'fulltext' AND status = 'success' THEN 1 ELSE 0 END) AS fulltext,
+       MAX(CASE WHEN tool_type IN ('polish','rewrite','ai_reduce','grammar') AND status = 'success' THEN 1 ELSE 0 END) AS review,
+       MAX(CASE WHEN tool_type = 'defense' AND status = 'success' THEN 1 ELSE 0 END) AS defense
+     FROM ai_tasks WHERE project_id = ? AND user_id = ?`
+  ).get(projectId, userId);
+
+  const evidence = {
+    create: true,
+    materials: materials > 0,
+    outline: !!p.outline_confirmed_at || outline.length > 0,
+    literature: (Array.isArray(sources.references) && sources.references.length > 0) || !!sources.framework,
+    writing: chapters.length > 0 || !!taskFlags.fulltext,
+    review: !!taskFlags.review,
+    defense: !!taskFlags.defense,
+    export: !!taskFlags.fulltext && chapters.length > 0,
+  };
+
+  let stage = 'create';
+  for (const s of PAPER_STAGES) {
+    if (evidence[s]) stage = s;
+  }
+  return { percent: STAGE_PROGRESS[stage] ?? 5, stage };
+}
+
+// 依据系统推导进度「只前进不后退」地同步 current_stage：
+// 当实际产物/已完成任务已推进到更靠后的里程碑时，自动前移 current_stage；
+// 若用户手工设置过更靠后的阶段，则不被回退。返回同步后的阶段（无变化返回 null）。
+export function syncProjectStage(userId, projectId) {
+  if (!projectId || !userId) return null;
+  const sys = computeSystemProgress(userId, projectId);
+  const p = db.prepare('SELECT current_stage FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  if (!p) return null;
+  const curIdx = PAPER_STAGES.indexOf(p.current_stage || 'create');
+  const sysIdx = PAPER_STAGES.indexOf(sys.stage);
+  if (sysIdx > curIdx) {
+    db.prepare('UPDATE projects SET current_stage = ?, updated_at = ? WHERE id = ?').run(sys.stage, now(), projectId);
+    return sys.stage;
+  }
+  return null;
+}
+
 // 确保用户存在对应题目的"自动工作区"：首次生成该题目的内容时自动创建（auto_created=1），
 // 未显式指定工作区的 AI 生成内容按题目自动归档，防止内容散落丢失。
 // 同题目重复生成复用同一工作区（按 用户+标题 匹配），不同题目各自建区。
@@ -274,6 +373,9 @@ export function getProject(projectId, userId) {
   delete p.chapters_json;
   try { p.sources = JSON.parse(p.sources_json || '{}'); } catch { p.sources = {}; }
   delete p.sources_json;
+  const sys = computeSystemProgress(userId, projectId);
+  p.system_progress = sys.percent;
+  p.system_stage = sys.stage;
   return p;
 }
 
@@ -292,6 +394,9 @@ export function listProjects(userId) {
     delete p.chapters_json;
     try { p.sources = JSON.parse(p.sources_json || '{}'); } catch { p.sources = {}; }
     delete p.sources_json;
+    const sys = computeSystemProgress(userId, p.id);
+    p.system_progress = sys.percent;
+    p.system_stage = sys.stage;
   }
   return projects;
 }
@@ -352,6 +457,21 @@ export function deleteProject(projectId, userId) {
   // 软删除：归档而非物理删除，保留关联任务
   const r = db.prepare("UPDATE projects SET status = 'archived', updated_at = ? WHERE id = ? AND user_id = ?").run(now(), projectId, userId);
   return r.changes > 0;
+}
+
+// 物理删除项目及其关联材料/任务（在事务内级联）。
+// 说明：generated_docs / charts 为「用户级」资源（未挂 project_id），不随项目删除，
+// 仍按保留期由 cleanupOldDocs / 用户手动清理。若未来这两张表挂上 project_id 再纳入级联。
+export function deleteProjectForever(projectId, userId) {
+  const p = db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  if (!p) return false;
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM materials WHERE project_id = ?').run(projectId);
+    db.prepare('DELETE FROM ai_tasks WHERE project_id = ?').run(projectId);
+    db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+  });
+  tx();
+  return true;
 }
 
 // 确认（或重新确认）大纲：记录确认时间，全文生成前强制校验

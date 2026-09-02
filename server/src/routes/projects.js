@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
 import {
-  createProject, getProject, listProjects, updateProject, deleteProject,
+  createProject, getProject, listProjects, updateProject, deleteProject, deleteProjectForever,
   buildProjectContext, listTasks, getTaskDetail, deleteTask, confirmOutline, PAPER_STAGES,
 } from '../services/task-store.js';
 import {
@@ -118,9 +118,12 @@ router.put('/:id', authRequired, (req, res) => {
 });
 
 router.delete('/:id', authRequired, (req, res) => {
-  const ok = deleteProject(parseInt(req.params.id, 10), req.user.id);
+  // hard=1 物理删除（级联材料/任务）；默认软删除（归档，保留关联记录）
+  const hard = req.query.hard === '1' || req.query.hard === 'true';
+  const id = parseInt(req.params.id, 10);
+  const ok = hard ? deleteProjectForever(id, req.user.id) : deleteProject(id, req.user.id);
   if (!ok) return res.status(404).json({ error: '工作区不存在' });
-  res.json({ ok: true });
+  res.json({ ok: true, hard });
 });
 
 // 预览工作区上下文（前端展示给用户看会带入哪些上下文）

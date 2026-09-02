@@ -4,6 +4,7 @@
 //   if (await confirm({ title: '删除', message: '确认删除？', danger: true })) { ... }
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { AlertCircle, X } from './Icons.jsx';
+import Modal from './Modal.jsx';
 
 const ConfirmContext = createContext(null);
 
@@ -47,11 +48,7 @@ export function ConfirmProvider({ children }) {
     <ConfirmContext.Provider value={{ confirm }}>
       {children}
       {state && (
-        <div
-          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4"
-          onClick={(e) => e.target === e.currentTarget && close(false)}
-        >
-          <div className="w-[400px] max-w-full rounded-xl bg-white shadow-card">
+        <Modal onClose={() => close(false)} label={state.title} panelClassName="w-[400px]">
             <div className="flex items-start gap-3 p-6">
               <div
                 className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full ${
@@ -87,8 +84,7 @@ export function ConfirmProvider({ children }) {
                 {state.confirmText}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </ConfirmContext.Provider>
   );

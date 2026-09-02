@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
 import { navGroups } from '../lib/navigation.js';
 import {
@@ -24,6 +24,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [changePwdOpen, setChangePwdOpen] = useState(false);
   const [openKey, setOpenKey] = useState(null); // 当前展开的一级入口（手风琴）
+  const drawerRef = useRef(null);
 
   // 路由切换时关闭移动端侧边栏
   useEffect(() => {
@@ -41,6 +42,35 @@ export default function Layout() {
       document.addEventListener('keydown', handler);
       return () => document.removeEventListener('keydown', handler);
     }
+  }, [sidebarOpen]);
+
+  // 移动端侧栏：打开时锁定页面滚动 + 焦点循环锁定，关闭后焦点返回触发按钮
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const prevFocus = document.activeElement;
+    const focusables = () => drawerRef.current?.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const t = setTimeout(() => {
+      const list = focusables();
+      if (list && list.length) list[0].focus();
+    }, 0);
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      const list = focusables();
+      if (!list || list.length === 0) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      clearTimeout(t);
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener('keydown', onKey, true);
+      prevFocus?.focus?.();
+    };
   }, [sidebarOpen]);
 
   const handleLogout = async () => {
@@ -160,7 +190,7 @@ export default function Layout() {
 
       {/* 移动端抽屉式侧边栏 */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
+        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="导航菜单" ref={drawerRef}>
           <div
             className="absolute inset-0 bg-black/40 transition-opacity"
             onClick={() => setSidebarOpen(false)}

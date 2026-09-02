@@ -1,0 +1,7 @@
+{
+  "_comment": "允许列表：以下 high/critical 漏洞为已知且无可用补丁，评估后放行。任何未列出的 high/critical 漏洞将导致 CI 失败。image-size 经 pptxgenjs 传递依赖引入，上游 advisory 均无 Patched 版本（GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr），仅在 PPTX 导出路径触发，攻击面有限。",
+  "advisories": [
+    "GHSA-5p2g-fcmc-qvqq",
+    "GHSA-w3rx-r6r6-pgpr"
+  ]
+}

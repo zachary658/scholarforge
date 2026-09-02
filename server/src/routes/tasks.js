@@ -1,8 +1,11 @@
 // AI 任务历史路由（跨工作区的全局任务列表）+ 失败任务一键重试
 import { Router } from 'express';
 import { authRequired } from '../middleware.js';
-import { listTasks, getTaskDetail, deleteTask, prepareTaskRetry } from '../services/task-store.js';
+import { listTasks, getTaskDetail, deleteTask, prepareTaskRetry, updateTaskResult } from '../services/task-store.js';
 import { executeWithBilling } from './tools.js';
+import { claimOrderExecution } from '../services/order-claim.js';
+import db from '../db.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -63,41 +66,44 @@ function taskRetryConfig(task) {
   return cfg;
 }
 
-// 失败任务一键重试：恢复原输入与参数 → 沿用原订单重新执行（不创建新订单、不重复扣费）
+// 失败任务一键重试：原子抢占 → 后台执行 → 立即返回 202，前端轮询任务状态。
+// 恢复原输入与参数、沿用原订单（不创建新订单、不重复扣费），不阻塞 HTTP 连接。
 router.post('/:id/retry', authRequired, async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   const { task, orderNo, error, status } = prepareTaskRetry(taskId, req.user.id);
   if (error) return res.status(status || 400).json({ error });
 
-  const cfg = taskRetryConfig(task);
-  try {
-    const result = await executeWithBilling({
-      userId: req.user.id,
-      featureKey: cfg.featureKey,
-      toolType: task.tool_type,
-      action: cfg.action,
-      params: { ...task.params },
-      projectId: task.project_id || null,
-      inputText: task.input_text || '',
-      generateDocxOptions: cfg.generateDocxOptions,
-      generatePptxOptions: cfg.generatePptxOptions,
-      orderNo: orderNo || null,
-    });
-    if (result.needOrder) return res.json({ ...result });
-    res.json({
-      ok: true,
-      content: result.content,
-      doc: result.doc,
-      taskId: result.taskId,
-      orderNo: result.orderNo,
-      projectId: result.projectId,
-      model: result.model,
-      tokens: result.tokens,
-      retention_days: result.retention_days,
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: '重试失败：' + err.message });
+  // 原子抢占订单执行权（failed → processing），防止并发重复重试同一订单
+  if (orderNo) {
+    const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(orderNo);
+    if (order && !claimOrderExecution(order)) {
+      return res.status(409).json({ error: '订单正在处理中，请勿重复提交' });
+    }
   }
+  // 标记任务为处理中（progress 归 0，前端据此展示「处理中」）
+  updateTaskResult(taskId, req.user.id, { status: 'processing', progress: 0, stage: 'retrying', errorCode: null });
+
+  const cfg = taskRetryConfig(task);
+
+  // 后台执行：不 await，立即返回 202；前端通过 GET /tasks/:id 轮询 status 直到 success/failed。
+  executeWithBilling({
+    userId: req.user.id,
+    featureKey: cfg.featureKey,
+    toolType: task.tool_type,
+    action: cfg.action,
+    params: { ...task.params },
+    projectId: task.project_id || null,
+    inputText: task.input_text || '',
+    generateDocxOptions: cfg.generateDocxOptions,
+    generatePptxOptions: cfg.generatePptxOptions,
+    orderNo: orderNo || null,
+    existingTaskId: taskId,
+    skipClaim: true, // 已在上方原子抢占，避免二次抢占冲突
+  }).catch((err) => {
+    logger.error('tasks', `retry background failed: ${err.message}`);
+  });
+
+  return res.status(202).json({ taskId, status: 'processing', orderNo: orderNo || null });
 });
 
 export default router;

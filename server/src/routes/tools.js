@@ -12,7 +12,7 @@ import logger from '../logger.js';
 import { getFeaturePrice, getSetting } from '../config-store.js';
 import { isFreeUnlimitedFeature, materialFee, materialBillableTokens, MATERIAL_MAX_CHARS_PER, MATERIAL_TOTAL_CHARS_MAX } from '../services/billing.js';
 import { generateDocx } from '../services/docx-generator.js';
-import { saveTask, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned, classifyTaskError } from '../services/task-store.js';
+import { saveTask, updateTaskResult, getProject, saveProjectSources, saveProjectOutline, ensureAutoProject, buildProjectContext, isProjectOwned, classifyTaskError } from '../services/task-store.js';
 import { checkCoherence, aiReduceVersions } from '../services/text-optimize.js';
 import { checkContent } from '../services/content-safety.js';
 import { claimOrderExecution } from '../services/order-claim.js';
@@ -143,7 +143,7 @@ function bizError(message) {
 // generateDocxOptions: 写作类/开题报告等需要输出 Word 时传入
 // generatePptxOptions: 答辩等需要输出 .pptx 时传入（与 generateDocxOptions 互斥）
 // transformContent: 可选，对 AI 输出做后处理（如引用/图表占位符替换），在 docx/pptx 生成前执行
-export async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null, materialIds = null }) {
+export async function executeWithBilling({ userId, featureKey, toolType, action, params, generateDocxOptions = null, generatePptxOptions = null, projectId = null, inputText = '', transformContent = null, orderNo = null, materialIds = null, existingTaskId = null, skipClaim = false }) {
   // 安全：校验工作区归属（防跨用户上下文注入），非本人工作区直接拒绝
   if (projectId && !isProjectOwned(userId, projectId)) {
     throw bizError('无权访问该工作区');
@@ -210,7 +210,7 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
 
   // 原子抢占订单执行权：pending/failed → processing；processing 表示已有请求正在执行。
   // 防并发重放同一 orderNo 造成一次付费多次生成（AI 调用期间订单保持 processing）。
-  if (order && !claimOrderExecution(order)) {
+  if (order && !skipClaim && !claimOrderExecution(order)) {
     throw bizError('订单正在处理中，请勿重复提交');
   }
 
@@ -252,23 +252,27 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
     // 保存失败任务（带错误分类码，供任务中心展示「重新执行」或「联系客服」）
     try {
       const cls = classifyTaskError(err);
-      saveTask({
-        userId,
-        projectId: projectId || null,
-        toolType,
-        action,
-        inputText: inputText || JSON.stringify(params).slice(0, 2000),
-        outputText: '',
-        params: (() => { const p = { ...params }; delete p.context; return p; })(),
-        contextSummary,
-        modelName: '',
-        tokens: 0,
-        chargeType,
-        amount,
-        orderId: order?.id || null,
-        status: 'failed',
-        errorCode: cls.code,
-      });
+      if (existingTaskId) {
+        updateTaskResult(existingTaskId, userId, { status: 'failed', outputText: '', errorCode: cls.code });
+      } else {
+        saveTask({
+          userId,
+          projectId: projectId || null,
+          toolType,
+          action,
+          inputText: inputText || JSON.stringify(params).slice(0, 2000),
+          outputText: '',
+          params: (() => { const p = { ...params }; delete p.context; return p; })(),
+          contextSummary,
+          modelName: '',
+          tokens: 0,
+          chargeType,
+          amount,
+          orderId: order?.id || null,
+          status: 'failed',
+          errorCode: cls.code,
+        });
+      }
     } catch (e) {
       logger.error('tools', `failed-task-save failed: ${e.message}`);
     }
@@ -331,24 +335,28 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
   });
 
   // 保存任务历史记录（完整输入+输出，支持回看和上下文记忆）
-  let taskId = null;
+  let taskId = existingTaskId || null;
   try {
-    taskId = saveTask({
-      userId,
-      projectId: projectId || null,
-      toolType,
-      action,
-      inputText: inputText || JSON.stringify(params).slice(0, 2000),
-      outputText: aiResult.content,
-      params: (() => { const p = { ...params }; delete p.context; return p; })(),
-      contextSummary,
-      modelName: aiResult.model?.name || '',
-      tokens: aiResult.tokens,
-      chargeType,
-      amount,
-      orderId: order?.id || null,
-      status: 'success',
-    });
+    if (existingTaskId) {
+      updateTaskResult(existingTaskId, userId, { status: 'success', outputText: aiResult.content, modelName: aiResult.model?.name || '', tokens: aiResult.tokens, progress: 100 });
+    } else {
+      taskId = saveTask({
+        userId,
+        projectId: projectId || null,
+        toolType,
+        action,
+        inputText: inputText || JSON.stringify(params).slice(0, 2000),
+        outputText: aiResult.content,
+        params: (() => { const p = { ...params }; delete p.context; return p; })(),
+        contextSummary,
+        modelName: aiResult.model?.name || '',
+        tokens: aiResult.tokens,
+        chargeType,
+        amount,
+        orderId: order?.id || null,
+        status: 'success',
+      });
+    }
   } catch (err) {
     logger.error('tools', `task-save failed: ${err.message}`);
   }

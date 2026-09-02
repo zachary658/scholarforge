@@ -630,7 +630,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {tab === 'pipeline' && (
             <div className="space-y-4">
-              {/* 总进度：completion_percent 优先，否则按当前阶段位置估算 */}
+              {/* 系统进度（由已完成任务/产物自动推导）优先，用户手工 completion_percent 作为补充标记 */}
               <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
@@ -643,11 +643,13 @@ function ProjectDetail({ project, onClose, onEdit }) {
                 <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-blue-100">
                   <div
                     className="h-full rounded-full bg-blue-500 transition-all"
-                    style={{ width: `${Math.min(100, project.completion_percent > 0 ? project.completion_percent : Math.round(((currentStageIdx + 1) / PAPER_STAGES.length) * 100))}%` }}
+                    style={{ width: `${Math.min(100, project.system_progress ?? (project.completion_percent > 0 ? project.completion_percent : Math.round(((currentStageIdx + 1) / PAPER_STAGES.length) * 100)))}%` }}
                   />
                 </div>
                 <p className="mt-1.5 text-xs text-slate-500">
-                  当前阶段：{PAPER_STAGES[currentStageIdx]?.label || '创建论文'}
+                  系统进度 <strong>{project.system_progress ?? 0}%</strong>
+                  {project.completion_percent > 0 && ` · 手动标记 ${project.completion_percent}%`}
+                  {' · '}当前阶段：{PAPER_STAGES[currentStageIdx]?.label || '创建论文'}
                 </p>
               </div>
 

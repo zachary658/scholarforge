@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import logger from './logger.js';
+import { runMigrations } from './migrations.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // 支持 DB_PATH 环境变量指定数据库文件路径（测试 / 多实例部署用，默认 data/scholarforge.db）
@@ -246,6 +247,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_generated_docs_created ON generated_docs(created_at);
 `);
 
+// ========== 版本化迁移（schema_migrations） ==========
+// 002_order_events / 003_project_workflow / 004_task_retry 在此事务化执行，
+// 001_initial 由上方建表脚本完成，runMigrations 记录版本并校验基线。
+runMigrations(db);
+
 // ========== 轻量 schema 迁移（兼容已有数据库） ==========
 // 注意：references 是 SQLite 关键字，需用引号包裹表名
 function addColumnIfMissing(table, column, def) {
@@ -339,25 +345,6 @@ addColumnIfMissing('courses', 'custom_formula_mid', 'REAL');
 addColumnIfMissing('courses', 'custom_formula_high', 'REAL');
 addColumnIfMissing('courses', 'custom_urgent_multiplier', 'REAL');
 
-// ===== 阶段三：大纲强制确认 + 分章节草稿 + 数据图表 =====
-addColumnIfMissing('projects', 'outline_confirmed_at', 'INTEGER');
-addColumnIfMissing('projects', 'chapters_json', "TEXT DEFAULT '[]'");
-// ===== 蒸馏流水线贯通：工作区持久化检索→蒸馏产物（框架/文献/benchmark/表格数据） =====
-// sources_json 结构：{ framework, references, benchmarks, tables, sources_used, saved_at }
-// 分章节生成与全文生成统一消费，保证蒸馏产物贯通到正文
-addColumnIfMissing('projects', 'sources_json', "TEXT DEFAULT '{}'");
-// ===== 自动工作区：用户首次生成内容时系统自动创建（auto_created=1），防止内容散落丢失 =====
-addColumnIfMissing('projects', 'auto_created', 'INTEGER NOT NULL DEFAULT 0');
-// ===== 论文工作区主流程：阶段推进 / 截止时间 / 完成度 =====
-addColumnIfMissing('projects', 'degree', 'TEXT');
-addColumnIfMissing('projects', 'current_stage', "TEXT NOT NULL DEFAULT 'create'");
-addColumnIfMissing('projects', 'deadline', 'INTEGER');
-addColumnIfMissing('projects', 'completion_percent', 'INTEGER NOT NULL DEFAULT 0');
-// ===== 失败任务恢复：进度 / 阶段 / 错误码 / 重试次数（P0 任务重试路径） =====
-addColumnIfMissing('ai_tasks', 'progress', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('ai_tasks', 'stage', 'TEXT');
-addColumnIfMissing('ai_tasks', 'error_code', 'TEXT');
-addColumnIfMissing('ai_tasks', 'retry_count', 'INTEGER NOT NULL DEFAULT 0');
 // ===== 用户上传资料（写作参考材料：docx/pdf/txt 解读后存储文本与 token 量）=====
 db.exec(`
   CREATE TABLE IF NOT EXISTS materials (
@@ -474,29 +461,6 @@ db.exec(`
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
   CREATE INDEX IF NOT EXISTS idx_order_notes ON order_notes(order_type, order_ref_id, created_at DESC);
-`);
-
-// ===== 订单状态时间线（统一状态机每次变更都会落一条事件） =====
-// domain: order(订单主状态) / service(服务状态) / contact(客服状态) / quote(报价状态)
-// ref_type: 来源表；ref_id: 来源记录 id；operator_id: 操作人（系统事件为 NULL）
-db.exec(`
-  CREATE TABLE IF NOT EXISTS order_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER,
-    order_no TEXT,
-    domain TEXT NOT NULL,
-    ref_type TEXT NOT NULL,
-    ref_id INTEGER NOT NULL,
-    field TEXT NOT NULL,
-    from_status TEXT,
-    to_status TEXT NOT NULL,
-    operator_id INTEGER,
-    operator_name TEXT,
-    reason TEXT,
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_order_events_ref ON order_events(ref_type, ref_id, created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events(order_id, created_at DESC);
 `);
 
 // ===== 认证安全：token_version 用于主动失效 JWT（修改密码/登出时 +1）=====
