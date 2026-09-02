@@ -3,9 +3,10 @@
 //   1) 注册：成功 / 弱密码 400 / 缺字段 400 / 重复邮箱 409
 //   2) 登录：成功 / 错误密码 401 / 未带 token 访问受保护接口 401
 //   3) 权限（IDOR/越权）：普通用户访问管理端点 403；跨用户文档/订单/支付状态/材料 403/404
-//   4) 订单 + 支付闭环：创建功能订单 → mock 支付 → 重复支付幂等 → 并发支付仅一次入账
-//   5) 支付回调：伪造支付宝回调 fail / 微信回调无验签头 401
-//   6) 文档上传下载：材料上传（txt 成功 / 伪造 pdf 400）、列表隔离、删除越权 404
+//   4) 项目证据：文献/图表关联项目、按项目筛选、跨用户项目拒绝
+//   5) 订单 + 支付闭环：创建功能订单 → mock 支付 → 重复支付幂等 → 并发支付仅一次入账
+//   6) 支付回调：伪造支付宝回调 fail / 微信回调无验签头 401
+//   7) 文档上传下载：材料上传（txt 成功 / 伪造 pdf 400）、列表隔离、删除越权 404
 // 注意：注册风控默认同 IP 24h 最多 3 个账号，本文件只成功注册 2 个用户。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -140,7 +141,58 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   r = await api(`/api/documents/${docA.id}`, { method: 'DELETE', token: tokenB });
   assert.ok([403, 404].includes(r.status), 'B 删除 A 的文档应被拒绝');
 
-  // ---------- 5) 订单 + 支付闭环（mock 通道） ----------
+  // ---------- 5) 项目证据库：文献/图表归属、筛选与越权 ----------
+  r = await api('/api/projects', {
+    method: 'POST', token: tokenA, body: { title: 'A 的证据论文', field: '计算机科学' },
+  });
+  assert.equal(r.status, 200, 'A 创建论文项目应 200');
+  const projectA = (await r.json()).project;
+
+  r = await api('/api/projects', {
+    method: 'POST', token: tokenB, body: { title: 'B 的私有论文', field: '管理学' },
+  });
+  const projectB = (await r.json()).project;
+
+  r = await api('/api/references', {
+    method: 'POST',
+    token: tokenA,
+    body: { title: '可溯源测试文献', authors: 'Test Author', year: '2026', projectId: projectA.id },
+  });
+  assert.equal(r.status, 200, '项目文献收藏应 200');
+  const projectRef = (await r.json()).reference;
+  assert.equal(projectRef.project_id, projectA.id, '文献应绑定指定项目');
+
+  r = await api(`/api/references?projectId=${projectA.id}`, { token: tokenA });
+  assert.ok((await r.json()).references.some((ref) => ref.id === projectRef.id), '项目文献筛选应返回已收藏文献');
+  r = await api(`/api/references?projectId=${projectA.id}`, { token: tokenB });
+  assert.equal(r.status, 404, 'B 不可读取 A 的项目文献');
+  r = await api('/api/references?projectId=abc', { token: tokenA });
+  assert.equal(r.status, 404, '非法项目筛选参数不可退化为全部文献');
+
+  r = await api('/api/charts/render', {
+    method: 'POST',
+    token: tokenA,
+    body: {
+      title: '项目证据测试图', chart_type: 'bar', x: 'group', y: 'value', projectId: projectA.id,
+      rows: [{ group: 'A', value: 10 }, { group: 'B', value: 20 }],
+    },
+  });
+  assert.equal(r.status, 200, '项目图表生成应 200');
+  const projectChart = (await r.json()).chart;
+  assert.equal(projectChart.project_id, projectA.id, '图表应绑定指定项目');
+  r = await api(`/api/charts?projectId=${projectA.id}`, { token: tokenA });
+  assert.ok((await r.json()).charts.some((chart) => chart.id === projectChart.id), '项目图表筛选应返回已生成图表');
+  r = await api(projectChart.file_url, { token: tokenA });
+  assert.equal(r.status, 200, '项目图表 PNG 应可下载');
+  assert.ok((await r.arrayBuffer()).byteLength > 100, '项目图表 PNG 不应为空');
+  r = await api('/api/charts/render', {
+    method: 'POST',
+    token: tokenA,
+    body: { title: '越权图表', chart_type: 'bar', x: 'x', y: 'y', projectId: projectB.id, rows: [{ x: 'A', y: 1 }] },
+  });
+  assert.equal(r.status, 404, 'A 不可把图表绑定到 B 的项目');
+
+  // ---------- 6) 订单 + 支付闭环（mock 通道） ----------
   r = await api('/api/orders', {
     method: 'POST',
     token: tokenA,
@@ -196,7 +248,7 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   const listB = (await r.json()).orders;
   assert.ok(!listB.some((o) => o.order_no === order1.order_no), 'B 的订单列表不应包含 A 的订单');
 
-  // ---------- 6) 支付回调：伪造通知必须被拒 ----------
+  // ---------- 7) 支付回调：伪造通知必须被拒 ----------
   r = await api('/api/payment/alipay/notify', {
     method: 'POST',
     body: { out_trade_no: order1.order_no, trade_status: 'TRADE_SUCCESS', total_amount: '0.01', sign: 'forged' },
@@ -210,7 +262,7 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   assert.equal(r.status, 401, '缺少微信验签头的回调应 401');
   assert.equal((await r.json()).code, 'FAIL');
 
-  // ---------- 7) 材料上传 / 下载（列表）/ 删除 + 越权 ----------
+  // ---------- 8) 材料上传 / 下载（列表）/ 删除 + 越权 ----------
   const fd = new FormData();
   fd.append('file', new Blob(['这是一份用于测试的材料文本内容。'], { type: 'text/plain' }), 'notes.txt');
   r = await fetch(`${BASE}/api/materials/upload`, {

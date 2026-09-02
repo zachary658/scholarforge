@@ -353,6 +353,8 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [materials, setMaterials] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
+  const [references, setReferences] = useState([]);
+  const [charts, setCharts] = useState([]);
   const [outline, setOutline] = useState(project.outline || []);
   const [savingOutline, setSavingOutline] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState(project.outline_confirmed_at || null);
@@ -470,6 +472,19 @@ function ProjectDetail({ project, onClose, onEdit }) {
     }
   }, [project.id]);
 
+  const loadEvidence = useCallback(async () => {
+    try {
+      const [refData, chartData] = await Promise.all([
+        api.listRefs({ projectId: project.id }),
+        api.listCharts({ projectId: project.id }),
+      ]);
+      setReferences(refData.references || []);
+      setCharts(chartData.charts || []);
+    } catch (err) {
+      toast.error('加载项目证据失败：' + err.message);
+    }
+  }, [project.id]);
+
   // 刷新工作区大纲：大纲生成/深度调研后自动写入结构化大纲，进入此 tab 时拉取最新
   const loadProject = useCallback(async () => {
     try {
@@ -486,9 +501,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
     if (tab === 'materials') loadMaterials();
     if (tab === 'chapters') loadChapters();
     if (tab === 'artifacts') loadArtifacts();
+    if (tab === 'evidence') loadEvidence();
     if (tab === 'outline') loadProject();
-    if (tab === 'pipeline') { loadTasks(); loadMaterials(); loadChapters(); loadArtifacts(); }
-  }, [tab, loadTasks, loadMaterials, loadChapters, loadArtifacts, loadProject]);
+    if (tab === 'pipeline') { loadTasks(); loadMaterials(); loadChapters(); loadArtifacts(); loadEvidence(); }
+  }, [tab, loadTasks, loadMaterials, loadChapters, loadArtifacts, loadEvidence, loadProject]);
 
   const handleSaveOutline = async () => {
     setSavingOutline(true);
@@ -628,13 +644,14 @@ function ProjectDetail({ project, onClose, onEdit }) {
         </div>
 
         {/* Tab：主流程步骤导航 + 成果存放区（生成记录/大纲/章节/资料） */}
-        <div className="flex gap-1 border-b border-slate-100 px-6">
+        <div className="flex gap-1 overflow-x-auto border-b border-slate-100 px-6">
           {[
             { key: 'pipeline', label: '流程' },
             { key: 'tasks', label: `生成记录 (${tasks.length})` },
             { key: 'outline', label: '大纲' },
             { key: 'chapters', label: '章节内容' },
             { key: 'artifacts', label: `成果文件 (${artifacts.length})` },
+            { key: 'evidence', label: `文献与图表 (${references.length + charts.length})` },
             { key: 'materials', label: '我的资料' },
             { key: 'overview', label: '概览' },
           ].map((t) => (
@@ -1039,6 +1056,44 @@ function ProjectDetail({ project, onClose, onEdit }) {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {tab === 'evidence' && (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-500">本论文的可溯源文献与数据图表</p>
+                <div className="flex gap-2">
+                  <button onClick={() => navigate(`/app/references?projectId=${project.id}`)} className="btn-secondary text-xs">
+                    <Book className="h-3.5 w-3.5" /> 检索文献
+                  </button>
+                  <button onClick={() => navigate(`/app/charts?projectId=${project.id}`)} className="btn-secondary text-xs">
+                    新建图表
+                  </button>
+                </div>
+              </div>
+              <section>
+                <h4 className="mb-2 text-sm font-semibold text-ink">项目文献 ({references.length})</h4>
+                {references.length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">尚未收藏项目文献</p> : (
+                  <div className="space-y-2">{references.map((ref) => (
+                    <div key={ref.id} className="rounded-lg border border-slate-100 px-4 py-3">
+                      <div className="text-sm font-medium text-ink">{ref.title}</div>
+                      <div className="mt-1 text-xs text-slate-400">{ref.authors} · {ref.year || '年份未知'} · {ref.source_db || ref.source}</div>
+                    </div>
+                  ))}</div>
+                )}
+              </section>
+              <section>
+                <h4 className="mb-2 text-sm font-semibold text-ink">项目图表 ({charts.length})</h4>
+                {charts.length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">尚未生成项目图表</p> : (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{charts.map((chart) => (
+                    <button key={chart.id} onClick={() => navigate(`/app/charts?projectId=${project.id}`)} className="rounded-lg border border-slate-100 p-3 text-left hover:border-accent/30">
+                      <div className="truncate text-sm font-medium text-ink">{chart.title}</div>
+                      <div className="mt-1 text-xs text-slate-400">{chart.chart_type} · {fmtDate(chart.created_at)}</div>
+                    </button>
+                  ))}</div>
+                )}
+              </section>
             </div>
           )}
         </div>

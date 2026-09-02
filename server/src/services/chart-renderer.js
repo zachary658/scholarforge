@@ -153,7 +153,10 @@ export async function renderChart(spec) {
   });
   try {
     const svg = await view.toSVG();
-    return svgToPng(svg, 2);
+    const rendered = await svgToPng(svg, 2);
+    // 高层渲染 API 历史上存在两种调用约定：Word 生成器读取 buffer，
+    // 图表下载接口读取 png。两者指向同一个 Buffer，兼容旧调用方并避免额外复制。
+    return { ...rendered, png: rendered.buffer };
   } finally {
     // P14: 释放 vega View 内部资源（DOM 事件监听、定时器等），防止内存泄漏
     view.finalize();
@@ -185,10 +188,22 @@ function parseMermaid(code) {
   const nodes = new Map(); // id -> { id, text, shape }
   const edges = [];
 
-  // 节点形状正则
-  const nodeShapeRegex = /^([A-Za-z0-9_]+)\s*(\[([^\]]*)\]|\(([^)]*)\)|\{([^}]*)\}|\(\(([^)]*)\)\))$/;
-  // 边正则：A --> B, A -->|label| B, A --- B
-  const edgeRegex = /^([A-Za-z0-9_]+)\s*(-->|---)\s*(?:\|([^|]*)\|\s*)?([A-Za-z0-9_]+)(?:\s*(\[([^\]]*)\]|\(([^)]*)\)|\{([^}]*)\}))?$/;
+  // Mermaid 常用节点写法。圆形必须先于圆角矩形匹配，避免 ((文本)) 被误判。
+  function parseNodeToken(token) {
+    const match = String(token).trim().match(
+      /^([A-Za-z0-9_]+)\s*(?:(?:\[([^\]]*)\])|(?:\(\(([^)]*)\)\))|(?:\(([^)]*)\))|(?:\{([^}]*)\}))?$/
+    );
+    if (!match) return null;
+    const [, id, bracket, circle, round, diamond] = match;
+    if (bracket !== undefined) return { id, text: bracket, shape: 'rect', explicit: true };
+    if (circle !== undefined) return { id, text: circle, shape: 'circle', explicit: true };
+    if (round !== undefined) return { id, text: round, shape: 'round', explicit: true };
+    if (diamond !== undefined) return { id, text: diamond, shape: 'diamond', explicit: true };
+    return { id, text: id, shape: 'rect', explicit: false };
+  }
+
+  // 边：两端都允许携带节点文字/形状，例如 A[开始] -->|通过| B{完成?}
+  const edgeRegex = /^(.+?)\s*(-->|---)\s*(?:\|([^|]*)\|\s*)?(.+?)$/;
 
   for (const line of lines) {
     if (/^graph\s+(TD|LR|TB)/i.test(line)) {
@@ -198,36 +213,27 @@ function parseMermaid(code) {
     // 尝试匹配边
     const em = line.match(edgeRegex);
     if (em) {
-      const [, from, arrow, label, to, , bracket, round, diamond] = em;
-      // 注册源节点
-      if (!nodes.has(from)) nodes.set(from, { id: from, text: from, shape: 'rect' });
-      // 注册目标节点（带形状）
-      if (!nodes.has(to)) {
-        let text = to, shape = 'rect';
-        if (bracket !== undefined) { text = bracket; shape = 'rect'; }
-        else if (round !== undefined) { text = round; shape = 'round'; }
-        else if (diamond !== undefined) { text = diamond; shape = 'diamond'; }
-        nodes.set(to, { id: to, text, shape });
-      } else if (bracket !== undefined || round !== undefined || diamond !== undefined) {
-        // 已存在节点但这次给了形状/文本，更新
-        const n = nodes.get(to);
-        if (bracket !== undefined) { n.text = bracket; n.shape = 'rect'; }
-        else if (round !== undefined) { n.text = round; n.shape = 'round'; }
-        else if (diamond !== undefined) { n.text = diamond; n.shape = 'diamond'; }
+      const [, fromToken, arrow, label, toToken] = em;
+      const fromNode = parseNodeToken(fromToken);
+      const toNode = parseNodeToken(toToken);
+      if (fromNode && toNode) {
+        for (const node of [fromNode, toNode]) {
+          if (!nodes.has(node.id)) {
+            nodes.set(node.id, { id: node.id, text: node.text, shape: node.shape });
+          } else if (node.explicit) {
+            const existing = nodes.get(node.id);
+            existing.text = node.text;
+            existing.shape = node.shape;
+          }
+        }
+        edges.push({ from: fromNode.id, to: toNode.id, arrow: arrow === '-->', label: label || '' });
+        continue;
       }
-      edges.push({ from, to, arrow: arrow === '-->', label: label || '' });
-      continue;
     }
     // 尝试匹配独立节点定义
-    const nm = line.match(nodeShapeRegex);
-    if (nm) {
-      const [, id, , bracket, round, diamond, circle] = nm;
-      let text = id, shape = 'rect';
-      if (bracket !== undefined) { text = bracket; shape = 'rect'; }
-      else if (round !== undefined) { text = round; shape = 'round'; }
-      else if (diamond !== undefined) { text = diamond; shape = 'diamond'; }
-      else if (circle !== undefined) { text = circle; shape = 'circle'; }
-      nodes.set(id, { id, text, shape });
+    const node = parseNodeToken(line);
+    if (node?.explicit) {
+      nodes.set(node.id, { id: node.id, text: node.text, shape: node.shape });
     }
   }
   // P15: 限制节点和边数量，防止超大流程图导致渲染时间过长或 OOM
@@ -417,7 +423,8 @@ export async function renderFlowchart(code) {
   }
 
   svg += `</svg>`;
-  return svgToPng(svg, 2);
+  const rendered = await svgToPng(svg, 2);
+  return { ...rendered, png: rendered.buffer };
 }
 
 // 简单文本换行（按字符数）

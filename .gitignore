@@ -7,10 +7,10 @@ server/node_modules/
 client/dist/
 
 # 运行时生成的文件
-server/uploads/docs/*.docx
-server/uploads/docs/*.pptx
-server/uploads/test-charts/
+server/uploads/
 server/src/uploads/mail_log/
+.runtime/
+server/.npm-cache/
 
 # 数据库文件（排除所有数据库文件，避免敏感数据泄露）
 server/data/*.db

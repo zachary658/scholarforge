@@ -24,6 +24,13 @@ if (!fs.existsSync(chartsDir)) fs.mkdirSync(chartsDir, { recursive: true });
 const router = Router();
 router.use(authRequired);
 
+function ownedProjectId(value, userId) {
+  if (value === undefined || value === null || value === '') return null;
+  const projectId = Number.parseInt(value, 10);
+  if (!Number.isInteger(projectId) || projectId <= 0 || String(projectId) !== String(value).trim()) return false;
+  return db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId)?.id || false;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -74,10 +81,12 @@ router.post('/upload', cpuLimiter, upload.single('file'), (req, res) => {
 
 // 渲染图表并保存 PNG
 router.post('/render', cpuLimiter, async (req, res) => {
-  const { title, chart_type, x, y, rows } = req.body || {};
+  const { title, chart_type, x, y, rows, projectId: requestedProjectId } = req.body || {};
   if (!['bar', 'line', 'pie', 'scatter'].includes(chart_type)) return res.status(400).json({ error: '不支持的图表类型' });
   if (!x || !y) return res.status(400).json({ error: '请选择 X 轴和 Y 轴字段' });
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: '缺少图表数据' });
+  const projectId = ownedProjectId(requestedProjectId, req.user.id);
+  if (projectId === false) return res.status(404).json({ error: '工作区不存在' });
   // 行数/字段数上限：防客户端 POST 超大 rows 拖垮 vega 渲染并膨胀 spec_json 落库
   if (rows.length > 500) return res.status(400).json({ error: '图表数据最多 500 行' });
   if (x.length > 100 || y.length > 100) return res.status(400).json({ error: '字段名过长' });
@@ -95,8 +104,8 @@ router.post('/render', cpuLimiter, async (req, res) => {
 
     const { png, width, height } = await renderChart(spec);
     const info = db.prepare(
-      `INSERT INTO charts (user_id, title, chart_type, file_path, spec_json) VALUES (?, ?, ?, ?, ?)`
-    ).run(req.user.id, title || '图表', chart_type, '', JSON.stringify(spec));
+      `INSERT INTO charts (user_id, project_id, title, chart_type, file_path, spec_json) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(req.user.id, projectId || null, title || '图表', chart_type, '', JSON.stringify(spec));
     const id = info.lastInsertRowid;
     const fileName = `${id}.png`;
     fs.writeFileSync(join(chartsDir, fileName), png);
@@ -105,6 +114,7 @@ router.post('/render', cpuLimiter, async (req, res) => {
     res.json({
       chart: {
         id,
+        project_id: projectId || null,
         title: title || '图表',
         chart_type,
         width,
@@ -150,7 +160,11 @@ function buildSpec(chart_type, x, y, rows, title) {
 
 // 我的图表列表
 router.get('/', (req, res) => {
-  const charts = db.prepare('SELECT id, title, chart_type, file_path, created_at FROM charts WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
+  const projectId = ownedProjectId(req.query.projectId, req.user.id);
+  if (projectId === false) return res.status(404).json({ error: '工作区不存在' });
+  const charts = projectId
+    ? db.prepare('SELECT id, project_id, title, chart_type, file_path, created_at FROM charts WHERE user_id = ? AND project_id = ? ORDER BY id DESC').all(req.user.id, projectId)
+    : db.prepare('SELECT id, project_id, title, chart_type, file_path, created_at FROM charts WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
   res.json({ charts: charts.map((c) => ({ ...c, file_url: `/api/charts/${c.id}/file` })) });
 });
 
@@ -180,6 +194,7 @@ router.post('/:id/insert', (req, res) => {
     // 以 vega 代码块形式插入，docx-generator 会渲染为高清图片
     const block = `\n\n图：${chart.title || '数据图表'}\n\n\`\`\`vega\n${chart.spec_json || '{}'}\n\`\`\`\n`;
     const result = editChapter(req.user.id, Number(projectId), chapterId, (chapter?.content || '') + block);
+    db.prepare('UPDATE charts SET project_id = ? WHERE id = ? AND user_id = ?').run(Number(projectId), chart.id, req.user.id);
     res.json({ ok: true, chapter: result.chapter });
   } catch (err) {
     res.status(400).json({ error: err.message });

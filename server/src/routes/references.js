@@ -9,6 +9,13 @@ import logger from '../logger.js';
 
 const router = Router();
 
+function ownedProjectId(value, userId) {
+  if (value === undefined || value === null || value === '') return null;
+  const projectId = Number.parseInt(value, 10);
+  if (!Number.isInteger(projectId) || projectId <= 0 || String(projectId) !== String(value).trim()) return false;
+  return db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId)?.id || false;
+}
+
 // 检索结果缓存（相同关键词 24 小时，内存缓存；进程内有效）
 const searchCache = new Map(); // key -> { data, at }
 const SEARCH_CACHE_TTL = 24 * 3600 * 1000;
@@ -194,15 +201,17 @@ router.get('/search', authRequired, async (req, res) => {
 
 // 我的文献列表
 router.get('/', authRequired, (req, res) => {
-  const refs = db
-    .prepare('SELECT * FROM "references" WHERE user_id = ? ORDER BY created_at DESC')
-    .all(req.user.id);
+  const projectId = ownedProjectId(req.query.projectId, req.user.id);
+  if (projectId === false) return res.status(404).json({ error: '工作区不存在' });
+  const refs = projectId
+    ? db.prepare('SELECT * FROM "references" WHERE user_id = ? AND project_id = ? ORDER BY created_at DESC').all(req.user.id, projectId)
+    : db.prepare('SELECT * FROM "references" WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
   res.json({ references: refs });
 });
 
 // 添加文献（手动或从检索收藏）
 router.post('/', authRequired, (req, res) => {
-  const { title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db } = req.body || {};
+  const { title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db, projectId: requestedProjectId, project_id } = req.body || {};
   if (!title) return res.status(400).json({ error: '请填写文献标题' });
   // 入库长度校验：短文本 ≤200（作者列表放宽至 500，兼容多作者论文），原文链接 ≤2048，超限 400
   const lenErr = checkTextLength([
@@ -222,13 +231,16 @@ router.post('/', authRequired, (req, res) => {
   if (source_url && !/^https?:\/\//i.test(String(source_url))) {
     return res.status(400).json({ error: '原文链接仅支持 http/https 协议' });
   }
+  const linkedProjectId = ownedProjectId(requestedProjectId ?? project_id, req.user.id);
+  if (linkedProjectId === false) return res.status(404).json({ error: '工作区不存在' });
   const info = db
     .prepare(
-      `INSERT INTO "references" (user_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO "references" (user_id, project_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.user.id,
+      linkedProjectId || null,
       title,
       authors || '',
       year || '',

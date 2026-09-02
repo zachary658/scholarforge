@@ -224,7 +224,7 @@ export const api = {
 
   // ===== 参考文献 =====
   searchRefs: (q) => request(`/references/search?q=${encodeURIComponent(q || '')}`),
-  listRefs: () => request('/references'),
+  listRefs: (params = {}) => request(`/references?${new URLSearchParams(params).toString()}`),
   addRef: (payload) => request('/references', { method: 'POST', body: payload }),
   deleteRef: (id) => request(`/references/${id}`, { method: 'DELETE' }),
   formatRefs: (payload) => request('/references/format', { method: 'POST', body: payload }),
@@ -403,7 +403,7 @@ export const api = {
   // ===== 数据图表 =====
   uploadChart: (file) => upload('/charts/upload', file),
   renderChart: (payload) => request('/charts/render', { method: 'POST', body: payload }),
-  listCharts: () => request('/charts'),
+  listCharts: (params = {}) => request(`/charts?${new URLSearchParams(params).toString()}`),
   insertChart: (id, payload) => request(`/charts/${id}/insert`, { method: 'POST', body: payload }),
 
   // ===== 降AI率（多版本） =====

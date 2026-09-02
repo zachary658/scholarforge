@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { FileSearch, Refresh, Download, ChartBar, Layers, Plus } from '../components/Icons.jsx';
 import { toast } from '../components/Toast.jsx';
@@ -11,6 +12,8 @@ const CHART_TYPES = [
 ];
 
 export default function Charts() {
+  const [searchParams] = useSearchParams();
+  const initialProjectId = searchParams.get('projectId') || '';
   const fileRef = useRef(null);
   const [columns, setColumns] = useState([]);
   const [rows, setRows] = useState([]);
@@ -25,14 +28,14 @@ export default function Charts() {
 
   // 插入相关
   const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(initialProjectId);
   const [chapters, setChapters] = useState([]);
   const [chapterId, setChapterId] = useState('');
 
-  const loadCharts = () => api.listCharts().then((d) => setCharts(d.charts || [])).catch(() => {});
+  const loadCharts = () => api.listCharts(projectId ? { projectId } : {}).then((d) => setCharts(d.charts || [])).catch(() => {});
   const loadProjects = () => api.listProjects().then((d) => setProjects(d.projects || [])).catch(() => {});
 
-  useEffect(() => { loadCharts(); loadProjects(); }, []);
+  useEffect(() => { loadCharts(); loadProjects(); }, [projectId]);
 
   useEffect(() => {
     if (projectId) {
@@ -65,7 +68,7 @@ export default function Charts() {
     if (!x || !y) { toast.warning('请选择 X 轴和 Y 轴字段'); return; }
     setRendering(true);
     try {
-      const data = await api.renderChart({ title, chart_type: chartType, x, y, rows });
+      const data = await api.renderChart({ title, chart_type: chartType, x, y, rows, projectId: projectId ? Number(projectId) : undefined });
       setCurrent(data.chart);
       loadCharts();
       toast.success('图表已生成');
@@ -92,6 +95,9 @@ export default function Charts() {
       <div className="mb-6">
         <h1 className="text-xl font-bold text-ink">数据图表</h1>
         <p className="mt-1 text-sm text-slate-500">上传 Excel/CSV，选择字段与图表类型，生成学术风格 PNG，可下载或一键插入论文</p>
+        {projectId && projects.find((p) => String(p.id) === String(projectId)) && (
+          <p className="mt-1 text-xs font-medium text-accent">已关联论文：{projects.find((p) => String(p.id) === String(projectId)).title}</p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

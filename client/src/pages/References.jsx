@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { isSafeUrl } from '../lib/utils.js';
 import {
@@ -37,6 +38,9 @@ function sourceTag(r) {
 }
 
 export default function References() {
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get('projectId') || '';
+  const [linkedProject, setLinkedProject] = useState(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searched, setSearched] = useState(false);
@@ -55,7 +59,7 @@ export default function References() {
 
   const loadRefs = () => {
     const seq = ++refsSeqRef.current;
-    api.listRefs()
+    api.listRefs(projectId ? { projectId } : {})
       .then((d) => {
         if (seq !== refsSeqRef.current) return; // 已有更新的请求发出，丢弃旧响应
         setRefs(d.references || []);
@@ -64,6 +68,13 @@ export default function References() {
   };
 
   useEffect(() => {
+    if (projectId) {
+      api.getProject(projectId).then((d) => {
+        const project = d.project;
+        setLinkedProject(project || null);
+        if (project?.title) setQuery(project.title);
+      }).catch((err) => toast.error('加载论文信息失败：' + err.message));
+    }
     loadRefs();
     const seq = ++searchSeqRef.current;
     api.searchRefs('')
@@ -72,7 +83,7 @@ export default function References() {
         setResults(d.results || []);
       })
       .catch(() => {});
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     return () => {
@@ -101,7 +112,7 @@ export default function References() {
 
   const collect = async (r) => {
     try {
-      await api.addRef(r);
+      await api.addRef({ ...r, projectId: projectId || undefined });
       toast.success('已收藏到文献库');
       loadRefs();
     } catch (err) {
@@ -127,7 +138,7 @@ export default function References() {
     try {
       const ids = [];
       for (const r of selectedItems) {
-        const d = await api.addRef(r);
+        const d = await api.addRef({ ...r, projectId: projectId || undefined });
         if (d.reference?.id) ids.push(d.reference.id);
       }
       const data = await api.formatRefs({ ids, style });
@@ -175,7 +186,7 @@ export default function References() {
   const addManual = async () => {
     if (!newRef.title.trim()) return;
     try {
-      await api.addRef({ ...newRef, source: 'manual' });
+      await api.addRef({ ...newRef, source: 'manual', projectId: projectId || undefined });
       setNewRef({ title: '', authors: '', year: '', journal: '', ref_type: 'journal' });
       setShowAdd(false);
       loadRefs();
@@ -204,6 +215,7 @@ export default function References() {
         <div>
           <h1 className="text-xl font-bold text-ink">文献管理</h1>
           <p className="mt-1 text-sm text-slate-500">检索真实可溯源文献、收藏整理、一键导出多种引用格式</p>
+          {linkedProject && <p className="mt-1 text-xs font-medium text-accent">已关联论文：{linkedProject.title}</p>}
         </div>
         <button onClick={() => setShowAdd(!showAdd)} className="btn-secondary">
           <Plus className="h-4 w-4" /> 手动添加
@@ -219,7 +231,7 @@ export default function References() {
           <div className="flex-1 text-sm">
             <p className="font-semibold text-emerald-700">真实文献 · 可溯源 · 不编造</p>
             <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
-              所有检索结果均来自真实学术数据库（中国知网 CNKI / IEEE Xplore / ACM Digital Library / Springer Link 等），
+              当前检索结果来自 OpenAlex 聚合学术数据库，
               每条文献都附带<span className="font-medium text-emerald-700">原文链接</span>可一键溯源核验，杜绝 AI 编造文献。
               {refs.length > 0 && (
                 <span className="ml-1">当前文献库：<span className="font-medium text-emerald-700">{realCount} 篇真实可溯源</span> / 共 {refs.length} 篇</span>
