@@ -90,7 +90,7 @@ function stripMd(s) {
 
 // 生成 .pptx 并落盘，返回 { id, title, filePath, fileName, file_path, downloadUrl }
 // 与 generateDocx 返回格式保持一致，前端可直接复用 doc.downloadUrl
-export async function generatePptx({ title, slides, userId, orderId = null, feature = 'defense' }) {
+export async function generatePptx({ title, slides, userId, orderId = null, projectId = null, feature = 'defense' }) {
   const pres = new pptxgen();
   pres.layout = 'LAYOUT_WIDE'; // 16:9
   pres.author = 'ScholarForge';
@@ -178,8 +178,8 @@ export async function generatePptx({ title, slides, userId, orderId = null, feat
 
   // 落库
   const info = db.prepare(
-    `INSERT INTO generated_docs (user_id, title, feature, file_path, order_id) VALUES (?, ?, ?, ?, ?)`
-  ).run(userId, safeTitle, feature, fileName, orderId || null);
+    `INSERT INTO generated_docs (user_id, project_id, title, feature, file_path, order_id) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(userId, projectId || null, safeTitle, feature, fileName, orderId || null);
 
   return {
     id: info.lastInsertRowid,

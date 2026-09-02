@@ -372,6 +372,9 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_charts_user ON charts(user_id, created_at DESC);
 `);
+// charts 在版本迁移执行点之后才由历史建表脚本创建；新库在此补齐项目归属。
+addColumnIfMissing('charts', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL');
+db.exec('CREATE INDEX IF NOT EXISTS idx_charts_project ON charts(project_id, created_at DESC)');
 
 // ===== 毕业作品指导制作模块 =====
 db.exec(`

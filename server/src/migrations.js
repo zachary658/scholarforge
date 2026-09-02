@@ -61,12 +61,25 @@ const TASK_RETRY_COLUMNS = [
   ['ai_tasks', 'retry_count', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
+// 项目资源归属：先为核心成果补齐 project_id，旧数据保持 NULL，兼容历史记录。
+const PROJECT_RESOURCE_COLUMNS = [
+  ['generated_docs', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
+  ['documents', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
+  ['references', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
+  ['charts', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
+  ['orders', 'project_id', 'INTEGER REFERENCES projects(id) ON DELETE SET NULL'],
+];
+
 // 守卫式加列：仅当列不存在时 ALTER，保证对旧库幂等
 function addColumnIfMissing(db, table, column, def) {
+  const tableName = table.replaceAll('"', '');
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
+  if (!exists) return false;
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
   if (!cols.includes(column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
   }
+  return true;
 }
 
 // 迁移注册表：按顺序执行，已应用（version 已记录）则跳过。不要修改已发布版本。
@@ -91,6 +104,22 @@ const MIGRATIONS = [
     version: '004_task_retry',
     name: '失败任务重试字段',
     up(db) { for (const [t, c, d] of TASK_RETRY_COLUMNS) addColumnIfMissing(db, t, c, d); },
+  },
+  {
+    version: '005_project_resources',
+    name: '项目级成果归属',
+    up(db) {
+      for (const [t, c, d] of PROJECT_RESOURCE_COLUMNS) addColumnIfMissing(db, t === 'references' ? '"references"' : t, c, d);
+      const indexes = [
+        ['generated_docs', 'CREATE INDEX IF NOT EXISTS idx_generated_docs_project ON generated_docs(project_id, created_at DESC)'],
+        ['references', 'CREATE INDEX IF NOT EXISTS idx_references_project ON "references"(project_id, created_at DESC)'],
+        ['charts', 'CREATE INDEX IF NOT EXISTS idx_charts_project ON charts(project_id, created_at DESC)'],
+        ['orders', 'CREATE INDEX IF NOT EXISTS idx_orders_project ON orders(project_id, created_at DESC)'],
+      ];
+      for (const [table, sql] of indexes) {
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.exec(sql);
+      }
+    },
   },
 ];
 

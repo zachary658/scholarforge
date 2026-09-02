@@ -7,12 +7,16 @@
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { mml2omml } from 'mathml2omml';
 import { init as initMathjax } from 'mathjax';
+import { pathToFileURL } from 'node:url';
 
 // MathJax v4 单例（init 有成本，仅初始化一次）
 let _mjApi = null;
 async function ensureMathjax() {
   if (_mjApi) return _mjApi;
-  _mjApi = await initMathjax({ loader: { load: ['input/tex'] } });
+  // MathJax 4 的 Node loader 在 Windows ESM 下会把 C:\\... 直接交给 import()，
+  // 导致 ERR_UNSUPPORTED_ESM_URL_SCHEME。绝对 Windows 路径必须转为 file:// URL。
+  const loadModule = (file) => import(/^[a-zA-Z]:[\\/]/.test(file) ? pathToFileURL(file).href : file);
+  _mjApi = await initMathjax({ loader: { load: ['input/tex'], require: loadModule } });
   return _mjApi;
 }
 

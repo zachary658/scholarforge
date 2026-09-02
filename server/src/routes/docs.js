@@ -26,12 +26,17 @@ function safeFilePath(storedPath) {
 
 // 我的文档列表
 router.get('/', authRequired, (req, res) => {
+  const projectId = Number.parseInt(req.query.projectId, 10);
+  const where = Number.isInteger(projectId) && projectId > 0
+    ? 'WHERE user_id = ? AND project_id = ?'
+    : 'WHERE user_id = ?';
+  const params = Number.isInteger(projectId) && projectId > 0 ? [req.user.id, projectId] : [req.user.id];
   const items = db.prepare(
-    `SELECT id, title, feature, order_id, created_at
+    `SELECT id, project_id, title, feature, order_id, created_at
      FROM generated_docs
-     WHERE user_id = ?
+     ${where}
      ORDER BY id DESC LIMIT 200`
-  ).all(req.user.id);
+  ).all(...params);
   // 文档保留天数（供前端提示用户及时下载）
   const retention_days = parseInt(getSetting('doc_retention_days', '30'), 10) || 30;
   res.json({

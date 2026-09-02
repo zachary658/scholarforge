@@ -293,6 +293,7 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
         userId,
         feature: featureKey,
         orderId: order?.id || null,
+        projectId: projectId || null,
         content: aiResult.content,
       });
     } catch (err) {
@@ -312,6 +313,7 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
         userId,
         feature: featureKey,
         orderId: order?.id || null,
+        projectId: projectId || null,
       });
     } catch (err) {
       // PPT 生成失败不阻断主流程，记录日志
@@ -591,6 +593,7 @@ router.post('/writing', authRequired, async (req, res) => {
                 userId: req.user.id,
                 feature: featureKey,
                 orderId: result.orderId || null,
+                projectId: result.projectId || null,
                 content: chain.content,
               });
               if (newDoc) result.doc = newDoc;

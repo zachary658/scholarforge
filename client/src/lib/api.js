@@ -257,7 +257,10 @@ export const api = {
   deleteTemplate: (id) => request(`/templates/${id}`, { method: 'DELETE' }),
 
   // ===== 生成文档（Word） =====
-  listDocs: () => request('/docs'),
+  listDocs: (params = {}) => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== '')).toString();
+    return request(`/docs${query ? `?${query}` : ''}`);
+  },
   deleteDoc: (id) => request(`/docs/${id}`, { method: 'DELETE' }),
   downloadDoc: async (id) => {
     const token = getToken();

@@ -352,6 +352,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [tasks, setTasks] = useState([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [materials, setMaterials] = useState([]);
+  const [artifacts, setArtifacts] = useState([]);
   const [outline, setOutline] = useState(project.outline || []);
   const [savingOutline, setSavingOutline] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState(project.outline_confirmed_at || null);
@@ -460,6 +461,15 @@ function ProjectDetail({ project, onClose, onEdit }) {
     }
   }, [project.id]);
 
+  const loadArtifacts = useCallback(async () => {
+    try {
+      const d = await api.listDocs({ projectId: project.id });
+      setArtifacts(d.docs || []);
+    } catch (err) {
+      toast.error('加载成果文件失败：' + err.message);
+    }
+  }, [project.id]);
+
   // 刷新工作区大纲：大纲生成/深度调研后自动写入结构化大纲，进入此 tab 时拉取最新
   const loadProject = useCallback(async () => {
     try {
@@ -475,9 +485,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
     if (tab === 'tasks') loadTasks();
     if (tab === 'materials') loadMaterials();
     if (tab === 'chapters') loadChapters();
+    if (tab === 'artifacts') loadArtifacts();
     if (tab === 'outline') loadProject();
-    if (tab === 'pipeline') { loadTasks(); loadMaterials(); loadChapters(); }
-  }, [tab, loadTasks, loadMaterials, loadChapters, loadProject]);
+    if (tab === 'pipeline') { loadTasks(); loadMaterials(); loadChapters(); loadArtifacts(); }
+  }, [tab, loadTasks, loadMaterials, loadChapters, loadArtifacts, loadProject]);
 
   const handleSaveOutline = async () => {
     setSavingOutline(true);
@@ -623,6 +634,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
             { key: 'tasks', label: `生成记录 (${tasks.length})` },
             { key: 'outline', label: '大纲' },
             { key: 'chapters', label: '章节内容' },
+            { key: 'artifacts', label: `成果文件 (${artifacts.length})` },
             { key: 'materials', label: '我的资料' },
             { key: 'overview', label: '概览' },
           ].map((t) => (
@@ -981,6 +993,47 @@ function ProjectDetail({ project, onClose, onEdit }) {
                         className="btn-ghost shrink-0 px-3 py-1.5 text-xs"
                       >
                         去写作区使用 →
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'artifacts' && (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-sm text-slate-500">本论文生成的 Word、PPT 与合并交付文件</p>
+                <button onClick={loadArtifacts} className="btn-ghost px-3 py-1.5 text-xs">
+                  <Refresh className="h-3.5 w-3.5" /> 刷新
+                </button>
+              </div>
+              {artifacts.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
+                  暂无项目成果。后续生成的 Word、PPT 和合并文档会自动归档到这里
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {artifacts.map((doc) => (
+                    <div key={doc.id} className="flex items-center gap-3 rounded-lg border border-slate-100 px-4 py-3">
+                      <FileWord className="h-5 w-5 shrink-0 text-accent" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-ink">{doc.title}</div>
+                        <div className="mt-0.5 text-xs text-slate-400">{doc.feature} · {fmtDate(doc.created_at)}</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { downloadDocFile } = await import('../lib/api.js');
+                            await downloadDocFile(doc.id, doc.title);
+                          } catch (err) {
+                            toast.error('下载失败：' + err.message);
+                          }
+                        }}
+                        className="btn-secondary shrink-0 px-3 py-1.5 text-xs"
+                      >
+                        下载
                       </button>
                     </div>
                   ))}

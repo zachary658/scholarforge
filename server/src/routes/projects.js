@@ -226,6 +226,7 @@ router.post('/:id/chapters/merge', authRequired, async (req, res) => {
       content: merged.content,
       feature: 'chapters',
       userId: req.user.id,
+      projectId: parseInt(req.params.id, 10),
       template,
     });
     res.json({ doc, content: merged.content });

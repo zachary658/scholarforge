@@ -483,6 +483,7 @@ export async function generateDocx({
   userId,
   template = null,
   orderId = null,
+  projectId = null,
   includeWatermark = true,
 }) {
   const styles = resolveStyles(template);
@@ -555,8 +556,8 @@ export async function generateDocx({
 
   // 落库
   const info = db.prepare(
-    `INSERT INTO generated_docs (user_id, title, feature, file_path, order_id) VALUES (?, ?, ?, ?, ?)`
-  ).run(userId, title || '未命名文档', feature, fileName, orderId || null);
+    `INSERT INTO generated_docs (user_id, project_id, title, feature, file_path, order_id) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(userId, projectId || null, title || '未命名文档', feature, fileName, orderId || null);
 
   return {
     id: info.lastInsertRowid,
