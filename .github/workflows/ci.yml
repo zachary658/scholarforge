@@ -20,7 +20,7 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
-      # 依赖审计门禁：用允许列表替代 `|| true`。
+      # 依赖审计门禁：用允许列表替代 `|| true`，仅审计生产依赖（--omit=dev，见脚本头注释）。
       # 仅当所有 high/critical 漏洞的 GHSA 编号都在 server/audit-allowlist.json 中时才通过；
       # 新出现的未列出的高危漏洞会直接使 CI 失败。
       - name: npm audit (allowlist gate)

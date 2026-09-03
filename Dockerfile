@@ -16,6 +16,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY server/package*.json ./
+# 本地 vendored 依赖（SheetJS 本地化）：package.json 以 file:vendor/xlsx-0.20.3.tgz 引用，必须先拷入
+COPY server/vendor/ ./vendor/
 # 仅安装生产依赖；better-sqlite3 / sharp 等原生模块在此阶段编译/下载
 RUN npm ci --omit=dev
 

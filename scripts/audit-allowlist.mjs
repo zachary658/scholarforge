@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 // 依赖审计门禁：用允许列表替代 `npm audit --audit-level=high || true`。
 //
+// 范围：仅审计生产依赖（--omit=dev）。理由：生产镜像用 `npm ci --omit=dev`
+// 构建（见 Dockerfile），devDependencies（如 Promptfoo 评测工具链及其传递依赖
+// drizzle-orm / fast-uri / tmp / mathjs 等）不会进入生产运行时；其漏洞不应阻断
+// 生产安全门禁。
+//
 // 行为：
-//   - 在目标目录（server / client）内运行 `npm audit --json`；
+//   - 在目标目录（server / client）内运行 `npm audit --omit=dev --json`；
 //   - 读取该目录下的 audit-allowlist.json（{ "advisories": ["GHSA-..."] }）；
 //   - 仅当所有 high/critical 漏洞的 GHSA 编号都在允许列表中时才通过；
 //   - 出现任何未列出的 high/critical 漏洞 → 退出码 1，阻断 CI；
@@ -25,7 +30,11 @@ try {
   process.exit(2);
 }
 
-const res = spawnSync('npm', ['audit', '--json'], { encoding: 'utf8' });
+const res = spawnSync('npm', ['audit', '--omit=dev', '--json'], {
+  encoding: 'utf8',
+  // Windows 下 npm 是 npm.cmd 批处理，需经 shell 执行，否则 spawnSync 静默失败返回空结果（假绿）。
+  shell: process.platform === 'win32',
+});
 let report;
 try {
   report = JSON.parse(res.stdout || '{}');
