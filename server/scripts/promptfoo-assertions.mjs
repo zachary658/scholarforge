@@ -1,13 +1,20 @@
 // ----------------------------------------------------------------------------
 // Promptfoo 自定义断言集（ScholarForge 生成质量 8 个维度）
 // ----------------------------------------------------------------------------
-// 契约（已核实官方文档 https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/）：
-//   1. 在 YAML 里以 file:// 加载：value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
-//      冒号后为导出的函数名；ESM 必须以 .mjs 结尾；
+// 契约（已核实 promptfoo 0.100.6 源码 dist/src/assertions/index.js）：
+//   1. javascript 断言的 file:// 值只支持「整个文件」，不支持 file://x.mjs:fn 冒号语法——
+//      promptfoo 会用 path.extname 判断文件类型，带上 :fn 后缀后会被当成非 JS 文件，
+//      最终走到 processFileReference 抛 ENOENT（实测确认）。
+//      因此本文件的默认导出是一个「调度函数」，由用例通过 config.fn 指定要执行的断言：
+//          assert:
+//            - type: javascript
+//              value: file://scripts/promptfoo-assertions.mjs
+//              config:
+//                fn: assertCitationsExist
 //   2. 函数签名 (output, context) => boolean | number | { pass, score, reason, componentResults }；
 //      async 函数受支持；
 //   3. context.vars 为用例变量，context.config 为该断言实例的配置（同一断言可带不同阈值复用）；
-//   4. file:// 路径相对 promptfooconfig.yaml 所在目录（仓库根）解析。
+//   4. file:// 路径相对 promptfooconfig.yaml 所在目录（即 server/）解析。
 //
 // 设计原则：
 //   - 每个断言都是可单独 import 的纯函数，node:test 可直接单测，不依赖 promptfoo 运行时；
@@ -663,7 +670,8 @@ export async function assertStability(output, context = {}) {
   return buildResult(result.pass, result.score, result.reason);
 }
 
-export default {
+// 断言注册表：既便于测试按名取用，也是默认导出调度函数的查找表。
+export const ASSERTIONS = {
   assertCitationsExist,
   assertEvidenceTraceable,
   assertCitationSupportsClaim,
@@ -673,3 +681,48 @@ export default {
   assertFormatCompliance,
   assertStability,
 };
+
+// 默认导出必须是「函数」：promptfoo 0.100.6 加载 file:// 断言后，
+// 只接受模块本身是函数或 module.default 是函数（对象会被判定为 malformed）。
+// 具体执行哪个断言，由用例在 assert.config.fn 中指定。
+export default async function runAssertion(output, context = {}) {
+  const fnName = context?.config?.fn;
+  if (typeof fnName !== 'string' || !fnName) {
+    return buildResult(
+      false,
+      0,
+      `缺少 config.fn：请在用例的 assert 配置中指定断言函数名，可选：${Object.keys(ASSERTIONS).join(', ')}`
+    );
+  }
+  const fn = ASSERTIONS[fnName];
+  if (typeof fn !== 'function') {
+    return buildResult(
+      false,
+      0,
+      `未知断言函数：${fnName}，可选：${Object.keys(ASSERTIONS).join(', ')}`
+    );
+  }
+
+  const raw = await fn(output, context);
+  const result = normalizeResult(raw);
+
+  // 反例用例（metadata.expectation: fail）：被测输出是「应当被判不合格」的坏样本。
+  // 此时断言本身判 fail 才说明它正确检出了问题，评测应记为通过；反之若断言放行
+  // 了坏样本，说明断言失效，评测应记为失败。故对 pass/score 取反。
+  if (context?.test?.metadata?.expectation === 'fail') {
+    return buildResult(
+      !result.pass,
+      result.pass ? 0 : 1,
+      `[反例] ${result.reason || (result.pass ? '断言未检出预期问题' : '断言已按预期检出问题')}`
+    );
+  }
+  return result;
+}
+
+// 断言可能返回 boolean / number / {pass, score, reason}，统一成对象便于取反与计分。
+function normalizeResult(raw) {
+  if (raw == null) return buildResult(false, 0, '断言返回空结果');
+  if (typeof raw === 'boolean') return buildResult(raw, raw ? 1 : 0, raw ? '通过' : '未通过');
+  if (typeof raw === 'number') return buildResult(raw > 0, Math.max(0, Math.min(1, raw)), `得分 ${raw}`);
+  return buildResult(raw.pass, raw.score ?? (raw.pass ? 1 : 0), raw.reason || '');
+}

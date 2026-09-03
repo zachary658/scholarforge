@@ -19,8 +19,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertEvidenceTraceable
         minCoverage: 1
 
 - description: '医学/心血管风险预测：证据覆盖率要求 100%'
@@ -39,8 +40,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertEvidenceTraceable
         minCoverage: 1
 
 - description: '教育学/在线学习投入度：证据覆盖率要求 100%'
@@ -59,8 +61,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertEvidenceTraceable
         minCoverage: 1
 
 - description: '经管/ESG 信息披露：证据覆盖率要求 100%'
@@ -79,8 +82,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertEvidenceTraceable
 - description: '反例：联邦学习实验稿通篇无 [EVIDENCE:...] 标记，可溯源占比为 0'
   vars:
     fixture: fabricated-data
@@ -96,8 +100,9 @@
     defect: 'no-evidence-marker'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertEvidenceTraceable
 - description: '反例：城市碳排放稿无证据标记，且阈值提高到 0.9 仍不达标'
   vars:
     fixture: missing-chapters
@@ -112,8 +117,9 @@
     defect: 'no-evidence-marker'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertEvidenceTraceable
         minCoverage: 0.9
 
 - description: '反例：智能客服实证稿无证据标记（含互斥结论，证据同样缺失）'
@@ -130,8 +136,9 @@
     defect: 'no-evidence-marker'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertEvidenceTraceable
 - description: '宽松阈值回归：同一优秀输出在 minCoverage 0.5 下必须仍然通过'
   vars:
     fixture: good-literature-review
@@ -145,6 +152,7 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertEvidenceTraceable
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertEvidenceTraceable
         minCoverage: 0.5

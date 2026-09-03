@@ -2,10 +2,16 @@
   "name": "scholarforge-server",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <23"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "eval": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
+    "eval:mock": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
+    "eval:live": "promptfoo eval -c promptfooconfig.yaml --no-cache --no-write"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -39,5 +45,9 @@
     "vega-lite": "^6.4.3",
     "wechatpay-axios-plugin": "^0.9.6",
     "xlsx": "file:vendor/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "promptfoo": "0.100.6"
   }
 }

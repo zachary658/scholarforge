@@ -1,0 +1,55 @@
+# Promptfoo 质量基线（ScholarForge 生成质量门禁）
+#
+# 运行方式（在 server/ 目录下）：
+#   npm run eval            # mock 模式：在预置 fixture 上验证断言逻辑（离线、确定性，CI 默认）
+#   npm run eval:live       # live 模式：真正调用 runAI（需配置 AI Key，否则回退内置模板引擎）
+#
+# 两种模式由 provider 内部的 resolveMode() 依据 SF_PROMPTFOO_MOCK 环境变量切换，
+# 见 scripts/promptfoo-provider.mjs 顶部说明。断言脚本在 scripts/promptfoo-assertions.mjs。
+#
+# 关于 --no-write（务必保留，不要删除）：
+#   promptfoo 0.100.6 的 Eval.create() 用 `await db.transaction(async (tx) => ...)` 写本地结果库，
+#   而 drizzle-orm 的 better-sqlite3 驱动把回调直接交给 better-sqlite3 的**同步** transaction()；
+#   better-sqlite3 检测到回调返回 Promise 会立即抛
+#   `TypeError: Transaction function cannot return a promise` 并 ROLLBACK，
+#   而 async 回调在 await 之后的语句仍会继续以自动提交方式执行，于是
+#   `evals` 行被回滚、`evals_to_prompts` 插入时报 FOREIGN KEY constraint failed 并使进程崩溃。
+#   （已实测：better-sqlite3 v11/v12 行为一致，drizzle-orm 0.35.2~0.44.2 实现一致，属上游缺陷。）
+#   --no-write 跳过写库即可规避；评测结果仍由 outputPath 落盘为 JSON，不影响 CI 归档与退出码判定。
+#   代价是本地不再留存历史结果（promptfoo view 不可用）。
+#   待 promptfoo 修复该事务问题后，可去掉三个脚本里的 --no-write。
+
+description: 'ScholarForge 学术生成质量基线：引用真实性 / 证据可溯源 / 数据不编造 / 大纲一致性 / 格式合规'
+
+# 自定义 Provider：把 promptfoo 的用例翻译成 ScholarForge 内部 runAI 调用。
+# file:// 路径相对本配置文件所在目录（server/）解析。
+providers:
+  - id: file://./scripts/promptfoo-provider.mjs
+    label: 'ScholarForge'
+    config:
+      # 默认 vars（可被各用例 vars 覆盖）
+      vars: {}
+
+# 多轮稳定性评测（可选）：同一输入多次生成，校验输出确定性。
+# 默认关闭；需要时取消注释，并设置 SCHOLARFORGE_STABILITY_RUNS。
+# 见 scripts/promptfoo-stability.mjs 的 measureStability。
+
+# 单一 prompt 模板。自定义 provider 主要依赖 context.vars 构造生成参数，
+# 渲染后的 prompt 会作为「附加写作指令」注入生成上下文（见 provider 的 applyPromptVariant），
+# 因此后续若要做 prompt A/B 对比，只需在这里增加模板即可。
+prompts:
+  - '请围绕主题「{{topic}}」撰写学术内容，学科方向：{{field}}'
+
+# 5 个评测维度用例集（均在 eval/cases/ 下）。
+# 注意：用例必须挂在 tests 下——promptfoo 会把数组中的 file:// 字符串当作测试集文件加载，
+# 若误挂在 prompts 下会被当成 prompt 模板，导致实际运行 0 条用例。
+# 路径基准为配置文件所在目录（server/）。
+tests:
+  - file://eval/cases/01-citations.yaml
+  - file://eval/cases/02-evidence.yaml
+  - file://eval/cases/03-citation-support.yaml
+  - file://eval/cases/04-fabricated-data.yaml
+  - file://eval/cases/05-outline.yaml
+
+# 评测结果输出：本地 JSON + HTML 报告，便于 CI 归档
+outputPath: eval/results/promptfoo-results.json

@@ -696,8 +696,14 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   }
 
   try {
-    const { smartWriting } = await import('../services/paper-distillation.js');
-    const result = await smartWriting({ topic, field, keywords, projectId: effectiveProjectId, userId: req.user.id });
+    const graphEnabled = ['1', 'true', 'yes'].includes(String(process.env.RESEARCH_GRAPH_ENABLED || '').toLowerCase());
+    const result = graphEnabled
+      ? await (await import('../services/research-graph.js')).runResearchGraph({
+          topic, field, keywords, projectId: effectiveProjectId, userId: req.user.id,
+        })
+      : await (await import('../services/paper-distillation.js')).smartWriting({
+          topic, field, keywords, projectId: effectiveProjectId, userId: req.user.id,
+        });
 
     // 蒸馏产物持久化到工作区：分章节生成/全文生成统一消费（框架/文献/数据/表格）
     try {

@@ -20,8 +20,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationsExist
 - description: '医学/心血管风险预测 期刊论文：4 条引文均可映射且题名出现在文末参考文献'
   vars:
     fixture: good-medical
@@ -38,8 +39,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertCitationsExist
         checkDoi: true
 
 - description: '教育学/在线学习投入度 综述：引文编号可映射，开启 DOI 校验'
@@ -58,8 +60,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertCitationsExist
         checkDoi: true
 
 - description: '经管/ESG 信息披露 论文：引文编号可映射（边界值：最大编号等于文献总数）'
@@ -78,11 +81,13 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationsExist
 - description: '法学/个人信息保护 任务书：无编号引用时不误判（未提供文献列表应跳过而非报错）'
   vars:
     tool: task_book
+    mode: live
     topic: '个人信息保护法实施后的企业合规义务研究'
     field: '法学'
     student_name: '林岚'
@@ -95,8 +100,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertCitationsExist
         requireCitations: false
 
 - description: '反例：计算机/金融风控 综述出现越界引文编号 [7][9]（文献总数仅 2）'
@@ -113,8 +119,9 @@
     defect: 'fabricated-citation-index'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationsExist
 - description: '反例：同一输出开启 DOI 校验，正文出现文献列表中不存在的 DOI'
   vars:
     fixture: fabricated-citations
@@ -129,8 +136,9 @@
     defect: 'fabricated-doi'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertCitationsExist
         checkDoi: true
 
 - description: '反例：正文引用编号在范围内，但喂入不相关学科文献集（题名与文末参考文献对不上）'
@@ -147,8 +155,9 @@
     defect: 'citation-bibliography-mismatch'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationsExist
 - description: '反例：医学输出喂入截断的文献列表（仅 2 条，正文却引用到 [3][4]）'
   vars:
     fixture: good-medical
@@ -163,4 +172,6 @@
     defect: 'truncated-reference-list'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationsExist
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationsExist

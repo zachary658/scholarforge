@@ -3,7 +3,7 @@
 // GROBID 擅长「参考文献与文内引用关系」的抽取：把参考文献条目结构化成 TEI biblStruct，
 // 并把正文中的引用标记（<ref type="bibr" target="#b0">）与参考文献条目对应起来。
 // 这正是「引文是否支持论点」核验所必需的结构，MinerU/Docling/pdfjs 都提供不了。
-// 未配置 GROBID_URL 时整个通道静默跳过，绝不阻断主流程。
+// 未配置 GROBID_API_URL 时整个通道静默跳过，绝不阻断主流程（兼容旧名 GROBID_URL）。
 //
 // 官方契约依据（写代码前已核实，勿凭记忆改字段名）：
 //   1. GROBID 服务 API
@@ -53,7 +53,7 @@ const MAX_BLOCKS = 4000;
 const MAX_TREE_DEPTH = 32;
 
 function readConfig() {
-  const base = String(process.env.GROBID_URL || '').trim().replace(/\/+$/, '');
+  const base = String(process.env.GROBID_API_URL || process.env.GROBID_URL || '').trim().replace(/\/+$/, '');
   const rawTimeout = Number(process.env.GROBID_TIMEOUT_MS);
   const timeout = Number.isFinite(rawTimeout) && rawTimeout > 0
     ? Math.min(rawTimeout, MAX_TIMEOUT_MS)
@@ -395,7 +395,7 @@ export function parseGrobidTei(xmlText) {
  */
 export async function parsePdfViaGrobid(pdfBytes) {
   const { base, timeout, consolidate } = readConfig();
-  if (!base) throw new Error('未配置 GROBID_URL');
+  if (!base) throw new Error('未配置 GROBID_API_URL');
   if (!pdfBytes || pdfBytes.length === 0) throw new Error('PDF 内容为空');
 
   const url = `${base}/api/processFulltextDocument`;

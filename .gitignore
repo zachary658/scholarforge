@@ -45,3 +45,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Promptfoo 评测输出（本地运行产物，不进仓库）
+server/eval/results/
+.promptfoo/

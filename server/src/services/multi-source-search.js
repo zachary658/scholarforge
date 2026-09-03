@@ -1,7 +1,7 @@
 /**
  * 多源文献检索聚合服务
  * 聚合 OpenAlex + Semantic Scholar + CrossRef + arXiv 四个免费学术数据库
- * 统一返回格式，去重合并，按引用数排序
+ * 统一返回格式，去重合并，按主题相关度、元数据质量与影响力综合排序
  *
  * 设计目标：
  *   - 单一数据源故障不影响整体（降级返回其他源结果）
@@ -251,7 +251,42 @@ async function searchArxiv(query, limit = 8) {
 }
 
 // ===== 跨源去重 + 合并排序 =====
-function dedupeAndMerge(results, limit = 8) {
+function relevanceTokens(value) {
+  const raw = String(value || '').normalize('NFKC').toLowerCase();
+  const groups = raw.match(/[a-z0-9][a-z0-9._+-]*|[\u3400-\u9fff]+/g) || [];
+  const tokens = [];
+  for (const group of groups) {
+    if (/^[\u3400-\u9fff]+$/.test(group) && group.length > 1) {
+      for (let i = 0; i < group.length - 1; i++) tokens.push(group.slice(i, i + 2));
+    } else tokens.push(group);
+  }
+  return [...new Set(tokens)];
+}
+
+export function scoreAcademicResult(result, query, currentYear = new Date().getFullYear()) {
+  const queryTokens = relevanceTokens(query);
+  const titleTokens = new Set(relevanceTokens(result.title));
+  const abstractTokens = new Set(relevanceTokens(result.abstract));
+  const metadataTokens = new Set(relevanceTokens(`${result.authors || ''} ${result.journal || ''}`));
+  const ratio = (set) => queryTokens.length ? queryTokens.filter((token) => set.has(token)).length / queryTokens.length : 0;
+  const titleScore = ratio(titleTokens) * 55;
+  const abstractScore = ratio(abstractTokens) * 24;
+  const metadataScore = ratio(metadataTokens) * 5;
+  const citations = Math.min(8, Math.log10(1 + Math.max(0, Number(result.cited_by_count) || 0)) * 2.5);
+  const year = Number.parseInt(result.year, 10);
+  const recency = Number.isInteger(year) ? Math.max(0, 5 - Math.max(0, currentYear - year) * 0.5) : 0;
+  const traceability = result.doi || result.source_url ? 2 : 0;
+  const openAccess = result.pdf_url ? 1 : 0;
+  return Number((titleScore + abstractScore + metadataScore + citations + recency + traceability + openAccess).toFixed(3));
+}
+
+export function rankAcademicResults(results, query) {
+  return [...results]
+    .map((result) => ({ ...result, relevance_score: scoreAcademicResult(result, query) }))
+    .sort((a, b) => b.relevance_score - a.relevance_score || b.cited_by_count - a.cited_by_count);
+}
+
+function dedupeAndMerge(results, limit = 8, query = '') {
   const seen = new Map();
   for (const r of results) {
     // 归一化去重键保留 Unicode（中文标题此前会被清空成空串导致中文文献被丢弃）
@@ -270,9 +305,8 @@ function dedupeAndMerge(results, limit = 8) {
       seen.set(key, { ...r, all_sources: [r.source_db] });
     }
   }
-  // 按引用数降序排序，取 top N
-  return [...seen.values()]
-    .sort((a, b) => b.cited_by_count - a.cited_by_count)
+  // 相关性为主，引用量仅作为影响力信号之一；避免“高引用但偏题”的论文占据前排。
+  return rankAcademicResults([...seen.values()], query)
     .slice(0, limit)
     .map(({ _dedupKey, ...rest }) => rest);
 }
@@ -361,7 +395,7 @@ export async function searchMultiSource(query, opts = {}) {
   await Promise.all(tasks);
 
   // 去重合并
-  const results = dedupeAndMerge(allResults, limit);
+  const results = dedupeAndMerge(allResults, limit, query);
   const result = { results, sources_used, errors };
   // 写入缓存前顺带清理过期条目，防 Map 无界增长
   const nowMs = Date.now();

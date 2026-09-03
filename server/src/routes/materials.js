@@ -9,7 +9,8 @@ import db from '../db.js';
 import { estimateTextTokens } from '../services/billing.js';
 // PDF 解析统一走 document-parser 的四通道路由（MinerU / Docling / GROBID / pdfjs 自动降级），
 // 取代原先直接调 parsePdfViaPdfjs，让中文复杂版式与英文论文都能拿到更好的结构化结果
-import { parseDocument } from '../services/document-parser.js';
+import { estimateParseQuality, parseDocument } from '../services/document-parser.js';
+import { replaceEvidenceBlocks, removeEvidenceSource } from '../services/evidence-engine.js';
 import { isProjectOwned } from '../services/task-store.js';
 import { FILE_SIGNATURES } from '../utils.js';
 import logger from '../logger.js';
@@ -27,20 +28,27 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 const uploadLimiter = makeLimiter({ keyType: 'user', max: 20, windowMs: 60 * 1000 });
 
 // 按扩展名解析文件为纯文本
-async function extractText(buffer, filename) {
+async function extractDocument(buffer, filename) {
   const ext = (filename || '').split('.').pop().toLowerCase();
   if (ext === 'txt' || ext === 'md') {
-    return buffer.toString('utf8');
+    const text = buffer.toString('utf8');
+    return { text, blocks: [{ text, page_number: null, section_title: '' }], parser: 'text' };
   }
   if (ext === 'docx') {
     const res = await mammoth.extractRawText({ buffer });
-    return res.value || '';
+    const text = res.value || '';
+    return { text, blocks: [{ text, page_number: null, section_title: '' }], parser: 'mammoth' };
   }
   if (ext === 'pdf') {
     // 解析失败（所有通道都不可用）时 parseDocument 会抛错，由 upload 的 catch 统一转 400，
     // 与原先直接调 pdfjs 的对外错误提示保持一致
     const result = await parseDocument(buffer, { filename, wantTables: true });
-    return result.blocks.map((b) => b.text).join('\n');
+    return {
+      text: result.blocks.map((b) => b.text).join('\n'),
+      blocks: result.blocks,
+      parser: result.parser,
+      parseQuality: estimateParseQuality(result),
+    };
   }
   throw new Error('仅支持 .docx / .pdf / .txt 格式');
 }
@@ -68,7 +76,8 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
     return res.status(400).json({ error: '文件内容与扩展名不符，请上传真实的 .docx / .pdf 文档' });
   }
   try {
-    const text = await extractText(req.file.buffer, req.file.originalname);
+    const parsed = await extractDocument(req.file.buffer, req.file.originalname);
+    const text = parsed.text;
     if (!text.trim()) return res.status(400).json({ error: '未能从文件中提取到文本内容' });
     if (text.length > MAX_TEXT_CHARS) {
       return res.status(400).json({ error: `材料内容过长（最多 ${MAX_TEXT_CHARS} 字符，当前 ${text.length}）` });
@@ -78,6 +87,18 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
     const info = db.prepare(
       `INSERT INTO materials (user_id, project_id, name, file_type, text_content, tokens) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(req.user.id, projectId, name || req.file.originalname, (req.file.originalname || '').split('.').pop().toLowerCase(), text, tokens);
+    if (projectId) {
+      replaceEvidenceBlocks({
+        userId: req.user.id,
+        projectId,
+        sourceType: 'material',
+        sourceId: info.lastInsertRowid,
+        sourceTitle: name || req.file.originalname,
+        blocks: parsed.blocks,
+        metadata: { file_type: ext, parser: parsed.parser, parse_quality: parsed.parseQuality ?? null },
+        traceable: true,
+      });
+    }
     res.json({
       ok: true,
       id: info.lastInsertRowid,
@@ -108,8 +129,9 @@ router.get('/', (req, res) => {
 
 // 删除资料
 router.delete('/:id', (req, res) => {
-  const m = db.prepare('SELECT id FROM materials WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  const m = db.prepare('SELECT id, project_id FROM materials WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!m) return res.status(404).json({ error: '资料不存在' });
+  removeEvidenceSource({ userId: req.user.id, projectId: m.project_id, sourceType: 'material', sourceId: m.id });
   db.prepare('DELETE FROM materials WHERE id = ?').run(m.id);
   res.json({ ok: true });
 });

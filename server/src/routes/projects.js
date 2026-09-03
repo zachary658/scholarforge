@@ -1,5 +1,8 @@
 // 论文工作区路由
 import { Router } from 'express';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { authRequired } from '../middleware.js';
 import {
   createProject, getProject, listProjects, updateProject, deleteProject, deleteProjectForever,
@@ -9,7 +12,9 @@ import {
   startChapterGeneration, regenerateChapter, editChapter, mergeChapters, isGenerating,
 } from '../services/chapter-service.js';
 import { generateDocx } from '../services/docx-generator.js';
+import { isQuartoConfigured, exportDocument } from '../services/quarto-exporter.js';
 import { checkTextLength, TEXT_MAX_SHORT, TEXT_MAX_LONG } from '../utils.js';
+import { evidenceQuality, rebuildProjectEvidence, searchProjectEvidenceHybrid } from '../services/evidence-engine.js';
 
 const router = Router();
 
@@ -137,6 +142,29 @@ router.get('/:id/context-preview', authRequired, (req, res) => {
   res.json({ context, summary, chars: context.length });
 });
 
+// 项目证据库：返回质量评分与可追溯片段，供用户在生成前核对证据是否充分。
+router.get('/:id/evidence', authRequired, async (req, res, next) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const p = getProject(projectId, req.user.id);
+    if (!p) return res.status(404).json({ error: '工作区不存在' });
+    const q = String(req.query.q || p.title || '').trim().slice(0, 500);
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const search = await searchProjectEvidenceHybrid({ userId: req.user.id, projectId, query: q, limit });
+    return res.json({ quality: evidenceQuality(req.user.id, projectId), query: q, ...search });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// 为历史项目或更换检索模型后的项目重建证据索引。
+router.post('/:id/evidence/rebuild', authRequired, (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const quality = rebuildProjectEvidence(req.user.id, projectId);
+  if (!quality) return res.status(404).json({ error: '工作区不存在' });
+  res.json({ ok: true, quality });
+});
+
 // ========== 工作区内任务历史 ==========
 router.get('/:id/tasks', authRequired, (req, res) => {
   const projectId = parseInt(req.params.id, 10);
@@ -211,9 +239,26 @@ router.put('/:id/chapters/:chapterId', authRequired, (req, res) => {
 });
 
 // 合并全部章节导出 Word（可传 template_id 应用高校/自定义模板格式）
+// 若配置了 Quarto/Pandoc 且请求带 format 参数，则走出版级导出（DOCX/PDF/LaTeX/HTML 等）；
+// 否则回退既有 docx-generator 拼装链路。
 router.post('/:id/chapters/merge', authRequired, async (req, res) => {
   try {
     const merged = mergeChapters(req.user.id, parseInt(req.params.id, 10));
+    const requestedFormat = String(req.body?.format || '').toLowerCase().trim();
+
+    // 出版级导出分支（可选插件，未配置时静默走下方既有链路）
+    if (requestedFormat && isQuartoConfigured()) {
+      const format = ['docx', 'pdf', 'latex', 'html', 'epub', 'pptx', 'odt'].includes(requestedFormat)
+        ? requestedFormat
+        : null;
+      if (!format) return res.status(400).json({ error: `不支持的导出格式: ${requestedFormat}` });
+      const inputPath = join(tmpdir(), `sf-chapters-${req.params.id}-${Date.now()}.md`);
+      const outputPath = join(tmpdir(), `sf-chapters-${req.params.id}-${Date.now()}.${format}`);
+      writeFileSync(inputPath, merged.content, 'utf8');
+      const result = await exportDocument(inputPath, outputPath, { format });
+      return res.json({ quarto: result, content: merged.content });
+    }
+
     // 模板可选：与写作类导出一致，限本人上传或全局共享的模板
     let template = null;
     const templateId = parseInt(req.body?.template_id, 10);

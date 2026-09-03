@@ -50,7 +50,7 @@ const EMPTY_METADATA = { title: '', authors: [], doi: '', year: '', abstract: ''
 const MISSING_ENV_HINT = {
   mineru: '未配置 MINERU_API_URL，跳过该通道',
   docling: '未配置 DOCLING_API_URL，跳过该通道',
-  grobid: '未配置 GROBID_URL，跳过该通道',
+  grobid: '未配置 GROBID_API_URL，跳过该通道',
 };
 
 // ===== 通道开关（读取时求值，便于测试用 env 打桩） =====

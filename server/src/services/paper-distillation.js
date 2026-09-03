@@ -75,7 +75,7 @@ async function translateAbstractIfNeeded(abstract, tokenAcc) {
 // ===== Map 阶段：单篇论文框架提取 =====
 // 从摘要中提取：研究方法、创新点、主要结论、结构特征
 // 有真实AI时用AI提取（更准确），否则用规则提取（关键词匹配）
-async function extractFramework(paper, tokenAcc) {
+export async function extractFramework(paper, tokenAcc) {
   const abstract = paper.abstract || '';
   if (!abstract) {
     return {
@@ -175,7 +175,7 @@ export async function discoverPerspectives(topic, field, tokenAcc) {
 // ===== Reduce 阶段：多框架融合 =====
 // 合并多篇论文的框架，去重，按出现频率排序，生成最优结构
 // 保留视角维度：perspectiveMap[视角] = { methods, innovations }，供大纲生成按视角组织
-function mergeFrameworks(frameworks) {
+export function mergeFrameworks(frameworks) {
   // 用归一化 key 计数去重，但输出保留原始字符串（此前直接用 lower+截断的 key 作为输出，导致英文变小写、长文本被截断）
   const bump = (map, key, original) => {
     const cur = map.get(key);
@@ -305,6 +305,7 @@ export async function collectWritingSources(topic, field, keywords = '', limit =
     year: p.year,
     journal: p.journal,
     doi: p.doi,
+    abstract: p.abstract || '',
     source_url: p.source_url,
     source_db: p.source_db,
     cited_by_count: p.cited_by_count,

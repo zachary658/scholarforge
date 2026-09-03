@@ -52,6 +52,15 @@ cp .env.example .env
 uvicorn server:app --host 0.0.0.0 --port 8100
 ```
 
+也可以从仓库根目录直接启动轻量服务：
+
+```bash
+# 根目录 .env 同时设置 PAPERQA_API_URL=http://research-engine:8100
+docker compose --profile research up --build
+
+# 完整 PaperQA2 镜像：把 .env 中 RESEARCH_REQUIREMENTS 改为 requirements-full.txt
+```
+
 ## API
 
 ### `POST /api/v1/parse`

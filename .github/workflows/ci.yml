@@ -26,6 +26,10 @@ jobs:
       - name: npm audit (allowlist gate)
         run: node ../scripts/audit-allowlist.mjs
       - run: npm test
+      # 生成质量门禁：Promptfoo 在预置 fixture 上验证断言逻辑（mock 模式，离线确定性）。
+      # 覆盖引用真实性 / 证据可溯源 / 数据不编造 / 大纲一致性 / 格式合规五个维度。
+      - name: Promptfoo quality gate (mock)
+        run: npm run eval
 
   client-build:
     name: Client (install / build)

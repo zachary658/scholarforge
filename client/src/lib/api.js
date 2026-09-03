@@ -391,6 +391,8 @@ export const api = {
   deleteProject: (id) => request(`/projects/${id}`, { method: 'DELETE' }),
   previewProjectContext: (id, params) => request(`/projects/${id}/context-preview?${new URLSearchParams(params).toString()}`),
   listProjectTasks: (id, params) => request(`/projects/${id}/tasks?${new URLSearchParams(params).toString()}`),
+  getProjectEvidence: (id, params = {}) => request(`/projects/${id}/evidence?${new URLSearchParams(params).toString()}`),
+  rebuildProjectEvidence: (id) => request(`/projects/${id}/evidence/rebuild`, { method: 'POST' }),
 
   // ===== 阶段三：大纲确认 + 分章节生成 =====
   confirmOutline: (id) => request(`/projects/${id}/outline/confirm`, { method: 'POST' }),

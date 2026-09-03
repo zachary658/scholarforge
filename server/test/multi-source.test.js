@@ -9,7 +9,7 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-test-'));
 process.env.DB_PATH = path.join(tmpDir, 'test.db');
 
-const { parseArxivAtom } = await import('../src/services/multi-source-search.js');
+const { parseArxivAtom, rankAcademicResults, scoreAcademicResult } = await import('../src/services/multi-source-search.js');
 const { htmlTableToRows, tablesFromMinerUData } = await import('../src/services/paper-distillation.js');
 
 const ARXIV_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -44,6 +44,22 @@ test('parseArxivAtom：解析标题/作者/年份/摘要/PDF 链接', () => {
 test('parseArxivAtom：无 entry 的 feed 返回空数组', () => {
   const papers = parseArxivAtom('<feed xmlns="http://www.w3.org/2005/Atom"></feed>');
   assert.deepEqual(papers, [], '空 feed 应返回空数组');
+});
+
+test('学术检索排序：主题相关性优先于单纯高引用量', () => {
+  const query = '医学影像分割 U-Net';
+  const relevant = {
+    title: '基于 U-Net 的医学影像分割方法',
+    abstract: '研究医学影像分割与模型评估。',
+    year: '2025', cited_by_count: 6, doi: '10.1/relevant', pdf_url: 'https://example.org/relevant.pdf',
+  };
+  const popularButOffTopic = {
+    title: '宏观经济增长与货币政策',
+    abstract: '分析经济周期、通货膨胀和财政支出。',
+    year: '2024', cited_by_count: 50000, doi: '10.1/off-topic',
+  };
+  assert.ok(scoreAcademicResult(relevant, query, 2026) > scoreAcademicResult(popularButOffTopic, query, 2026));
+  assert.equal(rankAcademicResults([popularButOffTopic, relevant], query)[0].doi, '10.1/relevant');
 });
 
 test('htmlTableToRows：HTML 表格解析为二维数组', () => {

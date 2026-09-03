@@ -18,8 +18,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '医学/心血管风险预测：AUC 0.86 与 82.6% 均可溯源'
   vars:
     fixture: good-medical
@@ -34,8 +35,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '教育学/在线学习投入度：37.8% 与 11.3% 均可溯源'
   vars:
     fixture: good-education
@@ -50,8 +52,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '经管/ESG 信息披露：18.6% 可溯源'
   vars:
     fixture: good-law-economics
@@ -66,8 +69,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '反例：联邦学习实验稿 99.7% / F1 0.98 / 63.5% 在 benchmark 中均无来源'
   vars:
     fixture: fabricated-data
@@ -83,8 +87,9 @@
     defect: 'fabricated-metrics'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '反例：优秀输出被抽走 benchmark 数据后，其数值应全部判为无法溯源'
   vars:
     fixture: good-literature-review
@@ -100,8 +105,9 @@
     defect: 'missing-benchmark-source'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData
 - description: '反例：教育学输出喂入数值对不上的 benchmark（37.8 / 11.3 无来源）'
   vars:
     fixture: good-education
@@ -117,4 +123,6 @@
     defect: 'mismatched-benchmark'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertNoFabricatedData
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertNoFabricatedData

@@ -6,7 +6,7 @@
 //
 // 节点图（方案指定）：
 //   题目分析 → 检索计划 → 多源检索 → 全文获取 → 解析索引 → 证据筛选
-//   → [确认大纲] → 分章生成 → 引用核验 → 事实审校 → 导出
+//   → 生成待确认大纲
 //
 // 关键收益：
 //   - 某篇 PDF 解析失败 → 只重跑「解析索引」节点，不需要整条任务重来；
@@ -25,6 +25,9 @@ import {
   buildFrameworkContext,
   enrichSourcesFromOpenAccess,
   extractBenchmarkData,
+  benchmarksToChartConfig,
+  replaceCitePlaceholders,
+  replaceChartPlaceholders,
 } from './paper-distillation.js';
 import { runAI } from '../ai-service.js';
 import { dedupKeyOf } from '../utils.js';
@@ -130,7 +133,7 @@ export async function runResearchGraph(params) {
     progress('生成大纲', 75);
     const references = (state.papers || []).slice(0, 8).map((p) => ({
       title: p.title, authors: p.authors, year: p.year, journal: p.journal,
-      doi: p.doi, source_url: p.source_url, source_db: p.source_db, cited_by_count: p.cited_by_count,
+      doi: p.doi, abstract: p.abstract || '', source_url: p.source_url, source_db: p.source_db, cited_by_count: p.cited_by_count,
     }));
     const context = buildFrameworkContext(state.framework, state.papers || []);
     const result = await runAI('writing', {
@@ -139,32 +142,8 @@ export async function runResearchGraph(params) {
     const tokenAcc = state.tokenAcc || { promptTokens: 0, completionTokens: 0 };
     tokenAcc.promptTokens += result.promptTokens || 0;
     tokenAcc.completionTokens += result.completionTokens || 0;
-    return { outline: result.content, references, tokenAcc };
+    return { outline: result.content, references, tokenAcc, outlineUsedRealAI: Boolean(result.usedRealAI) };
   }, { retry: 1 });
-
-  // 8. 分章生成（这里由现有 chapter-service 负责；graph 只做编排占位，
-  //    真正逐章生成/重跑受影响章节的能力在 chapter-service 的 regenerateChapter 已具备）
-  g.addNode('chapters', async (state) => {
-    progress('分章生成', 90);
-    // 分章生成依赖已确认大纲 + 付费订单，由 chapter-service.startChapterGeneration 驱动；
-    // graph 在此仅透传，避免与订单/计费状态机耦合（保持「不替换后端」边界）。
-    return { chapters: state.chapters || [], chaptersDelegated: true };
-  });
-
-  // 9. 引用核验 + 10. 事实审校（复用 review-chain 的规则审校作为确定性把关）
-  g.addNode('verify', async (state) => {
-    progress('引用核验与事实审校', 95);
-    const { ruleReview } = await import('./review-chain.js');
-    const content = state.outline || '';
-    const { errors, warnings } = ruleReview(content, state.references || []);
-    return { review: { errors, warnings }, verified: errors.length === 0 };
-  });
-
-  // 11. 导出（占位；真正导出由 docx-generator / quarto-exporter 负责）
-  g.addNode('export', async (state) => {
-    progress('导出', 100);
-    return { exported: true };
-  });
 
   // 边
   g.setEntryPoint('analyze');
@@ -173,15 +152,32 @@ export async function runResearchGraph(params) {
   g.addEdge('retrieve', 'fetch_index');
   g.addEdge('fetch_index', 'distill');
   g.addEdge('distill', 'outline');
-  g.addEdge('outline', 'chapters');
-  g.addEdge('chapters', 'verify');
-  g.addEdge('verify', 'export');
-  g.setFinishPoint('export');
+  g.setFinishPoint('outline');
 
   const compiled = g.compile();
-  return compiled.invoke({});
+  const state = await compiled.invoke({});
+  progress('待确认大纲已生成', 100);
+  const chartConfig = benchmarksToChartConfig(state.benchmarks || [], '准确率')
+    || benchmarksToChartConfig(state.benchmarks || [], 'Dice');
+  return {
+    outline: replaceChartPlaceholders(
+      replaceCitePlaceholders(state.outline || '', state.references || []),
+      state.benchmarks || [],
+    ),
+    references: state.references || [],
+    framework: {
+      ...(state.framework || {}),
+      perspectives_used: state.perspectives || [],
+      sources_used: state.sources_used || [],
+      search_errors: state.errors || [],
+    },
+    benchmarks: chartConfig ? { data: state.benchmarks || [], chartConfig } : null,
+    tables: state.dataTables || [],
+    tokens: state.tokenAcc || { promptTokens: 0, completionTokens: 0 },
+    degraded: !state.outlineUsedRealAI,
+    graph_trace: state._trace || [],
+  };
 }
 
-// 供上层判断：大纲修改后，只需重跑「outline → chapters → verify → export」这段受影响子图。
-// 这里导出受影响节点清单，便于调用方在确认大纲后做增量重跑。
-export const AFFECTED_BY_OUTLINE_CHANGE = ['chapters', 'verify', 'export'];
+// 研究图只负责生成待确认大纲；用户改动大纲后，需要重跑的研究节点只有 outline。
+export const AFFECTED_BY_OUTLINE_CHANGE = ['outline'];

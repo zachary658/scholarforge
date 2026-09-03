@@ -17,8 +17,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim
 - description: '医学/心血管风险预测：5 条引文与所在论点均语义相关'
   vars:
     fixture: good-medical
@@ -32,8 +33,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim
 - description: '教育学/在线学习投入度：6 条引文与所在论点均语义相关'
   vars:
     fixture: good-education
@@ -47,8 +49,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim
 - description: '经管/ESG 信息披露：7 条引文与所在论点均语义相关'
   vars:
     fixture: good-law-economics
@@ -62,8 +65,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim
 - description: '严格阈值回归：经管输出在 minSimilarity 0.15 下仍有 ≥60% 引文达标'
   vars:
     fixture: good-law-economics
@@ -77,8 +81,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
+      value: file://scripts/promptfoo-assertions.mjs
       config:
+        fn: assertCitationSupportsClaim
         minSimilarity: 0.15
         minSupportRatio: 0.6
 
@@ -96,8 +101,9 @@
     defect: 'irrelevant-citation'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim
 - description: '反例：编造编号导致相关度为 0（[7][9] 在文献列表中不存在）'
   vars:
     fixture: fabricated-citations
@@ -112,4 +118,6 @@
     defect: 'fabricated-citation-index'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertCitationSupportsClaim
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertCitationSupportsClaim

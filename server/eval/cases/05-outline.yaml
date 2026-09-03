@@ -17,8 +17,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '医学/心血管风险预测：正文覆盖 摘要-引言-研究方法-结果与分析-结论'
   vars:
     fixture: good-medical
@@ -32,8 +33,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '教育学/在线学习投入度：正文覆盖四个大纲章节且顺序一致'
   vars:
     fixture: good-education
@@ -47,8 +49,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '经管/ESG 信息披露：正文覆盖四个大纲章节'
   vars:
     fixture: good-law-economics
@@ -62,11 +65,13 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '实时生成/计算机 文献综述：内置引擎输出覆盖 引言-研究述评-研究展望'
   vars:
     tool: literature_review
+    mode: live
     topic: '图神经网络在推荐系统中的应用'
     field: '计算机科学'
     keywords: '图神经网络,推荐系统,协同过滤'
@@ -77,11 +82,13 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '实时生成/医学 期刊论文：内置引擎输出覆盖 引言-文献综述-研究方法-结论'
   vars:
     tool: journal
+    mode: live
     topic: '基于深度学习的肺癌早期筛查方法研究'
     field: '医学'
     research_content: '改进肺部 CT 影像的结节检测精度'
@@ -93,11 +100,13 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '实时生成/经管 任务书：内置引擎输出覆盖 课题背景-研究内容-进度安排'
   vars:
     tool: task_book
+    mode: live
     topic: '数字化转型对制造业企业绩效的影响研究'
     field: '工商管理'
     student_name: '陈亦'
@@ -109,11 +118,13 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '实时生成/法学 答辩稿：内置引擎输出覆盖 封面-研究背景与意义-创新点'
   vars:
     tool: defense
+    mode: live
     topic: '算法推荐的个人信息保护边界研究'
     field: '法学'
     research_content: '界定算法推荐场景下的告知同意边界'
@@ -125,8 +136,9 @@
     expectation: pass
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
-
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency
 - description: '反例：城市碳排放稿缺少大纲要求的 文献综述 与 实验结果 两章'
   vars:
     fixture: missing-chapters
@@ -141,4 +153,6 @@
     defect: 'missing-chapters'
   assert:
     - type: javascript
-      value: file://server/scripts/promptfoo-assertions.mjs:assertOutlineConsistency
+      value: file://scripts/promptfoo-assertions.mjs
+      config:
+        fn: assertOutlineConsistency

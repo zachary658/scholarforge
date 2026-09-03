@@ -25,7 +25,10 @@ let child = null;
 
 function startServer() {
   return new Promise((resolve, reject) => {
-    child = spawn('node', ['src/index.js'], {
+    // 用 process.execPath 而非裸 'node'：better-sqlite3 是针对某个 Node ABI 编译的，
+    // 若 PATH 里的 node 与测试运行器不是同一版本（例如本地装了 Node 24 而依赖编译于 Node 22），
+    // 子进程会以 ERR_DLOPEN_FAILED 直接退出，导致 E2E 误报失败。
+    child = spawn(process.execPath, ['src/index.js'], {
       cwd: serverDir,
       env: {
         ...process.env,
@@ -156,7 +159,10 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   r = await api('/api/references', {
     method: 'POST',
     token: tokenA,
-    body: { title: '可溯源测试文献', authors: 'Test Author', year: '2026', projectId: projectA.id },
+    body: {
+      title: '可溯源测试文献', authors: 'Test Author', year: '2026', projectId: projectA.id,
+      abstract: '该研究使用 U-Net 完成医学影像分割，并报告可复核的实验结果。', doi: '10.1000/sf-test',
+    },
   });
   assert.equal(r.status, 200, '项目文献收藏应 200');
   const projectRef = (await r.json()).reference;
@@ -168,6 +174,20 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   assert.equal(r.status, 404, 'B 不可读取 A 的项目文献');
   r = await api('/api/references?projectId=abc', { token: tokenA });
   assert.equal(r.status, 404, '非法项目筛选参数不可退化为全部文献');
+
+  r = await api(`/api/projects/${projectA.id}/evidence?q=医学影像`, { token: tokenA });
+  assert.equal(r.status, 200, '项目所有者应可检索证据库');
+  let evidenceBody = await r.json();
+  assert.ok(evidenceBody.results.some((row) => row.source_id === String(projectRef.id)), '新收藏文献应自动写入证据库');
+  assert.ok(evidenceBody.quality.traceability > 0, '含 DOI 的文献应计为可追溯证据');
+  r = await api(`/api/projects/${projectA.id}/evidence?q=医学影像`, { token: tokenB });
+  assert.equal(r.status, 404, 'B 不可检索 A 的项目证据');
+  r = await api(`/api/projects/${projectA.id}/evidence/rebuild`, { method: 'POST', token: tokenB });
+  assert.equal(r.status, 404, 'B 不可重建 A 的项目证据');
+  r = await api(`/api/projects/${projectA.id}/evidence/rebuild`, { method: 'POST', token: tokenA });
+  assert.equal(r.status, 200, '项目所有者应可重建历史证据索引');
+  evidenceBody = await r.json();
+  assert.ok(evidenceBody.quality.chunks > 0, '重建后证据不应丢失');
 
   r = await api('/api/charts/render', {
     method: 'POST',

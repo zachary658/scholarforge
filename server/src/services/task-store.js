@@ -9,6 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSetting } from '../config-store.js';
+import { replaceDistilledEvidence } from './evidence-engine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(__dirname, '..', '..', 'uploads', 'docs');
@@ -489,7 +490,10 @@ export function saveProjectSources(projectId, userId, sources) {
   const r = db.prepare(
     'UPDATE projects SET sources_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
   ).run(JSON.stringify(sources || {}), now(), projectId, userId);
-  if (r.changes > 0) syncProjectStage(userId, projectId);
+  if (r.changes > 0) {
+    replaceDistilledEvidence(userId, projectId, sources || {});
+    syncProjectStage(userId, projectId);
+  }
   return r.changes > 0;
 }
 

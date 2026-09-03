@@ -152,9 +152,12 @@ server {
   - `QDRANT_URL` / `QDRANT_API_KEY` + `BGE_M3_API_URL` / `RERANKER_API_URL`：段落级证据索引（稠密+稀疏混合检索、重排）
   - `DOCLING_API_URL` / `GROBID_API_URL`：全文结构与引用解析
   - `PAPERQA_API_URL` / `PAPERQA_API_KEY`：PaperQA2 研究引擎（独立 Python 服务，见 `research-engine/`）
+  - `RESEARCH_GRAPH_ENABLED=true`：让深度调研使用可重试节点流程，终点为“待用户确认大纲”，确认后再进入付费分章生成
   - `CSL_STYLE`：参考文献样式（默认内置官方 GB/T 7714-2015 数字制，可切换 apa/vancouver/harvard1 或本地 .csl 路径）
   - `ZOTERO_TRANSLATION_URL`：Zotero Translation Server 文献导入
   - `QUARTO_BIN` / `PANDOC_BIN`：出版级导出（DOCX/PDF/LaTeX/HTML 等，二者都未配置则走内置 docx-generator）
+
+本地启用可选研究服务：在 `.env` 设置 `PAPERQA_API_URL=http://research-engine:8100`，再运行 `docker compose --profile research up --build`。
 
 ### 6. 进程守护
 

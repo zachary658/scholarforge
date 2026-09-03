@@ -17,7 +17,10 @@ let child = null;
 
 function startServer() {
   return new Promise((resolve, reject) => {
-    child = spawn('node', ['src/index.js'], {
+    // 用 process.execPath 而非裸 'node'：better-sqlite3 是针对某个 Node ABI 编译的，
+    // 若 PATH 里的 node 与测试运行器不是同一版本（例如本地装了 Node 24 而依赖编译于 Node 22），
+    // 子进程会以 ERR_DLOPEN_FAILED 直接退出，导致 E2E 误报失败。
+    child = spawn(process.execPath, ['src/index.js'], {
       cwd: serverDir,
       env: {
         ...process.env,

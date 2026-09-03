@@ -2,10 +2,12 @@ import { Router } from 'express';
 import db from '../db.js';
 import { authRequired } from '../middleware.js';
 import { formatReference } from '../ai.js';
-import { getSetting } from '../config-store.js';
 import { logUsage } from '../usage.js';
 import { checkTextLength, TEXT_MAX_SHORT } from '../utils.js';
 import logger from '../logger.js';
+import { replaceEvidenceSource, removeEvidenceSource } from '../services/evidence-engine.js';
+import { searchMultiSource } from '../services/multi-source-search.js';
+import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
 
 const router = Router();
 
@@ -19,9 +21,8 @@ function ownedProjectId(value, userId) {
 // 检索结果缓存（相同关键词 24 小时，内存缓存；进程内有效）
 const searchCache = new Map(); // key -> { data, at }
 const SEARCH_CACHE_TTL = 24 * 3600 * 1000;
-const SEARCH_TIMEOUT = 10000; // 10 秒超时
 
-// 免费不限次功能的每用户每小时调用上限：文献检索调用真实外部 API（OpenAlex），
+// 免费不限次功能的每用户每小时调用上限：文献检索调用真实外部学术 API，
 // 免费不意味着可被批量注册后无限刷（此前限流只覆盖大纲，ref_search 完全无限制）
 const REF_SEARCH_HOURLY_LIMIT = 30;
 
@@ -33,88 +34,7 @@ function isRefSearchRateLimited(userId) {
   return cnt >= REF_SEARCH_HOURLY_LIMIT;
 }
 
-// OpenAlex API 邮箱（进入 polite pool，可经配置覆盖；默认使用产品邮箱）
-function getOpenAlexMailto() {
-  return getSetting('openalex_mailto', 'scholarforge@test.com') || 'scholarforge@test.com';
-}
-
-// 将 OpenAlex 的倒排索引摘要还原为纯文本
-function decodeInvertedIndex(inv) {
-  if (!inv || typeof inv !== 'object') return '';
-  const positions = [];
-  for (const [word, idxs] of Object.entries(inv)) {
-    if (!Array.isArray(idxs)) continue;
-    for (const i of idxs) positions.push({ i, word });
-  }
-  if (positions.length === 0) return '';
-  positions.sort((a, b) => a.i - b.i);
-  return positions.map((p) => p.word).join(' ');
-}
-
-// OpenAlex 文献类型 -> 系统 ref_type
-function mapRefType(type) {
-  switch (type) {
-    case 'article':
-      return 'journal';
-    case 'book-chapter':
-    case 'book':
-      return 'book';
-    case 'thesis':
-      return 'thesis';
-    default:
-      return 'journal';
-  }
-}
-
-// 将单个 OpenAlex work 映射为系统既有格式（真实可溯源）
-function mapWork(work) {
-  const authorships = Array.isArray(work.authorships) ? work.authorships : [];
-  const authors = authorships
-    .map((a) => a && a.author && a.author.display_name)
-    .filter(Boolean)
-    .join(', ');
-
-  // 期刊/来源名称：优先 primary_location.source，回退 host_venue
-  const source =
-    (work.primary_location && work.primary_location.source && work.primary_location.source.display_name) ||
-    (work.host_venue && work.host_venue.display_name) ||
-    '';
-
-  // DOI 规范化：OpenAlex 返回形如 https://doi.org/10.xxx，系统内存放裸 DOI
-  let doi = '';
-  if (work.doi && typeof work.doi === 'string') {
-    doi = work.doi.replace(/^https?:\/\/doi\.org\//i, '');
-  }
-
-  // 可溯源链接：优先 DOI，其次 OA PDF，其次 landing page，最后 OpenAlex work id
-  const bestOa = work.best_oa_location || {};
-  let sourceUrl = '';
-  if (doi) sourceUrl = `https://doi.org/${doi}`;
-  else if (bestOa.pdf_url) sourceUrl = bestOa.pdf_url;
-  else if (bestOa.landing_page_url) sourceUrl = bestOa.landing_page_url;
-  else if (work.id) sourceUrl = work.id;
-
-  const abstract = decodeInvertedIndex(work.abstract_inverted_index);
-  const isBook = ['book', 'book-chapter'].includes(work.type);
-
-  return {
-    title: work.title || work.display_name || '(无标题)',
-    authors: authors || '佚名',
-    year: work.publication_year ? String(work.publication_year) : '',
-    journal: isBook ? '' : source,
-    publisher: isBook ? source : '',
-    ref_type: mapRefType(work.type),
-    doi,
-    source: 'web',
-    source_url: sourceUrl,
-    source_db: 'OpenAlex',
-    abstract,
-    cited_by_count: work.cited_by_count || 0,
-    openalex_id: work.id || '',
-  };
-}
-
-// 文献检索（调用 OpenAlex API，真实可溯源）
+// 文献检索（OpenAlex / Semantic Scholar / CrossRef / arXiv / 可选 CNKI）
 router.get('/search', authRequired, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   // 无查询参数时不调用 API，直接返回空数组
@@ -122,12 +42,9 @@ router.get('/search', authRequired, async (req, res) => {
     return res.json({
       results: [],
       total: 0,
-      note: '所有检索结果均来自 OpenAlex 真实学术数据库，可溯源至原文链接',
+      note: '检索结果来自公开学术数据库，并优先展示可溯源记录',
     });
   }
-
-  const mailto = getOpenAlexMailto();
-  const url = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&mailto=${encodeURIComponent(mailto)}&per-page=20`;
 
   // 相同关键词缓存 24 小时
   const cacheKey = q.toLowerCase();
@@ -141,34 +58,20 @@ router.get('/search', authRequired, async (req, res) => {
     return res.status(429).json({ error: '检索过于频繁，请 1 小时后再试', results: [], total: 0 });
   }
 
-  const doFetch = () => fetch(url, {
-    headers: { 'User-Agent': `ScholarForge/1.0 (mailto:${mailto})` },
-    signal: AbortSignal.timeout(SEARCH_TIMEOUT),
-  });
-
   try {
-    let resp;
-    try {
-      resp = await doFetch();
-    } catch (firstErr) {
-      // 超时/网络错误：重试一次
-      logger.warn('references', `OpenAlex 首次请求失败，重试一次: ${firstErr && firstErr.message ? firstErr.message : String(firstErr)}`);
-      resp = await doFetch();
-    }
-    if (!resp.ok) {
-      return res.status(502).json({
-        error: `OpenAlex 服务返回异常（${resp.status}），请稍后重试`,
-        results: [],
-        total: 0,
-      });
-    }
-    const data = await resp.json();
-    const works = Array.isArray(data.results) ? data.results : [];
-    const results = works.map(mapWork);
+    const search = await searchMultiSource(q, { limit: 20 });
+    const results = (search.results || []).map((work) => ({
+      ...work,
+      source: 'web',
+      ref_type: work.ref_type || 'journal',
+      publisher: work.publisher || '',
+    }));
     const payload = {
       results,
       total: results.length,
-      note: '所有检索结果均来自 OpenAlex 真实学术数据库，可溯源至原文链接',
+      sources_used: search.sources_used || [],
+      warnings: search.errors || [],
+      note: '结果来自多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
     searchCache.set(cacheKey, { data: payload, at: Date.now() });
     if (searchCache.size > 200) {
@@ -180,7 +83,7 @@ router.get('/search', authRequired, async (req, res) => {
       userId: req.user.id,
       toolType: 'ref_search',
       action: 'search',
-      model: { name: 'openalex' },
+      model: { name: 'multi-source' },
       inputChars: q.length,
       outputChars: 0,
       tokens: 0,
@@ -190,9 +93,9 @@ router.get('/search', authRequired, async (req, res) => {
     });
     return res.json(payload);
   } catch (err) {
-    logger.error('references', `OpenAlex 检索失败: ${err && err.message ? err.message : String(err)}`);
+    logger.error('references', `多源文献检索失败: ${err && err.message ? err.message : String(err)}`);
     return res.status(502).json({
-      error: '无法连接 OpenAlex 文献检索服务，请检查网络后重试',
+      error: '无法连接学术文献检索服务，请稍后重试',
       results: [],
       total: 0,
     });
@@ -211,7 +114,7 @@ router.get('/', authRequired, (req, res) => {
 
 // 添加文献（手动或从检索收藏）
 router.post('/', authRequired, (req, res) => {
-  const { title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db, projectId: requestedProjectId, project_id } = req.body || {};
+  const { title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db, abstract, projectId: requestedProjectId, project_id } = req.body || {};
   if (!title) return res.status(400).json({ error: '请填写文献标题' });
   // 入库长度校验：短文本 ≤200（作者列表放宽至 500，兼容多作者论文），原文链接 ≤2048，超限 400
   const lenErr = checkTextLength([
@@ -225,6 +128,7 @@ router.post('/', authRequired, (req, res) => {
     { value: source, label: '来源', max: TEXT_MAX_SHORT },
     { value: source_db, label: '来源数据库', max: TEXT_MAX_SHORT },
     { value: source_url, label: '原文链接', max: 2048 },
+    { value: abstract, label: '摘要', max: 10000 },
   ]);
   if (lenErr) return res.status(400).json({ error: lenErr });
   // source_url 协议白名单：仅允许 http/https 开头（与前端校验一致，后端兜底拦截 javascript: 等危险协议）
@@ -235,8 +139,8 @@ router.post('/', authRequired, (req, res) => {
   if (linkedProjectId === false) return res.status(404).json({ error: '工作区不存在' });
   const info = db
     .prepare(
-      `INSERT INTO "references" (user_id, project_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO "references" (user_id, project_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db, abstract)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.user.id,
@@ -250,9 +154,22 @@ router.post('/', authRequired, (req, res) => {
       doi || '',
       source || 'manual',
       source_url || '',
-      source_db || (source === 'web' ? '用户收藏' : '手动添加')
+      source_db || (source === 'web' ? '用户收藏' : '手动添加'),
+      abstract || ''
     );
   const ref = db.prepare('SELECT * FROM "references" WHERE id = ?').get(info.lastInsertRowid);
+  if (linkedProjectId) {
+    replaceEvidenceSource({
+      userId: req.user.id,
+      projectId: linkedProjectId,
+      sourceType: 'reference',
+      sourceId: ref.id,
+      sourceTitle: ref.title,
+      text: [ref.title, ref.abstract].filter(Boolean).join('\n\n'),
+      metadata: { authors: ref.authors, year: ref.year, doi: ref.doi, source_url: ref.source_url, source_db: ref.source_db },
+      traceable: Boolean(ref.doi || ref.source_url),
+    });
+  }
   res.json({ reference: ref });
 });
 
@@ -260,8 +177,9 @@ router.post('/', authRequired, (req, res) => {
 // (source_db 字段已在 db.js 迁移中添加)
 
 router.delete('/:id', authRequired, (req, res) => {
-  const ref = db.prepare('SELECT id FROM "references" WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  const ref = db.prepare('SELECT id, project_id FROM "references" WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!ref) return res.status(404).json({ error: '文献不存在' });
+  removeEvidenceSource({ userId: req.user.id, projectId: ref.project_id, sourceType: 'reference', sourceId: ref.id });
   db.prepare('DELETE FROM "references" WHERE id = ?').run(ref.id);
   res.json({ ok: true });
 });
@@ -287,6 +205,81 @@ router.post('/format-preview', authRequired, (req, res) => {
   const { ref, style = 'gbt7714' } = req.body || {};
   if (!ref || !ref.title) return res.status(400).json({ error: '文献信息不完整' });
   res.json({ formatted: formatReference({ ref, style }) });
+});
+
+// 从 Zotero Translation Server 导入文献（可选插件）
+// 支持两种模式：identifier（DOI/PMID/ISBN/arXiv/URL 单条识别）、bibliography（BibTeX/RIS 批量）
+// 未配置 ZOTERO_TRANSLATION_URL 时返回明确提示，不阻断主流程。
+router.post('/import', authRequired, async (req, res) => {
+  try {
+    if (!isZoteroConfigured()) {
+      return res.status(501).json({ error: 'Zotero 导入通道未启用：请配置 ZOTERO_TRANSLATION_URL' });
+    }
+    const { identifier, bibliography, projectId: requestedProjectId, project_id } = req.body || {};
+    const linkedProjectId = ownedProjectId(requestedProjectId ?? project_id, req.user.id);
+    if (requestedProjectId != null && linkedProjectId === false) {
+      return res.status(404).json({ error: '工作区不存在' });
+    }
+    // 批量书目优先；否则单条标识符识别
+    const items = bibliography
+      ? await importBibliography(bibliography)
+      : identifier
+        ? [await searchByIdentifier(identifier)]
+        : null;
+    if (items == null) return res.status(400).json({ error: '请提供 identifier 或 bibliography' });
+
+    // 入库（复用 POST / 的字段与长度校验逻辑，逐条落库）
+    const created = [];
+    for (const item of items) {
+      if (!item || !item.title) continue;
+      const lenErr = checkTextLength([
+        { value: item.title, label: '文献标题', max: TEXT_MAX_SHORT },
+        { value: item.authors, label: '作者', max: 500 },
+        { value: item.journal, label: '期刊', max: TEXT_MAX_SHORT },
+        { value: item.doi, label: 'DOI', max: TEXT_MAX_SHORT },
+        { value: item.source_url, label: '原文链接', max: 2048 },
+      ]);
+      if (lenErr) continue;
+      const info = db
+        .prepare(
+          `INSERT INTO "references" (user_id, project_id, title, authors, year, journal, publisher, ref_type, doi, source, source_url, source_db, abstract)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          req.user.id,
+          linkedProjectId || null,
+          item.title,
+          item.authors || '',
+          item.year || '',
+          item.journal || '',
+          '',
+          item.item_type || 'journal',
+          item.doi || '',
+          'zotero',
+          item.source_url || '',
+          'zotero',
+          ''
+        );
+      const ref = db.prepare('SELECT * FROM "references" WHERE id = ?').get(info.lastInsertRowid);
+      if (linkedProjectId) {
+        replaceEvidenceSource({
+          userId: req.user.id,
+          projectId: linkedProjectId,
+          sourceType: 'reference',
+          sourceId: ref.id,
+          sourceTitle: ref.title,
+          text: [ref.title, ref.abstract].filter(Boolean).join('\n\n'),
+          metadata: { authors: ref.authors, year: ref.year, doi: ref.doi, source_url: ref.source_url, source_db: 'zotero' },
+          traceable: Boolean(ref.doi || ref.source_url),
+        });
+      }
+      created.push(ref);
+    }
+    res.json({ imported: created.length, references: created });
+  } catch (err) {
+    logger.warn('references-import', `Zotero 导入失败: ${err.message}`);
+    res.status(502).json({ error: `Zotero 导入失败：${err.message}` });
+  }
 });
 
 export default router;

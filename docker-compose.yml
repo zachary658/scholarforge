@@ -32,6 +32,20 @@ services:
       QUARTO_BIN: "${QUARTO_BIN:-}"
       PANDOC_BIN: "${PANDOC_BIN:-}"
       QUARTO_TIMEOUT_MS: "${QUARTO_TIMEOUT_MS:-120000}"
+      # 段落级证据索引（Qdrant + BGE-M3 + reranker，可选；未配置降级本地 BM25）
+      QDRANT_URL: "${QDRANT_URL:-}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:-}"
+      QDRANT_COLLECTION: "${QDRANT_COLLECTION:-scholarforge_evidence}"
+      BGE_M3_API_URL: "${BGE_M3_API_URL:-}"
+      BGE_M3_API_KEY: "${BGE_M3_API_KEY:-}"
+      RERANKER_API_URL: "${RERANKER_API_URL:-}"
+      RERANKER_API_KEY: "${RERANKER_API_KEY:-}"
+      # 全文结构与引用解析（Docling / GROBID，可选）
+      DOCLING_API_URL: "${DOCLING_API_URL:-}"
+      GROBID_API_URL: "${GROBID_API_URL:-}"
+      # PaperQA2 研究引擎（独立 Python 服务，见下方 research-engine profile）
+      PAPERQA_API_URL: "${PAPERQA_API_URL:-}"
+      PAPERQA_API_KEY: "${PAPERQA_API_KEY:-}"
     env_file:
       - .env
     volumes:
@@ -40,7 +54,51 @@ services:
       - sf-logs:/app/server/logs
     restart: unless-stopped
 
+  # 可选研究引擎：`docker compose --profile research up --build` 启用。
+  # 主服务 .env 中同时设置 PAPERQA_API_URL=http://research-engine:8100。
+  research-engine:
+    profiles: ["research"]
+    build:
+      context: ./research-engine
+      dockerfile: Dockerfile
+      args:
+        # requirements.txt 为轻量模式；生产可设 requirements-full.txt 启用 PaperQA2。
+        RESEARCH_REQUIREMENTS: "${RESEARCH_REQUIREMENTS:-requirements.txt}"
+    image: scholarforge-research:latest
+    environment:
+      RESEARCH_ENGINE_PORT: "8100"
+      RESEARCH_ENGINE_MODE: "${RESEARCH_ENGINE_MODE:-}"
+      RESEARCH_ENGINE_API_KEY: "${PAPERQA_API_KEY:-}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-}"
+    ports:
+      - "${RESEARCH_ENGINE_PORT:-8100}:8100"
+    restart: unless-stopped
+
+  # 向量库：`docker compose --profile vector up --build` 启用。
+  # 主服务 .env 中同时设置 QDRANT_URL=http://qdrant:6333 与 BGE_M3_API_URL（见下）。
+  qdrant:
+    profiles: ["vector"]
+    image: qdrant/qdrant:v1.12.0
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  # 说明（不在此硬编码，因为它们是需按硬件/模型自建或采购的重型服务）：
+  #   - BGE-M3 嵌入服务：需提供 OpenAI 兼容的 /embeddings 端点（TEI 或 vLLM 部署），
+  #     完成后在 .env 设 BGE_M3_API_URL，如 http://bge-m3:8080。
+  #   - reranker 重排服务：需提供兼容端点，在 .env 设 RERANKER_API_URL。
+  #   - Docling / GROBID：论文全文结构与引用解析，官方镜像可分别参考
+  #     docling-project/docling 与 lfoppiano/grobid，完成后在 .env 设 DOCLING_API_URL / GROBID_API_URL。
+  # 以上任一未配置时，主服务自动降级到本地实现（本地 BM25 / pdfjs 兜底），不会阻断流程。
+
 volumes:
   sf-data:
   sf-uploads:
   sf-logs:
+  qdrant-data:

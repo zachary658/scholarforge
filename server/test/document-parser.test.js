@@ -380,7 +380,7 @@ test('parseGrobidTei：空输入与非法 XML 应抛错', () => {
 // ===== 6. 端到端路由（打桩 fetch + env） =====
 
 test('配置 Docling 后英文文档走 Docling 通道，且不降级', async (t) => {
-  withEnv(t, { DOCLING_API_URL: 'http://docling.internal:5001' });
+  withEnv(t, { DOCLING_API_URL: 'http://10.20.0.11:5001' });
   const calls = stubFetch(t, (url) => (url.includes('/v1/convert/file') ? makeResponse(doclingEnvelope()) : null));
 
   const result = await parseDocument(PDF_2PAGES, { filename: 'a.pdf', languageHint: 'en' });
@@ -394,8 +394,8 @@ test('配置 Docling 后英文文档走 Docling 通道，且不降级', async (t
 
 test('DOC_PARSER_PREFER 可强制改首选通道（中文文档也能指定 Docling）', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    MINERU_API_URL: 'http://mineru.internal:8000',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    MINERU_API_URL: 'http://10.20.0.12:8000',
     DOC_PARSER_PREFER: 'docling',
   });
   // MinerU 若被调用说明优先级没生效——用 500 让它在被误调时立刻暴露
@@ -410,8 +410,8 @@ test('DOC_PARSER_PREFER 可强制改首选通道（中文文档也能指定 Docl
 
 test('降级链：主通道报错后自动落到下一个已配置通道', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    MINERU_API_URL: 'http://mineru.internal:8000',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    MINERU_API_URL: 'http://10.20.0.12:8000',
   });
   const calls = stubFetch(t, (url) => {
     if (url.includes('/v1/convert/file')) return makeResponse('boom', { status: 500 });
@@ -445,8 +445,8 @@ test('降级链：主通道报错后自动落到下一个已配置通道', async
 
 test('Docling 与 MinerU 都失败时降级到 pdfjs', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    MINERU_API_URL: 'http://mineru.internal:8000',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    MINERU_API_URL: 'http://10.20.0.12:8000',
   });
   stubFetch(t, () => makeResponse('down', { status: 503 }));
 
@@ -459,9 +459,9 @@ test('Docling 与 MinerU 都失败时降级到 pdfjs', async (t) => {
 
 test('全部通道失败时抛错并带上 attempts', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    MINERU_API_URL: 'http://mineru.internal:8000',
-    GROBID_URL: 'http://grobid.internal:8070',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    MINERU_API_URL: 'http://10.20.0.12:8000',
+    GROBID_URL: 'http://10.20.0.13:8070',
   });
   stubFetch(t, () => makeResponse('down', { status: 500 }));
 
@@ -480,8 +480,8 @@ test('全部通道失败时抛错并带上 attempts', async (t) => {
 
 test('wantReferences：主通道成功时额外跑 GROBID 补齐参考文献与引用', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    GROBID_URL: 'http://grobid.internal:8070',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    GROBID_URL: 'http://10.20.0.13:8070',
   });
   stubFetch(t, (url) => {
     if (url.includes('/v1/convert/file')) return makeResponse(doclingEnvelope());
@@ -506,8 +506,8 @@ test('wantReferences：主通道成功时额外跑 GROBID 补齐参考文献与�
 
 test('GROBID 补充失败不影响主结果', async (t) => {
   withEnv(t, {
-    DOCLING_API_URL: 'http://docling.internal:5001',
-    GROBID_URL: 'http://grobid.internal:8070',
+    DOCLING_API_URL: 'http://10.20.0.11:5001',
+    GROBID_URL: 'http://10.20.0.13:8070',
   });
   stubFetch(t, (url) => {
     if (url.includes('/v1/convert/file')) return makeResponse(doclingEnvelope());
@@ -525,7 +525,7 @@ test('GROBID 补充失败不影响主结果', async (t) => {
 });
 
 test('GROBID 作为主通道成功时不重复合并补充结果', async (t) => {
-  withEnv(t, { GROBID_URL: 'http://grobid.internal:8070' });
+  withEnv(t, { GROBID_URL: 'http://10.20.0.13:8070' });
   const calls = stubFetch(t, (url) => (
     url.includes('/api/processFulltextDocument') ? makeResponse(GROBID_TEI) : null
   ));

@@ -355,6 +355,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
   const [artifacts, setArtifacts] = useState([]);
   const [references, setReferences] = useState([]);
   const [charts, setCharts] = useState([]);
+  const [evidenceQuality, setEvidenceQuality] = useState(null);
+  const [evidenceResults, setEvidenceResults] = useState([]);
+  const [evidenceQuery, setEvidenceQuery] = useState(project.title || '');
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [outline, setOutline] = useState(project.outline || []);
   const [savingOutline, setSavingOutline] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState(project.outline_confirmed_at || null);
@@ -474,16 +478,46 @@ function ProjectDetail({ project, onClose, onEdit }) {
 
   const loadEvidence = useCallback(async () => {
     try {
-      const [refData, chartData] = await Promise.all([
+      const [refData, chartData, evidenceData] = await Promise.all([
         api.listRefs({ projectId: project.id }),
         api.listCharts({ projectId: project.id }),
+        api.getProjectEvidence(project.id, { q: project.title, limit: 8 }),
       ]);
       setReferences(refData.references || []);
       setCharts(chartData.charts || []);
+      setEvidenceQuality(evidenceData.quality || null);
+      setEvidenceResults(evidenceData.results || []);
     } catch (err) {
       toast.error('加载项目证据失败：' + err.message);
     }
-  }, [project.id]);
+  }, [project.id, project.title]);
+
+  const searchEvidence = async () => {
+    setEvidenceBusy(true);
+    try {
+      const data = await api.getProjectEvidence(project.id, { q: evidenceQuery || project.title, limit: 12 });
+      setEvidenceQuality(data.quality || null);
+      setEvidenceResults(data.results || []);
+    } catch (err) {
+      toast.error('检索证据失败：' + err.message);
+    } finally {
+      setEvidenceBusy(false);
+    }
+  };
+
+  const rebuildEvidence = async () => {
+    setEvidenceBusy(true);
+    try {
+      const data = await api.rebuildProjectEvidence(project.id);
+      setEvidenceQuality(data.quality || null);
+      await loadEvidence();
+      toast.success('证据索引已重建');
+    } catch (err) {
+      toast.error('重建证据索引失败：' + err.message);
+    } finally {
+      setEvidenceBusy(false);
+    }
+  };
 
   // 刷新工作区大纲：大纲生成/深度调研后自动写入结构化大纲，进入此 tab 时拉取最新
   const loadProject = useCallback(async () => {
@@ -1072,6 +1106,49 @@ function ProjectDetail({ project, onClose, onEdit }) {
                   </button>
                 </div>
               </div>
+              <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-ink">证据质量</h4>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {evidenceQuality
+                        ? `${evidenceQuality.score} 分 · ${evidenceQuality.sources} 个来源 · ${evidenceQuality.chunks} 个片段 · 可溯源率 ${Math.round(evidenceQuality.traceability * 100)}%`
+                        : '尚未建立证据索引'}
+                    </p>
+                  </div>
+                  <button disabled={evidenceBusy} onClick={rebuildEvidence} className="btn-secondary text-xs">
+                    <Refresh className={`h-3.5 w-3.5 ${evidenceBusy ? 'animate-spin' : ''}`} /> 重建索引
+                  </button>
+                </div>
+                {evidenceQuality?.issues?.length > 0 && (
+                  <ul className="mt-3 space-y-1 text-xs text-amber-700">
+                    {evidenceQuality.issues.map((issue) => <li key={issue}>• {issue}</li>)}
+                  </ul>
+                )}
+                <div className="mt-4 flex gap-2">
+                  <input
+                    value={evidenceQuery}
+                    onChange={(e) => setEvidenceQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && searchEvidence()}
+                    className="input flex-1"
+                    placeholder="输入章节主题，检查有哪些证据可用"
+                  />
+                  <button disabled={evidenceBusy} onClick={searchEvidence} className="btn-primary text-xs">检索证据</button>
+                </div>
+                {evidenceResults.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {evidenceResults.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-medium text-ink">{item.source_title || '未命名来源'}</span>
+                          <span className="text-slate-400">{item.page_number ? `第 ${item.page_number} 页 · ` : ''}片段 {Number(item.chunk_index) + 1}</span>
+                        </div>
+                        <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{item.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
               <section>
                 <h4 className="mb-2 text-sm font-semibold text-ink">项目文献 ({references.length})</h4>
                 {references.length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">尚未收藏项目文献</p> : (
