@@ -10,7 +10,10 @@ ARG RESEARCH_REQUIREMENTS=requirements.txt
 COPY requirements.txt requirements-full.txt ./
 RUN pip install --upgrade pip && pip install -r "${RESEARCH_REQUIREMENTS}"
 
-COPY engine.py qa.py conflict.py server.py ./
+COPY --chown=nobody:nogroup engine.py qa.py conflict.py server.py ./
+
+# 服务不需要写入应用目录或使用特权端口。
+USER nobody
 
 EXPOSE 8100
 
