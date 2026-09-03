@@ -29,11 +29,13 @@ WORKDIR /app/server
 
 # tini 作为 PID 1，确保 SIGTERM 正确传递给 node，触发优雅关闭（见 index.js 的 shutdown）
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends tini \
+  && apt-get install -y --no-install-recommends tini gosu \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=server-deps /app/server/node_modules ./node_modules
 COPY server/ ./
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 # 前端构建产物放置到 server 预期的 ../../client/dist 路径
 RUN mkdir -p /app/client
@@ -43,9 +45,7 @@ COPY --from=client-build /app/client/dist /app/client/dist
 RUN mkdir -p /app/server/data /app/server/uploads /app/server/logs \
   && chown -R node:node /app/server /app/client
 
-# 生产进程使用镜像内置的非特权用户；命名卷首次创建时继承上述目录权限。
-USER node
-
 EXPOSE 3001
-ENTRYPOINT ["tini", "--"]
+# 入口脚本只以 root 修复旧命名卷的所有权，随后立即通过 gosu 降权执行命令。
+ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "src/index.js"]
