@@ -341,7 +341,9 @@ export default function References() {
                         </a>
                       )}
                       {r.doi && (
-                        <span className="text-[10px] text-slate-400">DOI: {r.doi}</span>
+                        <span className="text-[10px] text-slate-400">
+                          DOI: {r.doi}{r.doi_verified === true ? ' · 已核验' : r.doi_verified == null ? ' · 待核验' : ''}
+                        </span>
                       )}
                     </div>
                   </div>

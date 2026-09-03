@@ -6,7 +6,7 @@ import { logUsage } from '../usage.js';
 import { checkTextLength, TEXT_MAX_SHORT } from '../utils.js';
 import logger from '../logger.js';
 import { replaceEvidenceSource, removeEvidenceSource } from '../services/evidence-engine.js';
-import { searchMultiSource } from '../services/multi-source-search.js';
+import { searchMultiSource, verifyReferenceDois } from '../services/multi-source-search.js';
 import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
 import { classifyReferenceSearch, shouldCacheReferenceSearch } from '../services/research-quality.js';
 
@@ -61,12 +61,15 @@ router.get('/search', authRequired, async (req, res) => {
 
   try {
     const search = await searchMultiSource(q, { limit: 20 });
-    const results = (search.results || []).map((work) => ({
+    const candidates = (search.results || []).map((work) => ({
       ...work,
       source: 'web',
       ref_type: work.ref_type || 'journal',
       publisher: work.publisher || '',
     }));
+    const checked = await verifyReferenceDois(candidates, { limit: 12 });
+    const rejectedDoiCount = checked.filter((work) => work.doi_verified === false).length;
+    const results = checked.filter((work) => work.doi_verified !== false);
     const sources_used = search.sources_used || [];
     const warnings = search.errors || [];
     const health = classifyReferenceSearch({ results, sources_used, errors: warnings });
@@ -76,6 +79,7 @@ router.get('/search', authRequired, async (req, res) => {
       sources_used,
       warnings,
       health,
+      diagnostics: { ...(search.diagnostics || {}), rejected_doi_count: rejectedDoiCount },
       note: '结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
     // 故障与部分覆盖结果不进入 24 小时缓存，避免外部来源恢复后用户仍看到旧状态。

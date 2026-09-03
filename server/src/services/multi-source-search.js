@@ -20,6 +20,66 @@ import { dedupKeyOf } from '../utils.js';
 const SEARCH_CACHE_TTL_MS = 60_000; // 60 秒
 const searchCache = new Map(); // cacheKey -> { at, value }
 
+const QUERY_NOISE = /(?:背景下|视角下|研究|探析|浅析|路径分析|应用研究|现状及对策)/g;
+const BILINGUAL_TERMS = [
+  [/生成式人工智能|生成式AI/gi, 'generative artificial intelligence'],
+  [/人工智能/gi, 'artificial intelligence'],
+  [/本科教育|高等教育/gi, 'higher education'],
+  [/深度学习/gi, 'deep learning'],
+  [/医学影像|医学图像/gi, 'medical imaging'],
+  [/图像分割/gi, 'image segmentation'],
+  [/联邦学习/gi, 'federated learning'],
+  [/隐私保护/gi, 'privacy preservation'],
+  [/医疗健康/gi, 'healthcare'],
+  [/物联网/gi, 'internet of things IoT'],
+  [/乡村振兴/gi, 'rural revitalization'],
+  [/县域/gi, 'county-level'],
+  [/电子商务|电商/gi, 'e-commerce'],
+  [/物流/gi, 'logistics'],
+  [/风险/gi, 'risks'],
+];
+
+export function buildQueryVariants(query, extraVariants = []) {
+  const original = String(query || '').replace(/\s+/g, ' ').trim();
+  if (!original) return [];
+  const simplified = original.replace(QUERY_NOISE, ' ').replace(/\s+/g, ' ').trim();
+  const englishTerms = [];
+  for (const [pattern, replacement] of BILINGUAL_TERMS) {
+    if (pattern.test(original)) englishTerms.push(replacement);
+    pattern.lastIndex = 0;
+  }
+  return [...new Set([
+    original,
+    simplified !== original ? simplified : '',
+    englishTerms.length >= 2 ? englishTerms.join(' ') : '',
+    ...extraVariants.map((item) => String(item || '').trim()),
+  ].filter(Boolean))].slice(0, 3);
+}
+
+async function fetchWithBackoff(url, options = {}, { attempts = 2 } = {}) {
+  const { signal: _discardedSignal, timeoutMs = 15000, ...fetchOptions } = options;
+  let lastResponse;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    let response;
+    try {
+      response = await fetch(url, { ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      if (attempt + 1 >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * (2 ** attempt)));
+      continue;
+    }
+    lastResponse = response;
+    if (response.ok || (response.status !== 429 && response.status < 500)) return response;
+    if (attempt + 1 >= attempts) return response;
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 3000)
+      : 500 * (2 ** attempt);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  return lastResponse;
+}
+
 // ===== 熔断器（Circuit Breaker）=====
 // 每个源独立计数，连续失败 3 次后熔断 60 秒
 const CIRCUIT_BREAK_THRESHOLD = 3;
@@ -81,7 +141,7 @@ function decodeInvertedIndex(inv) {
 async function searchOpenAlex(query, limit = 8) {
   const mailto = getOpenAlexMailto();
   const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&mailto=${encodeURIComponent(mailto)}&per-page=${limit}`;
-  const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const resp = await fetchWithBackoff(url, { signal: AbortSignal.timeout(15000) });
   if (!resp.ok) throw new Error(`OpenAlex ${resp.status}`);
   const data = await resp.json();
   return (data.results || []).map((work) => {
@@ -107,6 +167,7 @@ async function searchOpenAlex(query, limit = 8) {
       source_url: sourceUrl,
       source_db: 'OpenAlex',
       pdf_url: bestOa.pdf_url || '', // 开放获取 PDF 入口（数据套用引擎用）
+      is_retracted: Boolean(work.is_retracted),
       _dedupKey: dedupKeyOf(doi || work.title),
     };
   });
@@ -117,7 +178,7 @@ async function searchOpenAlex(query, limit = 8) {
 // 文档：https://api.semanticscholar.org/api-docs/graph
 async function searchSemanticScholar(query, limit = 8) {
   const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=title,authors,year,abstract,citationCount,externalIds,journal,openAccessPdf,url`;
-  const resp = await fetch(url, {
+  const resp = await fetchWithBackoff(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
     signal: AbortSignal.timeout(15000),
   });
@@ -150,7 +211,7 @@ async function searchSemanticScholar(query, limit = 8) {
 // 文档：https://api.crossref.org/swagger-ui/index.html
 async function searchCrossRef(query, limit = 8) {
   const url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${limit}&select=DOI,title,author,published-print,published-online,container-title,abstract,is-referenced-by-count,URL`;
-  const resp = await fetch(url, {
+  const resp = await fetchWithBackoff(url, {
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
     signal: AbortSignal.timeout(15000),
   });
@@ -240,7 +301,7 @@ export function parseArxivAtom(xmlText) {
 
 async function searchArxiv(query, limit = 8) {
   const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${limit}`;
-  const resp = await fetch(url, {
+  const resp = await fetchWithBackoff(url, {
     // arXiv API 强制要求 User-Agent，否则返回 403
     headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
     signal: AbortSignal.timeout(15000),
@@ -286,15 +347,43 @@ export function rankAcademicResults(results, query) {
     .sort((a, b) => b.relevance_score - a.relevance_score || b.cited_by_count - a.cited_by_count);
 }
 
+export function titlesLikelySame(left, right) {
+  const a = new Set(relevanceTokens(left));
+  const b = new Set(relevanceTokens(right));
+  if (a.size < 3 || b.size < 3) return false;
+  const intersection = [...a].filter((token) => b.has(token)).length;
+  return intersection / Math.max(a.size, b.size) >= 0.86;
+}
+
 function dedupeAndMerge(results, limit = 8, query = '') {
   const seen = new Map();
   for (const r of results) {
+    if (r.is_retracted) continue;
     // 归一化去重键保留 Unicode（中文标题此前会被清空成空串导致中文文献被丢弃）
     const key = r._dedupKey || dedupKeyOf(r.title);
     if (!key) continue;
-    if (seen.has(key)) {
+    let matchedKey = seen.has(key) ? key : null;
+    if (!matchedKey) {
+      for (const [candidateKey, candidate] of seen) {
+        const yearGap = Math.abs((Number(candidate.year) || 0) - (Number(r.year) || 0));
+        if (yearGap <= 2 && titlesLikelySame(candidate.title, r.title)) {
+          matchedKey = candidateKey;
+          break;
+        }
+      }
+    }
+    if (matchedKey) {
       // 已存在，合并信息（优先保留有摘要的、引用数高的）
-      const existing = seen.get(key);
+      const existing = seen.get(matchedKey);
+      if (existing.source_db === 'arXiv' && r.source_db !== 'arXiv') {
+        seen.set(matchedKey, {
+          ...r,
+          abstract: r.abstract || existing.abstract,
+          pdf_url: r.pdf_url || existing.pdf_url,
+          all_sources: [...new Set([...(existing.all_sources || ['arXiv']), r.source_db])],
+        });
+        continue;
+      }
       if (!existing.abstract && r.abstract) existing.abstract = r.abstract;
       if (!existing.pdf_url && r.pdf_url) existing.pdf_url = r.pdf_url;
       if (r.cited_by_count > existing.cited_by_count) existing.cited_by_count = r.cited_by_count;
@@ -318,7 +407,7 @@ function dedupeAndMerge(results, limit = 8, query = '') {
  * @param {object} opts { limit, sources }
  * @returns {Promise<{results: Array, sources_used: string[], errors: string[]}>}
  */
-export async function searchMultiSource(query, opts = {}) {
+async function searchSingleQuery(query, opts = {}) {
   const limit = opts.limit || 8;
   const sources = opts.sources || ['openalex', 'semantic', 'crossref', 'arxiv', 'cnki'];
   // 短 TTL 缓存：同一 query 在 60s 内复用结果，避免重复打外部 API
@@ -404,4 +493,94 @@ export async function searchMultiSource(query, opts = {}) {
   }
   searchCache.set(cacheKey, { at: nowMs, value: result });
   return result;
+}
+
+function titleAgreement(expected, actual) {
+  const expectedTokens = relevanceTokens(expected);
+  const actualTokens = new Set(relevanceTokens(actual));
+  if (expectedTokens.length === 0) return false;
+  return expectedTokens.filter((token) => actualTokens.has(token)).length / expectedTokens.length >= 0.65;
+}
+
+export async function verifyReferenceDois(references, { limit = 8 } = {}) {
+  const items = Array.isArray(references) ? references : [];
+  return Promise.all(items.map(async (reference, index) => {
+    if (!reference?.doi || index >= limit) return { ...reference, doi_verified: null };
+    try {
+      const url = `https://api.crossref.org/works/${encodeURIComponent(reference.doi)}`;
+      const response = await fetchWithBackoff(url, {
+        headers: { 'User-Agent': 'ScholarForge/1.0 (mailto:scholarforge@test.com)' },
+        timeoutMs: 6000,
+      });
+      if (response.status === 404) return { ...reference, doi_verified: false, verification_error: 'DOI_NOT_FOUND' };
+      if (!response.ok) return { ...reference, doi_verified: null, verification_error: `CrossRef ${response.status}` };
+      const payload = await response.json();
+      const verifiedTitle = payload?.message?.title?.[0] || '';
+      const matches = titleAgreement(reference.title, verifiedTitle);
+      return {
+        ...reference,
+        doi_verified: matches,
+        verification_error: matches ? '' : 'DOI_TITLE_MISMATCH',
+      };
+    } catch (error) {
+      return { ...reference, doi_verified: null, verification_error: error.message || 'VERIFY_FAILED' };
+    }
+  }));
+}
+
+export async function searchMultiSource(query, opts = {}) {
+  const limit = opts.limit || 8;
+  const variants = buildQueryVariants(query, opts.queryVariants || []);
+  if (variants.length === 0) return { results: [], sources_used: [], errors: [], diagnostics: { variants: [] } };
+
+  const first = await searchSingleQuery(variants[0], opts);
+  let combined = [...first.results];
+  const sources = new Set(first.sources_used);
+  const errors = new Set(first.errors);
+  const firstTopScore = Number(first.results[0]?.relevance_score || 0);
+  const containsChinese = /[\u3400-\u9fff]/.test(variants[0]);
+  const needsExpansion = first.results.length < Math.min(limit, 5)
+    || firstTopScore < 20
+    || (containsChinese && variants.length > 1 && firstTopScore < 45);
+  const usedVariants = [variants[0]];
+
+  if (needsExpansion) {
+    for (const variant of variants.slice(1)) {
+      const next = await searchSingleQuery(variant, { ...opts, limit: Math.max(limit, 8) });
+      combined.push(...next.results);
+      next.sources_used.forEach((source) => sources.add(source));
+      next.errors.forEach((error) => errors.add(error));
+      usedVariants.push(variant);
+    }
+  }
+
+  // 查询扩展产生的英文结果按其命中的最佳变体计分，避免被中文原句的字符重合规则压低。
+  const ranked = dedupeAndMerge(combined, Math.max(combined.length, limit), variants[0])
+    .map((paper) => ({
+      ...paper,
+      relevance_score: Math.max(...usedVariants.map((variant) => scoreAcademicResult(paper, variant))),
+    }))
+    .sort((a, b) => b.relevance_score - a.relevance_score || b.cited_by_count - a.cited_by_count);
+  const relevant = ranked.filter((paper) => paper.relevance_score >= 10).slice(0, limit);
+  const results = relevant.length >= Math.min(3, limit) ? relevant : ranked.slice(0, limit);
+  const traceable = results.filter((paper) => paper.doi || paper.source_url).length;
+  logger.info('search-metrics', JSON.stringify({
+    query: variants[0].slice(0, 120), variants: usedVariants.length,
+    candidates: combined.length, returned: results.length, traceable,
+    sources: sources.size, errors: errors.size,
+    lowRelevanceFallback: relevant.length < Math.min(3, limit),
+  }));
+  return {
+    results,
+    sources_used: [...sources],
+    errors: [...errors],
+    diagnostics: {
+      variants: usedVariants,
+      expanded: usedVariants.length > 1,
+      candidates: combined.length,
+      returned: results.length,
+      traceable,
+      low_relevance_fallback: relevant.length < Math.min(3, limit),
+    },
+  };
 }

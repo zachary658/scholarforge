@@ -9,7 +9,7 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-test-'));
 process.env.DB_PATH = path.join(tmpDir, 'test.db');
 
-const { parseArxivAtom, rankAcademicResults, scoreAcademicResult } = await import('../src/services/multi-source-search.js');
+const { parseArxivAtom, rankAcademicResults, scoreAcademicResult, buildQueryVariants, titlesLikelySame } = await import('../src/services/multi-source-search.js');
 const { htmlTableToRows, tablesFromMinerUData } = await import('../src/services/paper-distillation.js');
 
 const ARXIV_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -60,6 +60,21 @@ test('学术检索排序：主题相关性优先于单纯高引用量', () => {
   };
   assert.ok(scoreAcademicResult(relevant, query, 2026) > scoreAcademicResult(popularButOffTopic, query, 2026));
   assert.equal(rankAcademicResults([popularButOffTopic, relevant], query)[0].doi, '10.1/relevant');
+});
+
+test('中文学术题目生成去噪与英文检索变体', () => {
+  const variants = buildQueryVariants('乡村振兴背景下县域电商物流协同发展研究');
+  assert.equal(variants[0], '乡村振兴背景下县域电商物流协同发展研究');
+  assert.ok(variants.some((item) => item.includes('rural revitalization')));
+  assert.ok(variants.some((item) => !item.includes('背景下') && !item.endsWith('研究')));
+});
+
+test('预印本与正式版标题的轻微标点差异可识别为同一论文', () => {
+  assert.equal(titlesLikelySame(
+    'Medical Image Segmentation Using Deep Learning: A Survey',
+    'Medical image segmentation using deep learning — a survey',
+  ), true);
+  assert.equal(titlesLikelySame('Medical Image Segmentation', 'Rural E-commerce Logistics'), false);
 });
 
 test('htmlTableToRows：HTML 表格解析为二维数组', () => {

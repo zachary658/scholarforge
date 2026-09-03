@@ -14,7 +14,10 @@ export function shouldCacheReferenceSearch(health) {
 export function assessResearchDelivery(result, { minReferences = 3, minCoreSections = 2 } = {}) {
   const framework = result?.framework || {};
   const references = Array.isArray(result?.references) ? result.references : [];
-  const traceableReferences = references.filter((ref) => ref && (ref.doi || ref.source_url));
+  // 明确核验失败的 DOI 不计入可溯源数量；核验服务临时不可用（null）不误伤真实结果。
+  const traceableReferences = references.filter((ref) => ref && (
+    (ref.doi && ref.doi_verified !== false) || (!ref.doi && ref.source_url)
+  ));
   const coreSections = ['methods', 'innovations', 'conclusions']
     .filter((key) => Array.isArray(framework[key]) && framework[key].length > 0);
   const paperCount = Number(framework.paperCount || 0);

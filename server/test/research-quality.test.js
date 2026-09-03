@@ -33,4 +33,8 @@ test('付费深度调研：真实文献和研究框架必须同时达到最低�
     references: [{ title: '不可溯源记录' }],
     framework: { paperCount: 1, methods: ['方法'], innovations: ['创新'] },
   }).ok, false);
+  assert.equal(assessResearchDelivery({
+    references: refs.map((ref) => ({ ...ref, doi_verified: false })),
+    framework: { paperCount: 3, methods: ['方法'], innovations: ['创新'] },
+  }).ok, false);
 });

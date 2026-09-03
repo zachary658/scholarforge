@@ -705,6 +705,10 @@ router.post('/smart-writing', authRequired, async (req, res) => {
           topic, field, keywords, projectId: effectiveProjectId, userId: req.user.id,
         });
 
+    // DOI 与 CrossRef 元数据交叉核验；明确不存在或标题不匹配的 DOI 不参与交付计数。
+    const { verifyReferenceDois } = await import('../services/multi-source-search.js');
+    result.references = await verifyReferenceDois(result.references || []);
+
     // ===== 付费任务质量门禁 =====
     // 真实可溯源文献数量和框架完整度必须同时达到最低标准；不足时不能作为付费交付。
     // 门禁放在持久化之前：失败时不得向工作区写入空框架/模板大纲，避免污染用户工作区。
