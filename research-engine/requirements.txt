@@ -1,5 +1,5 @@
 # 轻量降级模式依赖：只装 FastAPI + uvicorn 即可启动服务（内置证据块解析）
 # 完整模式（PaperQA2 全文索引/摘要/重排/引文定位）请改装 requirements-full.txt
 fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
+uvicorn[standard]>=0.52.4
 python-multipart>=0.0.9
