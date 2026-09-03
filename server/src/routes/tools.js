@@ -451,6 +451,8 @@ router.post('/writing', authRequired, async (req, res) => {
   const { type, topic, field, template_id, projectId, orderNo } = req.body || {};
   if (!type) return res.status(400).json({ error: '请选择写作类型' });
   if (!topic) return res.status(400).json({ error: '请填写论文题目' });
+  // 学科必选：与 /smart-writing 一致；前端 Writing.jsx run() 已校验，后端兜底避免字段污染生成内容
+  if (!field) return res.status(400).json({ error: '请选择学科领域' });
   const lenErr = checkTextLen(topic, MAX_TOPIC_CHARS, '题目');
   if (lenErr) return res.status(400).json({ error: lenErr });
 
