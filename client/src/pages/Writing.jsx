@@ -131,7 +131,7 @@ export default function Writing() {
   // 写作类内容在真实支付通道下 result.content 可能为 null（只存 Word），靠 doc 下载
   const content = result?.content || '';
 
-  const run = (orderNo) => {
+  const run = async (orderNo) => {
     if (!form.topic.trim()) {
       tool.setError('请填写论文题目');
       return;
@@ -145,13 +145,14 @@ export default function Writing() {
     if (form.type === 'fulltext' && !integrity.ensure(() => run(orderNo))) {
       return;
     }
-    tool.run(() => api.writing({
+    const data = await tool.run(() => api.writing({
       ...form,
       template_id: form.template_id || undefined,
       projectId: projectId || undefined,
       orderNo: orderNo || undefined,
       material_ids: selectedMaterials.length > 0 ? selectedMaterials : undefined,
     }));
+    if (form.type === 'outline' && data?.projectId) await runDistill();
   };
 
   const handleCopy = async () => {
@@ -202,6 +203,10 @@ export default function Writing() {
               : `深度调研结果已自动保存到论文工作区「${data.autoProjectTitle || '我的论文工作区'}」；内容保留 ${data.retention_days || 30} 天，请及时下载 Word 保存`,
             7000
           );
+        }
+        // 深度调研成功后直接进入该论文的大纲确认步骤，不再要求用户返回工作区列表重新寻找。
+        if (data.projectId) {
+          navigate(`/app/projects?projectId=${data.projectId}&tab=outline`);
         }
       }
     } catch (err) {

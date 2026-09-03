@@ -509,6 +509,20 @@ router.post('/writing', authRequired, async (req, res) => {
         logger.warn('tools', `写作检索失败（忽略，改用无文献生成）: ${err.message}`);
       }
     }
+    // 所有正文来源在进入模型前统一做 DOI 交叉核验，并只保留可回查的受控数据源记录。
+    // 这也会清理历史工作区中可能残留的旧版/手工伪造来源。
+    if (sourceRefs?.length) {
+      const { verifyReferenceDois } = await import('../services/multi-source-search.js');
+      const { filterVerifiedWritingReferences } = await import('../services/paper-distillation.js');
+      sourceRefs = filterVerifiedWritingReferences(await verifyReferenceDois(sourceRefs, { limit: sourceRefs.length }));
+    }
+    if (type === 'fulltext' && (!sourceRefs || sourceRefs.length < 3)) {
+      return res.status(503).json({
+        error: '未检索到足量可核验的真实论文，本次未生成正文。请稍后重试或先完成深度文献调研。',
+        code: 'INSUFFICIENT_VERIFIED_REFERENCES',
+        retriable: true,
+      });
+    }
     // 大纲生成（免费快速版）：把检索到的真实文献/数据持久化到工作区，
     // 供后续章节/全文生成复用；已有深度蒸馏产物（framework 非空）时保留不覆盖
     if (type === 'outline' && projectId && sourceRefs?.length) {
@@ -551,8 +565,12 @@ router.post('/writing', authRequired, async (req, res) => {
         template,
       },
       transformContent: async (content) => {
-        const { replaceCitePlaceholdersCsl, replaceChartPlaceholders } = await import('../services/paper-distillation.js');
-        return replaceChartPlaceholders(await replaceCitePlaceholdersCsl(content, sourceRefs), sourceBenchmarks);
+        const { replaceCitePlaceholders, replaceCitePlaceholdersCsl, replaceChartPlaceholders, ensureGroundedVisuals } = await import('../services/paper-distillation.js');
+        const cleaned = replaceCitePlaceholders(content, sourceRefs, { appendReferences: false });
+        const grounded = ensureGroundedVisuals(replaceChartPlaceholders(cleaned, sourceBenchmarks), {
+          benchmarks: sourceBenchmarks || [], tables: sourceTables || [], references: sourceRefs || [],
+        }, type === 'fulltext' ? '实验与结果分析' : '');
+        return replaceCitePlaceholdersCsl(grounded, sourceRefs);
       },
       orderNo: orderNo || null,
       materialIds: (req.body && req.body.material_ids) || null,
@@ -620,6 +638,16 @@ router.post('/writing', authRequired, async (req, res) => {
     if (type === 'outline' && result.projectId && result.content) {
       try {
         const proj = getProject(result.projectId, req.user.id);
+        if (sourceRefs?.length && !proj?.sources?.framework) {
+          saveProjectSources(result.projectId, req.user.id, {
+            framework: proj?.sources?.framework || null,
+            references: sourceRefs,
+            benchmarks: sourceBenchmarks || [],
+            tables: sourceTables || [],
+            sources_used: proj?.sources?.sources_used || [],
+            saved_at: Math.floor(Date.now() / 1000),
+          });
+        }
         if (proj && proj.outline_confirmed_at) {
           logger.warn('tools', `大纲已确认，跳过自动覆盖 project=${result.projectId}`);
         } else {
@@ -707,7 +735,17 @@ router.post('/smart-writing', authRequired, async (req, res) => {
 
     // DOI 与 CrossRef 元数据交叉核验；明确不存在或标题不匹配的 DOI 不参与交付计数。
     const { verifyReferenceDois } = await import('../services/multi-source-search.js');
-    result.references = await verifyReferenceDois(result.references || []);
+    const { filterVerifiedWritingReferences } = await import('../services/paper-distillation.js');
+    result.references = filterVerifiedWritingReferences(
+      await verifyReferenceDois(result.references || [], { limit: (result.references || []).length })
+    );
+    // 大纲在核验前可能已把占位符变成编号。过滤记录后旧编号不再可靠，先清除，
+    // 再仅用最终白名单重建文末文献表；正文阶段会基于该白名单重新生成准确引用。
+    const { replaceCitePlaceholdersCsl } = await import('../services/paper-distillation.js');
+    result.outline = await replaceCitePlaceholdersCsl(
+      String(result.outline || '').replace(/\[(\d+)\]/g, ''),
+      result.references
+    );
 
     // ===== 付费任务质量门禁 =====
     // 真实可溯源文献数量和框架完整度必须同时达到最低标准；不足时不能作为付费交付。

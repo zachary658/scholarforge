@@ -15,17 +15,60 @@ const {
   formatReferencesGB,
   benchmarksToChartConfig,
   extractBenchmarkData,
+  ensureGroundedVisuals,
+  filterVerifiedWritingReferences,
 } = await import('../src/services/paper-distillation.js');
 
 test('replaceCitePlaceholders：正常替换 [CITE:n] 并追加参考文献列表', () => {
   const refs = [
-    { title: 'Test Paper', authors: 'Zhang S, Li H', journal: 'IEEE TPAMI', year: '2023', doi: '10.1/x' },
+    { title: 'Test Paper', authors: 'Zhang S, Li H', journal: 'IEEE TPAMI', year: '2023', doi: '10.1/x', doi_verified: true, source_db: 'CrossRef', source_url: 'https://doi.org/10.1/x' },
   ];
   const out = replaceCitePlaceholders('本文方法[CITE:1]有效。', refs);
   assert.ok(out.includes('[1]'), '应替换为 [1]');
   assert.ok(!out.includes('CITE'), '不应残留 CITE 占位符');
   assert.ok(out.includes('## 参考文献'), '应追加参考文献标题');
   assert.ok(out.includes('Test Paper'), '参考文献列表应含真实标题');
+});
+
+test('replaceCitePlaceholders：删除模型编造的文献表并用核验白名单重建', () => {
+  const refs = [{ title: 'Real Paper', authors: 'A', year: '2024', doi: '10.1/real', doi_verified: true, source_db: 'CrossRef', source_url: 'https://doi.org/10.1/real' }];
+  const out = replaceCitePlaceholders('正文[CITE:1]\n\n## 参考文献\n\n1. 张三. 虚构论文[J]. 虚构期刊, 2022.', refs);
+  assert.ok(out.includes('Real Paper'));
+  assert.ok(!out.includes('张三'));
+  assert.ok(!out.includes('虚构期刊'));
+});
+
+test('filterVerifiedWritingReferences：拒绝不受信来源和 DOI 标题核验失败记录', () => {
+  const safe = { title: 'Safe', source_db: 'OpenAlex', source_url: 'https://openalex.org/W1' };
+  assert.deepEqual(filterVerifiedWritingReferences([
+    safe,
+    { ...safe, title: 'Mismatch', doi_verified: false },
+    { title: 'Manual fake', source_db: 'manual', source_url: 'https://example.com/fake' },
+  ]), [safe]);
+});
+
+test('ensureGroundedVisuals：实验章节自动补入至少两张真实指标图和来源表', () => {
+  const benchmarks = [
+    { paperTitle: 'Paper A', source_db: 'OpenAlex', metrics: [{ label: '准确率', value: 91 }, { label: 'F1', value: 89 }] },
+    { paperTitle: 'Paper B', source_db: 'CrossRef', metrics: [{ label: '准确率', value: 88 }, { label: 'F1', value: 86 }] },
+  ];
+  const tables = [{ source: 'Paper A', year: 2024, source_url: 'https://openalex.org/W1', rows: [['方法', '准确率'], ['A', '91'], ['B', '88']] }];
+  const out = ensureGroundedVisuals('## 实验结果', { benchmarks, tables }, '第四章 实验与结果分析');
+  assert.equal((out.match(/```vega/g) || []).length, 2);
+  assert.ok(out.includes('数据引自：Paper A'));
+  assert.ok(out.includes('| 方法 | 准确率 |'));
+});
+
+test('ensureGroundedVisuals：没有实验指标时用真实文献元数据补足图表并删除示例数值', () => {
+  const references = [2022, 2023, 2024].map((year, i) => ({
+    title: `Real Paper ${i}`, year, source_db: 'OpenAlex', source_url: `https://openalex.org/W${i}`,
+    cited_by_count: 10 + i,
+  }));
+  const example = '结果如下（示例数据，请替换为真实数据）：\n\n| 方法 | 准确率 | F1 |\n| --- | --- | --- |\n| A | 99 | 98 |\n\n注：以上是示例数据，请替换为真实数据。';
+  const out = ensureGroundedVisuals(example, { references }, '第四章 实验结果');
+  assert.equal((out.match(/```vega/g) || []).length, 2);
+  assert.ok(out.includes('真实参考论文汇总'));
+  assert.ok(!out.includes('| A | 99 | 98 |'));
 });
 
 test('replaceCitePlaceholders：越界引用被移除', () => {

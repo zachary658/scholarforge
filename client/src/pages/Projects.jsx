@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
@@ -49,6 +49,9 @@ export default function Projects() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [viewProject, setViewProject] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const targetProjectId = Number(searchParams.get('projectId'));
+  const targetTab = searchParams.get('tab') || 'pipeline';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,6 +66,14 @@ export default function Projects() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 流程页可直接把用户带到指定工作区和指定步骤，避免返回列表后再次寻找、点选。
+  useEffect(() => {
+    const id = targetProjectId;
+    if (!id || projects.length === 0) return;
+    const target = projects.find((project) => Number(project.id) === id);
+    if (target && Number(viewProject?.id) !== id) setViewProject(target);
+  }, [projects, targetProjectId, viewProject?.id]);
 
   const handleDelete = async (id) => {
     const ok = await confirm({
@@ -213,7 +224,8 @@ export default function Projects() {
       {viewProject && (
         <ProjectDetail
           project={viewProject}
-          onClose={() => setViewProject(null)}
+          initialTab={targetTab}
+          onClose={() => { setViewProject(null); setSearchParams({}); }}
           onEdit={() => { setEditingProject(viewProject); setViewProject(null); }}
         />
       )}
@@ -345,10 +357,10 @@ function ProjectModal({ project, onClose, onSaved }) {
 }
 
 // ========== 工作区详情（全流程 + 大纲 + 任务历史 + 上下文预览） ==========
-function ProjectDetail({ project, onClose, onEdit }) {
+function ProjectDetail({ project, onClose, onEdit, initialTab = 'pipeline' }) {
   const toast = useToast();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('pipeline'); // 默认展示主流程步骤导航
+  const [tab, setTab] = useState(initialTab); // 支持从上一流程自动进入下一步
   const [tasks, setTasks] = useState([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [materials, setMaterials] = useState([]);
@@ -556,7 +568,10 @@ function ProjectDetail({ project, onClose, onEdit }) {
     try {
       await api.confirmOutline(project.id);
       setConfirmedAt(Math.floor(Date.now() / 1000));
-      toast.success('大纲已确认，可开始生成正文');
+      setTab('chapters');
+      toast.success('大纲已确认，正在进入正文生成');
+      if (!integrity.ensure(() => doGenerate())) return;
+      await doGenerate();
     } catch (err) {
       toast.error('确认失败：' + err.message);
     }

@@ -255,6 +255,18 @@ function formatReferences(references) {
   }).join('\n');
 }
 
+// 内置写作引擎不允许自行编造作者/期刊；在“已有研究/文献”这类概括性陈述处，
+// 仅按传入的检索白名单添加占位引用，后续统一由代码解析为真实条目。
+function addGroundedCitePlaceholders(content, references) {
+  if (!Array.isArray(references) || references.length === 0) return content;
+  let index = 0;
+  return String(content).replace(/已有(?:研究|文献)(?:表明|显示|指出|多采用)?/g, (phrase) => {
+    const cite = `[CITE:${(index % references.length) + 1}]`;
+    index += 1;
+    return `${phrase}${cite}`;
+  });
+}
+
 // 格式化真实 benchmark 数据（数据真实性约束的数据来源）
 function formatBenchmarks(benchmarks) {
   if (!Array.isArray(benchmarks) || benchmarks.length === 0) return '';
@@ -498,6 +510,7 @@ export async function runAI(tool, params, responseFormat = null) {
         content = '';
         break;
     }
+    if (tool === 'writing') content = addGroundedCitePlaceholders(content, params.references);
     return {
       content,
       model: model ? model : { id: null, name: '内置模板引擎', model_name: 'builtin' },

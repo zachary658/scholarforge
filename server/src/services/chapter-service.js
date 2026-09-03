@@ -9,6 +9,7 @@ import { now } from '../utils.js';
 import { claimOrderExecution } from './order-claim.js';
 import { transitionServiceToCompleted, transitionServiceToFailed } from './order-state.js';
 import logger from '../logger.js';
+import { replaceCitePlaceholders, filterVerifiedWritingReferences } from './paper-distillation.js';
 
 // 蒸馏产物注入：分章节生成消费工作区 sources（smart-writing 持久化的框架/文献/数据/表格）
 async function buildChapterAIParams(project, ch, context, userId, projectId) {
@@ -157,8 +158,11 @@ async function generateChapter(project, chapters, idx) {
   // 占位符替换：引用编号 + 数据图表由代码生成（与全文生成路径保持一致）
   // 注意：章节内只替换编号，不追加参考文献列表（参考文献在全文合并/导出时统一生成一次）
   try {
-    const { replaceCitePlaceholders, replaceChartPlaceholders } = await import('./paper-distillation.js');
+    const { replaceCitePlaceholders, replaceChartPlaceholders, ensureGroundedVisuals } = await import('./paper-distillation.js');
     const sources = project.sources || {};
+    content = ensureGroundedVisuals(content, {
+      benchmarks: sources.benchmarks || [], tables: sources.tables || [], references: sources.references || [],
+    }, ch.chapter);
     content = replaceChartPlaceholders(
       replaceCitePlaceholders(content, sources.references || null, { appendReferences: false }),
       sources.benchmarks || []
@@ -175,6 +179,10 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
   if (!project) throw new Error('工作区不存在');
   if (!project.outline_confirmed_at) throw new Error('请先确认大纲再生成正文');
   if ((project.outline || []).length === 0) throw new Error('大纲为空，请先生成并确认大纲');
+  const verifiedReferences = filterVerifiedWritingReferences(project.sources?.references || []);
+  if (verifiedReferences.length < 3) {
+    throw new Error('真实文献不足：请先完成深度文献调研，至少取得 3 篇可回查论文后再生成正文');
+  }
   // 章节数硬上限：与 buildChapters 一致，超限直接报错（防超长大纲生成成本失控）
   if ((project.outline || []).length > MAX_CHAPTERS) {
     throw new Error(`章节数超过上限（最多 ${MAX_CHAPTERS} 章，当前 ${project.outline.length} 章）`);
@@ -319,5 +327,6 @@ export function mergeChapters(userId, projectId) {
     const secText = (c.sections || []).map((s) => (s.title ? `### ${s.title}` : '')).filter(Boolean).join('\n');
     return `## ${c.chapter}\n${secText}\n\n（本章内容待生成）`;
   }).join('\n\n');
-  return { title: project.title, content: body, chapters };
+  const references = project.sources?.references || [];
+  return { title: project.title, content: replaceCitePlaceholders(body, references), chapters };
 }

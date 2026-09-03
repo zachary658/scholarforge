@@ -46,6 +46,7 @@ export function useTool() {
           7000
         );
       }
+      return data;
     } catch (err) {
       if (seq !== seqRef.current) return; // 已有更新的请求发出，丢弃旧响应
       setError(err.message || '调用失败');

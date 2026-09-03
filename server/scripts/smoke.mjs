@@ -45,6 +45,7 @@ token = r.data.token || '';
 r = await req('/api/tools/writing', { method: 'POST', body: { type: 'outline', topic: '深度学习在医学影像中的应用', field: '计算机科学' } });
 check('免费大纲生成', r.status === 200 && r.data.content && r.data.chargeType === 'unlimited', `chargeType=${r.data.chargeType}`);
 const hasOutline = !!(r.data && r.data.content);
+const outlineProjectId = r.data?.projectId;
 
 // 3. 创建全文订单 → mock 支付
 r = await req('/api/orders', { method: 'POST', body: { item_type: 'writing_fulltext', quantity: 1, payment_method: 'mock' } });
@@ -59,11 +60,9 @@ check('订单状态 paid', r.data.status === 'paid');
 r = await req('/api/orders', { method: 'POST', body: { item_type: 'writing_fulltext', quantity: 3, payment_method: 'mock' } });
 check('quantity>1 被拒绝', r.status === 400, r.data.error || '');
 
-// 5. 创建项目 + 确认大纲
-r = await req('/api/projects', { method: 'POST', body: { title: '深度学习在医学影像中的应用', field: '计算机科学' } });
-check('创建项目', r.status === 200 && r.data.project?.id, '');
-const projectId = r.data.project?.id;
-await req(`/api/projects/${projectId}`, { method: 'PUT', body: { outline: [{ chapter: '第一章 绪论', sections: [{ title: '1.1 背景' }] }, { chapter: '第二章 方法', sections: [{ title: '2.1 模型' }] }] } });
+// 5. 免费大纲会自动创建并关联工作区，同时保存真实检索来源；直接沿流程继续，不再新建孤立项目。
+const projectId = outlineProjectId;
+check('大纲自动关联工作区', Boolean(projectId), `projectId=${projectId}`);
 r = await req(`/api/projects/${projectId}/outline/confirm`, { method: 'POST' });
 check('确认大纲', r.status === 200, '');
 
@@ -99,13 +98,13 @@ check('同订单第二项目被拒（一单多论文已堵）', r.status === 400
 r = await req(`/api/projects/${projectId}/chapters/ch_1/regenerate`, { method: 'POST', body: { orderNo } });
 check('订单完成后单章重写可用（3次上限内）', r.status === 200 && r.data.chapter?.status === 'done', r.data.error || '');
 
-// 11. 未付费调用分章节生成 → 402 needOrder + amount
+// 11. 无真实来源的孤立项目必须先被文献门禁拦截，不能先收费再生成无依据正文
 r = await req('/api/projects', { method: 'POST', body: { title: '第三个项目', field: '计算机科学' } });
 const p3 = r.data.project?.id;
 await req(`/api/projects/${p3}`, { method: 'PUT', body: { outline: [{ chapter: '第一章', sections: [{ title: '1.1' }] }] } });
 await req(`/api/projects/${p3}/outline/confirm`, { method: 'POST' });
 r = await req(`/api/projects/${p3}/chapters/generate`, { method: 'POST', body: {} });
-check('无订单 → 402 needOrder+amount', r.status === 402 && r.data.needOrder === true && Number(r.data.amount) > 0, `amount=${r.data.amount}`);
+check('无真实文献不进入付费正文生成', r.status === 400 && /真实文献不足/.test(r.data.error || ''), r.data.error || '');
 
 // 12. smart-writing：真实结果才算成功；降级空模板必须明确失败且订单可重试
 r = await req('/api/orders', { method: 'POST', body: { item_type: 'literature_review', quantity: 1, payment_method: 'mock' } });

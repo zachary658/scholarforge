@@ -314,6 +314,20 @@ export async function collectWritingSources(topic, field, keywords = '', limit =
   return { papers, references, benchmarks, sources_used, errors };
 }
 
+// 只有来自受控学术数据源、且具备可回查入口的记录才能进入正文。
+// DOI 明确核验失败的记录必须剔除；没有 DOI 时仍须保留上游数据库详情页。
+export function isVerifiedWritingReference(ref) {
+  if (!ref?.title || ref.doi_verified === false) return false;
+  const source = String(ref.source_db || '').toLowerCase();
+  const trustedSource = ['openalex', 'semantic scholar', 'crossref', 'arxiv'].some((name) => source.includes(name));
+  const traceable = Boolean(ref.doi || /^https?:\/\//i.test(String(ref.source_url || '')));
+  return trustedSource && traceable;
+}
+
+export function filterVerifiedWritingReferences(references) {
+  return (Array.isArray(references) ? references : []).filter(isVerifiedWritingReference);
+}
+
 // ===== 主流程：智能写作（多视角检索 → 蒸馏 → 生成，借鉴 STORM 架构）=====
 // 与单轮 MapReduce 的区别：先拆分 3-5 个研究视角，分视角检索蒸馏，
 // 跨视角去重融合后生成大纲——覆盖维度更全，避免单查询检索偏差。
@@ -945,14 +959,18 @@ export function formatReferencesGB(references) {
 // 否则每一章结尾都会重复出现整份参考文献列表）
 export function replaceCitePlaceholders(content, references, { appendReferences = true } = {}) {
   if (!content) return content;
-  const hasRefs = Array.isArray(references) && references.length > 0;
-  let replaced = content.replace(/\[CITE:(\d+)\]/g, (_m, n) => {
+  const safeReferences = filterVerifiedWritingReferences(references);
+  const hasRefs = safeReferences.length > 0;
+  let replaced = String(content)
+    // 模型无权撰写文献元数据。删除它自行生成的文末列表，稍后由代码从白名单重建。
+    .replace(/\n#{0,3}\s*(?:(?:主要)?参考文献|References)\s*\n[\s\S]*$/i, '')
+    .replace(/\[CITE:(\d+)\]/g, (_m, n) => {
     const idx = parseInt(n, 10);
-    if (!hasRefs || idx < 1 || idx > references.length) return '';
+    if (!hasRefs || idx < 1 || idx > safeReferences.length) return '';
     return `[${idx}]`;
   });
-  if (appendReferences && hasRefs && !/参考文献|References/i.test(replaced)) {
-    replaced = `${replaced}\n\n## 参考文献\n\n${formatReferencesGB(references)}`;
+  if (appendReferences && hasRefs) {
+    replaced = `${replaced.trim()}\n\n## 参考文献\n\n${formatReferencesGB(safeReferences)}`;
   }
   return replaced;
 }
@@ -963,25 +981,28 @@ export function replaceCitePlaceholders(content, references, { appendReferences 
 // 仅在全文本/全文生成路径（appendReferences=true）需要调用；分章节场景仍用同步版。
 export async function replaceCitePlaceholdersCsl(content, references, { appendReferences = true } = {}) {
   if (!content) return content;
-  const hasRefs = Array.isArray(references) && references.length > 0;
+  const safeReferences = filterVerifiedWritingReferences(references);
+  const hasRefs = safeReferences.length > 0;
   // 占位符替换与同步版完全一致（纯字符串处理，无依赖）
-  let replaced = content.replace(/\[CITE:(\d+)\]/g, (_m, n) => {
+  let replaced = String(content)
+    .replace(/\n#{0,3}\s*(?:(?:主要)?参考文献|References)\s*\n[\s\S]*$/i, '')
+    .replace(/\[CITE:(\d+)\]/g, (_m, n) => {
     const idx = parseInt(n, 10);
-    if (!hasRefs || idx < 1 || idx > references.length) return '';
+    if (!hasRefs || idx < 1 || idx > safeReferences.length) return '';
     return `[${idx}]`;
   });
-  if (appendReferences && hasRefs && !/参考文献|References/i.test(replaced)) {
+  if (appendReferences && hasRefs) {
     let refText = '';
     try {
       const { formatReferencesGBWithCsl, isCslAvailable } = await import('./csl-formatter.js');
       if (isCslAvailable()) {
-        refText = await formatReferencesGBWithCsl(references);
+        refText = await formatReferencesGBWithCsl(safeReferences);
       }
     } catch (err) {
       // CSL 引擎失败：静默回退手写版
     }
-    if (!refText) refText = formatReferencesGB(references);
-    replaced = `${replaced}\n\n## 参考文献\n\n${refText}`;
+    if (!refText) refText = formatReferencesGB(safeReferences);
+    replaced = `${replaced.trim()}\n\n## 参考文献\n\n${refText}`;
   }
   return replaced;
 }
@@ -997,4 +1018,66 @@ export function replaceChartPlaceholders(content, benchmarks) {
     if (!config) return '（数据待补充）';
     return `\n\n\`\`\`vega\n${JSON.stringify(config)}\n\`\`\`\n`;
   });
+}
+
+// 实验/结果章节即使模型漏写占位符，也自动补入来自检索论文的真实指标图和提取表格。
+// 只调整标题与展示结构，不改写任何原始数值。
+export function ensureGroundedVisuals(content, { benchmarks = [], tables = [], references = [] } = {}, chapterName = '') {
+  let output = String(content || '')
+    // 内置演示引擎历史上会输出“示例数据，请替换”的回归表；这类数值没有证据，必须删除。
+    .replace(/[^\n]*示例数据[^\n]*\n(?:\s*\n)?(?:\|[^\n]*\|\n)+(?:\s*\n)?[^\n]*示例数据[^\n]*\n?/g, '');
+  if (!/实验|结果|分析|评估|对比|experiment|result/i.test(chapterName)) return output;
+  const existingVega = (output.match(/```vega\b/g) || []).length;
+  const labels = [...new Set((benchmarks || []).flatMap((b) => (b.metrics || []).map((m) => m.label)))];
+  for (const label of labels) {
+    if ((output.match(/```vega\b/g) || []).length >= Math.max(2, existingVega)) break;
+    const config = benchmarksToChartConfig(benchmarks, label);
+    if (!config || (config.data?.values?.length || 0) < 2) continue;
+    output += `\n\n### ${label}指标对比\n\n\`\`\`vega\n${JSON.stringify(config)}\n\`\`\`\n\n注：图中数值直接提取自所列真实论文，未由 AI 编造。`;
+  }
+  // OA 全文不可用时，不编造实验数值；改用检索记录自带的年份与引用次数生成可核查图表。
+  const safeRefs = filterVerifiedWritingReferences(references);
+  if ((output.match(/```vega\b/g) || []).length < 2 && safeRefs.length >= 3) {
+    const years = new Map();
+    for (const ref of safeRefs) {
+      const year = String(ref.year || '').match(/(?:19|20)\d{2}/)?.[0];
+      if (year) years.set(year, (years.get(year) || 0) + 1);
+    }
+    const metadataCharts = [];
+    if (years.size >= 2) metadataCharts.push({
+      title: '真实参考论文发表年份分布', mark: 'bar', data: { values: [...years].sort().map(([year, count]) => ({ year, count })) },
+      encoding: { x: { field: 'year', type: 'ordinal', title: '发表年份' }, y: { field: 'count', type: 'quantitative', title: '论文数量' } },
+    });
+    const cited = safeRefs.filter((ref) => Number.isFinite(Number(ref.cited_by_count))).slice(0, 8);
+    if (cited.length >= 2) metadataCharts.push({
+      title: '真实参考论文引用次数对比', mark: 'bar', data: { values: cited.map((ref) => ({ paper: String(ref.title).slice(0, 20), citations: Number(ref.cited_by_count) || 0 })) },
+      encoding: { x: { field: 'paper', type: 'nominal', title: '论文', axis: { labelAngle: -30 } }, y: { field: 'citations', type: 'quantitative', title: '引用次数' } },
+    });
+    for (const config of metadataCharts) {
+      if ((output.match(/```vega\b/g) || []).length >= 2) break;
+      output += `\n\n### ${config.title}\n\n\`\`\`vega\n${JSON.stringify(config)}\n\`\`\`\n\n注：图表仅使用学术数据库返回的真实元数据生成。`;
+    }
+  }
+  const existingTables = (output.match(/^\|.+\|$/gm) || []).length;
+  if (existingTables < 2) {
+    for (const [index, table] of (tables || []).slice(0, 2).entries()) {
+      const rows = (table.rows || []).filter((row) => Array.isArray(row) && row.length >= 2).slice(0, 10);
+      if (rows.length < 2) continue;
+      const width = Math.min(...rows.map((row) => row.length), 8);
+      const normalized = rows.map((row) => row.slice(0, width).map((cell) => String(cell ?? '').replace(/\|/g, '/')));
+      const header = normalized[0];
+      output += `\n\n### 借鉴论文数据表 ${index + 1}\n\n| ${header.join(' | ')} |\n| ${header.map(() => '---').join(' | ')} |\n`;
+      output += normalized.slice(1).map((row) => `| ${row.join(' | ')} |`).join('\n');
+      output += `\n\n数据引自：${table.source || '已核验论文'}${table.year ? `（${table.year}）` : ''}${table.source_url ? `，${table.source_url}` : ''}。`;
+    }
+    if ((output.match(/^\|.+\|$/gm) || []).length < 2 && safeRefs.length >= 3) {
+      output += '\n\n### 真实参考论文汇总\n\n| 论文题目 | 年份 | 来源 | DOI/回查入口 |\n| --- | --- | --- | --- |\n';
+      output += safeRefs.slice(0, 8).map((ref) => {
+        const locator = ref.doi ? `DOI: ${ref.doi}` : ref.source_url;
+        return `| ${String(ref.title).replace(/\|/g, '/')} | ${ref.year || ''} | ${ref.source_db || ''} | ${locator || ''} |`;
+      }).join('\n');
+      output += '\n\n数据来源：OpenAlex、Semantic Scholar、Crossref 或 arXiv 检索记录。';
+    }
+  }
+  return output;
 }
