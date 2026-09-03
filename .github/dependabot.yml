@@ -7,7 +7,13 @@ updates:
     open-pull-requests-limit: 10
     # 避免一次性大版本跃迁带来破坏性变更；安全更新仍会自动开 PR
     groups:
-      server-deps:
+      server-production-minor:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+      server-development-minor:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
         patterns: ["*"]
 
   - package-ecosystem: "npm"
@@ -16,7 +22,23 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
     groups:
-      client-deps:
+      client-production-minor:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+      client-development-minor:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+
+  - package-ecosystem: "pip"
+    directory: "/research-engine"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      research-engine-minor:
+        update-types: ["minor", "patch"]
         patterns: ["*"]
 
   - package-ecosystem: "github-actions"

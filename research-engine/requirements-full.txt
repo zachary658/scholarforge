@@ -2,8 +2,6 @@
 # 注意：paper-qa 会拉取较多传递依赖（langchain、pydantic 等）与模型，请评估部署环境。
 -r requirements.txt
 
-# PaperQA2 核心（Apache-2.0）
-paper-qa>=5.0.0
-
-# PDF 文本抽取（PaperQA2 索引 PDF 时需要）
-pymupdf>=1.24.0
+# PaperQA2 核心（Apache-2.0）+ PyPDF 解析后端（BSD-3-Clause）。
+# 不要改用 paper-qa[pymupdf] 或直接加入 pymupdf；商业部署需先完成 AGPL/商业授权评估。
+paper-qa[pypdf]>=5.0.0
