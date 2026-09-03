@@ -43,7 +43,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 # 2. 安装依赖（二选一）
 pip install -r requirements.txt          # 轻量降级模式（FastAPI + uvicorn）
-pip install -r requirements-full.txt     # 完整模式（额外包含 paper-qa、pymupdf 等）
+pip install -r requirements-full.txt     # 完整模式（PaperQA2 + BSD 许可的 PyPDF 后端）
 
 # 3. 配置环境变量（复制 .env.example 为 .env）
 cp .env.example .env
@@ -103,4 +103,6 @@ docker compose --profile research up --build
 
 ## 许可
 
-PaperQA2（`paper-qa`）为 Apache-2.0；本服务自身代码随 ScholarForge 仓库分发。
+PaperQA2（`paper-qa`）为 Apache-2.0；PDF 解析使用 `paper-qa-pypdf` / `pypdf`（BSD-3-Clause）。
+依赖策略明确禁止把 PyMuPDF 带入商业镜像；CI 会解析完整依赖树并阻止该包出现。
+如未来确需 PyMuPDF 的高保真能力，必须先取得适用的商业许可并经过法务确认。本服务自身代码随 ScholarForge 仓库分发。
