@@ -11,6 +11,7 @@ import {
 import {
   startChapterGeneration, regenerateChapter, editChapter, mergeChapters, isGenerating,
 } from '../services/chapter-service.js';
+import { confirmOutlineValidated } from '../services/workflow-service.js';
 import { generateDocx } from '../services/docx-generator.js';
 import { isQuartoConfigured, exportDocument } from '../services/quarto-exporter.js';
 import { checkTextLength, TEXT_MAX_SHORT, TEXT_MAX_LONG } from '../utils.js';
@@ -180,11 +181,17 @@ router.get('/:id/tasks', authRequired, (req, res) => {
 
 // ========== 阶段三：大纲确认 + 分章节生成 ==========
 
-// 确认大纲（全文生成前强制校验）
+// 确认大纲（全文生成前强制校验：拒绝开题报告式 / 非论文结构）
 router.post('/:id/outline/confirm', authRequired, (req, res) => {
-  const p = confirmOutline(parseInt(req.params.id, 10), req.user.id);
-  if (!p) return res.status(404).json({ error: '工作区不存在' });
-  res.json({ ok: true, project: p });
+  try {
+    const wf = confirmOutlineValidated(parseInt(req.params.id, 10), req.user.id);
+    res.json({ ok: true, workflow: wf });
+  } catch (err) {
+    if (err.code === 'OUTLINE_INVALID') {
+      return res.status(422).json({ error: err.message, code: err.code, details: err.details });
+    }
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // 获取章节草稿与生成状态

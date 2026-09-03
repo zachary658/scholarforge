@@ -25,6 +25,7 @@ const MyDocs = lazy(() => import('./pages/MyDocs.jsx'));
 const MyOrders = lazy(() => import('./pages/MyOrders.jsx'));
 const MyTasks = lazy(() => import('./pages/MyTasks.jsx'));
 const Projects = lazy(() => import('./pages/Projects.jsx'));
+const PaperWorkflow = lazy(() => import('./pages/PaperWorkflow.jsx'));
 const AiReduce = lazy(() => import('./pages/AiReduce.jsx'));
 const Defense = lazy(() => import('./pages/Defense.jsx'));
 const LiteratureReview = lazy(() => import('./pages/LiteratureReview.jsx'));
@@ -126,6 +127,7 @@ export default function App() {
         <Route path="charts" element={<Suspense fallback={<PageFallback />}><Charts /></Suspense>} />
         <Route path="templates" element={<Suspense fallback={<PageFallback />}><MyTemplates /></Suspense>} />
         <Route path="projects" element={<Suspense fallback={<PageFallback />}><Projects /></Suspense>} />
+        <Route path="paper-workflow" element={<Suspense fallback={<PageFallback />}><PaperWorkflow /></Suspense>} />
         <Route path="tasks" element={<Suspense fallback={<PageFallback />}><MyTasks /></Suspense>} />
         <Route path="courses" element={<Suspense fallback={<PageFallback />}><Courses /></Suspense>} />
         <Route path="courses/quote" element={<Suspense fallback={<PageFallback />}><CourseQuote /></Suspense>} />

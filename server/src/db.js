@@ -335,6 +335,19 @@ addColumnIfMissing('generated_docs', 'order_id', 'INTEGER');
 // 客服账号角色：is_support=1 可查看课程对接管理，无完整管理权限
 addColumnIfMissing('users', 'is_support', 'INTEGER NOT NULL DEFAULT 0');
 
+// ===== 完整论文工作流状态机字段（阶段三升级：生成完整论文流程）=====
+// workflow_mode: full(完整论文工作流) / tool(独立工具) / null(旧项目兼容)
+// workflow_state: setup/researching/outline_review/chapter_generating/chapter_review/final_review/completed
+// current_chapter_index: 当前正在生成/确认的章节下标
+// outline_version: 大纲版本号（每次修改+1，用于提示已生成章节可能受影响）
+// final_check_json: 全文一致性检查结果
+// 注：getProject 使用 SELECT *，新增列自动随项目返回，无需改查询语句。
+addColumnIfMissing('projects', 'workflow_mode', "TEXT");
+addColumnIfMissing('projects', 'workflow_state', "TEXT DEFAULT 'setup'");
+addColumnIfMissing('projects', 'current_chapter_index', 'INTEGER DEFAULT 0');
+addColumnIfMissing('projects', 'outline_version', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('projects', 'final_check_json', 'TEXT');
+
 // 课程定制价格字段：每个课程可覆盖全局报价规则，NULL=使用全局默认值
 addColumnIfMissing('courses', 'custom_base_word_count', 'INTEGER');
 addColumnIfMissing('courses', 'custom_word_price', 'REAL');

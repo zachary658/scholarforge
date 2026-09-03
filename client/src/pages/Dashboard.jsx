@@ -10,6 +10,7 @@ import {
 } from '../components/Icons.jsx';
 
 const tools = [
+  { to: '/app/paper-workflow', icon: Layers, title: '完整论文流程', desc: '一步步生成：文献→大纲→逐章→检查→输出', color: 'bg-accent-50 text-accent' },
   { to: '/app/writing', icon: Pen, title: 'AI 论文写作', desc: '大纲 / 段落 / 摘要 / 全文，支持深度文献调研', color: 'bg-accent-50 text-accent' },
   { to: '/app/proposal', icon: FileWord, title: '开题报告', desc: '填写研究要素，生成开题报告 Word', color: 'bg-violet-50 text-violet-600' },
   { to: '/app/literature-review', icon: Book, title: '文献综述', desc: '主题分类梳理，含文献引用', color: 'bg-indigo-50 text-indigo-600' },
@@ -67,10 +68,16 @@ export default function Dashboard() {
             资料、写作任务、文献与交付内容都集中在这里
           </p>
         </div>
-        <button onClick={() => navigate('/app/projects')} className="btn-primary">
-          <Layers className="h-4 w-4" />
-          我的论文
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => navigate('/app/paper-workflow')} className="btn-primary">
+            <Pen className="h-4 w-4" />
+            生成完整论文
+          </button>
+          <button onClick={() => navigate('/app/projects')} className="btn-ghost">
+            <Layers className="h-4 w-4" />
+            我的论文
+          </button>
+        </div>
       </div>
 
       {/* 继续最近论文 / 新建论文 */}

@@ -411,7 +411,7 @@ export function listProjects(userId) {
 }
 
 export function updateProject(projectId, userId, updates) {
-  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent'];
+  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent', 'workflow_mode', 'workflow_state', 'current_chapter_index', 'outline_version', 'final_check_json'];
   const sets = [];
   const params = [];
   let outlineChanged = false;

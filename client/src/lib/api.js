@@ -402,6 +402,19 @@ export const api = {
   editChapter: (id, chapterId, content) => request(`/projects/${id}/chapters/${chapterId}`, { method: 'PUT', body: { content } }),
   mergeChapters: (id, body = {}) => request(`/projects/${id}/chapters/merge`, { method: 'POST', body }),
 
+  // ===== 完整论文工作流（阶段三升级：状态机驱动的论文生产流程） =====
+  startFullPaperWorkflow: (id, meta) => request(`/workflow/${id}/start`, { method: 'POST', body: meta || {} }),
+  getWorkflowState: (id) => request(`/workflow/${id}/state`),
+  confirmLiterature: (id, references) => request(`/workflow/${id}/literature/confirm`, { method: 'POST', body: { references } }),
+  saveOutlineValidated: (id, payload) => request(`/workflow/${id}/outline`, { method: 'POST', body: payload }),
+  confirmOutlineValidated: (id) => request(`/workflow/${id}/outline/confirm`, { method: 'POST' }),
+  generateCurrentChapter: (id, orderNo) => request(`/workflow/${id}/chapters/current/generate`, { method: 'POST', body: orderNo ? { orderNo } : {} }),
+  confirmCurrentChapter: (id) => request(`/workflow/${id}/chapters/current/confirm`, { method: 'POST' }),
+  backToChapter: (id, index) => request(`/workflow/${id}/chapters/back`, { method: 'POST', body: { index } }),
+  runFinalCheck: (id) => request(`/workflow/${id}/final-check`, { method: 'POST' }),
+  generateFinalDocument: (id, payload) => request(`/workflow/${id}/final-document`, { method: 'POST', body: payload || {} }),
+  getExpertConsult: (id) => request(`/workflow/${id}/expert-consult`),
+
   // ===== 数据图表 =====
   uploadChart: (file) => upload('/charts/upload', file),
   renderChart: (payload) => request('/charts/render', { method: 'POST', body: payload }),

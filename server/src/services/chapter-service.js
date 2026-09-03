@@ -311,6 +311,52 @@ export function editChapter(userId, projectId, chapterId, content) {
   return { chapter: chapters[idx], chapters };
 }
 
+// 生成单个指定章节（工作流「一次只生成一章」：当前章确认后才允许下一章）
+// 复用 buildChapterAIParams / generateChapter 与订单校验、文献≥3 校验、并发锁
+export async function generateSingleChapter(userId, projectId, chapterIndex, orderNo) {
+  const project = getProject(projectId, userId);
+  if (!project) throw new Error('工作区不存在');
+  if (!project.outline_confirmed_at) throw new Error('请先确认大纲再生成正文');
+  const verifiedReferences = filterVerifiedWritingReferences(project.sources?.references || []);
+  if (verifiedReferences.length < 3) {
+    throw new Error('真实文献不足：请先完成深度文献调研，至少取得 3 篇可回查论文后再生成正文');
+  }
+  const bill = validateOrder(userId, orderNo, projectId);
+  if (!bill.ok) {
+    const err = new Error(bill.error);
+    err.needOrder = bill.needOrder;
+    err.itemType = bill.itemType;
+    throw err;
+  }
+  let chapters = getChapters(projectId);
+  if (chapters.length === 0) {
+    chapters = buildChapters(project.outline);
+    saveChapters(projectId, chapters);
+  }
+  if (!chapters[chapterIndex]) throw new Error('章节不存在');
+  if (chapters[chapterIndex].status === 'done') {
+    return { queued: false, alreadyDone: true, chapter: chapters[chapterIndex], chapters };
+  }
+  if (running.has(projectId)) {
+    return { queued: false, alreadyRunning: true, chapters: getChapters(projectId) };
+  }
+  if (!claimOrderExecution(bill.order, { projectId })) {
+    throw new Error('该订单正在生成中或服务已结束，请勿重复提交');
+  }
+  running.add(projectId);
+  try {
+    chapters[chapterIndex] = { ...chapters[chapterIndex], status: 'processing' };
+    saveChapters(projectId, chapters, bill.order.id);
+    const content = await generateChapter(project, chapters, chapterIndex);
+    const cur = getChapters(projectId);
+    cur[chapterIndex] = { ...cur[chapterIndex], content, status: 'done' };
+    saveChapters(projectId, cur, bill.order.id);
+    return { queued: true, chapter: cur[chapterIndex], chapters: cur };
+  } finally {
+    running.delete(projectId);
+  }
+}
+
 // 合并全部章节为全文（含标题 + 章节标题），供导出 Word
 export function mergeChapters(userId, projectId) {
   const project = getProject(projectId, userId);
