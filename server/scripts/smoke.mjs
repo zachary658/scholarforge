@@ -107,15 +107,19 @@ await req(`/api/projects/${p3}/outline/confirm`, { method: 'POST' });
 r = await req(`/api/projects/${p3}/chapters/generate`, { method: 'POST', body: {} });
 check('无订单 → 402 needOrder+amount', r.status === 402 && r.data.needOrder === true && Number(r.data.amount) > 0, `amount=${r.data.amount}`);
 
-// 12. smart-writing 用 literature_review 订单（内置模板降级模式）
+// 12. smart-writing：真实结果才算成功；降级空模板必须明确失败且订单可重试
 r = await req('/api/orders', { method: 'POST', body: { item_type: 'literature_review', quantity: 1, payment_method: 'mock' } });
 const lrOrderNo = r.data.order?.order_no;
 await req(`/api/payment/mock/${lrOrderNo}`, { method: 'POST' });
 r = await req('/api/tools/smart-writing', { method: 'POST', body: { topic: '深度学习医学影像', field: '计算机科学', projectId: projectId, orderNo: lrOrderNo } });
-check('smart-writing 成功（可能降级）', r.status === 200 && r.data.outline, `degraded=${r.data.degraded}`);
-// 蒸馏产物应持久化到项目
-r = await req(`/api/projects/${projectId}`);
-const savedSources = r.data.project?.sources;
-check('蒸馏产物持久化到工作区', !!(savedSources && (savedSources.framework || savedSources.saved_at)), JSON.stringify(Object.keys(savedSources || {})));
+const researchSucceeded = r.status === 200 && r.data.ok === true;
+const researchFailedCleanly = r.status === 200 && r.data.failed === true && r.data.retriable === true;
+check('smart-writing 真实交付或明确失败', researchSucceeded || researchFailedCleanly, JSON.stringify(r.data).slice(0, 180));
+if (researchSucceeded) {
+  check('smart-writing 交付满足最低文献数', (r.data.references || []).filter((x) => x.doi || x.source_url).length >= 3);
+} else {
+  r = await req(`/api/payment/order/${lrOrderNo}/status`);
+  check('降级失败不标记订单完成且可重试', r.data.status === 'paid' && r.data.service_status === 'failed', JSON.stringify(r.data));
+}
 
 console.log('\n=== 冒烟测试结束 ===');

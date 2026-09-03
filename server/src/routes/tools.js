@@ -18,6 +18,7 @@ import { checkContent } from '../services/content-safety.js';
 import { claimOrderExecution } from '../services/order-claim.js';
 import { transitionServiceToFailed, transitionServiceToCompleted } from '../services/order-state.js';
 import db from '../db.js';
+import { assessResearchDelivery } from '../services/research-quality.js';
 
 const router = Router();
 
@@ -684,16 +685,10 @@ router.post('/smart-writing', authRequired, async (req, res) => {
   }
   const order = bill.order || null;
 
-  // 未指定工作区时按题目自动创建/复用自动工作区：蒸馏产物自动归档，防止丢失
+  // 未指定工作区时先完成检索与质量校验；成功后再创建工作区，避免故障产生空项目。
   let autoProject = false;
   let projectReused = false;
   let effectiveProjectId = projectId;
-  if (!effectiveProjectId) {
-    const resolved = resolveAutoProject(req.user.id, String(topic).trim().slice(0, 100));
-    effectiveProjectId = resolved.id;
-    projectReused = resolved.reused;
-    autoProject = true;
-  }
 
   // 原子抢占：防同一订单并发重复执行（检索+蒸馏耗时数十秒）
   if (order && !claimOrderExecution(order)) {
@@ -711,18 +706,12 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         });
 
     // ===== 付费任务质量门禁 =====
-    // 当核心框架（方法/创新点/结论）与参考文献全部为空时，说明是「文献源全部失败」触发的通用模板降级，
-    // 绝不能标记为「已完成」，否则已付费用户会误以为拿到了有效结果、进而丧失信任。
+    // 真实可溯源文献数量和框架完整度必须同时达到最低标准；不足时不能作为付费交付。
     // 门禁放在持久化之前：失败时不得向工作区写入空框架/模板大纲，避免污染用户工作区。
     const framework = result.framework || {};
-    const hasCoreContent = Boolean(
-      (framework.methods && framework.methods.length) ||
-      (framework.innovations && framework.innovations.length) ||
-      (framework.conclusions && framework.conclusions.length)
-    );
-    const hasReferences = Boolean(result.references && result.references.length);
-    if (!hasCoreContent && !hasReferences) {
-      const emptyTaskId = saveTask({
+    const quality = assessResearchDelivery(result);
+    if (!quality.ok) {
+      saveTask({
         userId: req.user.id,
         projectId: effectiveProjectId,
         toolType: 'smart-writing',
@@ -731,7 +720,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         inputText: `题目：${topic} | 学科：${field} | 关键词：${keywords || ''}`,
         outputText: '',
         params: { topic, field, keywords, sources_used: framework.sources_used || [], search_errors: framework.search_errors || [] },
-        contextSummary: '文献源检索失败，未能提取研究框架',
+        contextSummary: `深度调研未通过质量门禁：${quality.reasons.join('；')}`,
         modelName: 'multi-source',
         tokens: 0,
         chargeType: order ? 'paid' : 'unlimited',
@@ -741,7 +730,7 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         errorCode: 'ai_unavailable',
       });
       if (order) {
-        transitionServiceToFailed(order.id, { reason: '文献源检索失败，未能提取研究框架，本次未标记完成' });
+        transitionServiceToFailed(order.id, { reason: `深度调研未通过质量门禁：${quality.reasons.join('；')}` });
       }
       return res.json({
         ok: false,
@@ -760,8 +749,15 @@ router.post('/smart-writing', authRequired, async (req, res) => {
         chargeType: order ? 'paid' : 'unlimited',
         amount: order ? order.amount : 0,
         orderNo: order?.order_no || null,
-        message: '文献源暂时不可用，未能检索到相关文献并提取研究框架。本次生成未标记完成、可稍后重试（不额外扣费）；若多次失败请联系客服。',
+        message: `深度调研未达到交付标准（${quality.reasons.join('；')}）。本次生成未标记完成、可稍后重试（不额外扣费）；若多次失败请联系客服。`,
       });
+    }
+
+    if (!effectiveProjectId) {
+      const resolved = resolveAutoProject(req.user.id, String(topic).trim().slice(0, 100));
+      effectiveProjectId = resolved.id;
+      projectReused = resolved.reused;
+      autoProject = true;
     }
 
     // 蒸馏产物持久化到工作区：分章节生成/全文生成统一消费（框架/文献/数据/表格）

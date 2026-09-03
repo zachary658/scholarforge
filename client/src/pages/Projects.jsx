@@ -408,7 +408,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
   // 每一步只按成功产物判定完成；大纲必须由用户确认后才能进入下一阶段。
   const stageStatus = (stage, i) => {
     const dataDone = {
-      create: true,
+      create: Boolean(project.title && project.field && project.degree && project.deadline),
       materials: materials.length > 0,
       outline: Boolean(confirmedAt),
       literature: successfulTask((task) => task.tool_type === 'literature_review'),

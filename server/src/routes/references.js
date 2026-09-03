@@ -8,6 +8,7 @@ import logger from '../logger.js';
 import { replaceEvidenceSource, removeEvidenceSource } from '../services/evidence-engine.js';
 import { searchMultiSource } from '../services/multi-source-search.js';
 import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
+import { classifyReferenceSearch, shouldCacheReferenceSearch } from '../services/research-quality.js';
 
 const router = Router();
 
@@ -68,17 +69,7 @@ router.get('/search', authRequired, async (req, res) => {
     }));
     const sources_used = search.sources_used || [];
     const warnings = search.errors || [];
-    // 检索健康状态：区分「服务不可用 / 真零结果 / 部分来源失败 / 正常」，避免把故障伪装成"没有结果"
-    let health;
-    if (sources_used.length === 0 && warnings.length > 0) {
-      health = 'unavailable'; // 全部来源失败或熔断，服务不可用
-    } else if (results.length === 0) {
-      health = 'empty'; // 来源可用但确实无匹配文献
-    } else if (warnings.length > 0) {
-      health = 'partial'; // 有结果，但部分来源失败，覆盖不完整
-    } else {
-      health = 'ok';
-    }
+    const health = classifyReferenceSearch({ results, sources_used, errors: warnings });
     const payload = {
       results,
       total: results.length,
@@ -87,10 +78,13 @@ router.get('/search', authRequired, async (req, res) => {
       health,
       note: '结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
-    searchCache.set(cacheKey, { data: payload, at: Date.now() });
-    if (searchCache.size > 200) {
-      const firstKey = searchCache.keys().next().value;
-      searchCache.delete(firstKey);
+    // 故障与部分覆盖结果不进入 24 小时缓存，避免外部来源恢复后用户仍看到旧状态。
+    if (shouldCacheReferenceSearch(health)) {
+      searchCache.set(cacheKey, { data: payload, at: Date.now() });
+      if (searchCache.size > 200) {
+        const firstKey = searchCache.keys().next().value;
+        searchCache.delete(firstKey);
+      }
     }
     // 记录本次检索（供每用户每小时限流计数）
     logUsage({
