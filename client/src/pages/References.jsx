@@ -44,6 +44,9 @@ export default function References() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searched, setSearched] = useState(false);
+  // 检索健康状态：ok / empty（真零结果）/ unavailable（服务不可用）/ partial（部分来源失败）
+  const [searchHealth, setSearchHealth] = useState(null);
+  const [searchWarnings, setSearchWarnings] = useState([]);
   const [refs, setRefs] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [searchSelected, setSearchSelected] = useState(new Set());
@@ -98,11 +101,15 @@ export default function References() {
       const data = await api.searchRefs(query);
       if (seq !== searchSeqRef.current) return; // 已有更新的检索发出，丢弃旧响应
       setResults(data.results || []);
+      setSearchHealth(data.health || 'ok');
+      setSearchWarnings(data.warnings || []);
       setSearched(true);
     } catch (err) {
       if (seq !== searchSeqRef.current) return; // 已有更新的检索发出，丢弃旧响应
       // 检索失败时给用户明确提示，而不是静默显示空结果
       setResults([]);
+      setSearchHealth('unavailable');
+      setSearchWarnings([]);
       setSearched(true);
       toast.error(err && err.message ? `文献检索失败：${err.message}` : '文献检索失败，请稍后重试');
     } finally {
@@ -231,7 +238,7 @@ export default function References() {
           <div className="flex-1 text-sm">
             <p className="font-semibold text-emerald-700">真实文献 · 可溯源 · 不编造</p>
             <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
-              当前检索结果来自 OpenAlex 聚合学术数据库，
+              当前检索结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，
               每条文献都附带<span className="font-medium text-emerald-700">原文链接</span>可一键溯源核验，杜绝 AI 编造文献。
               {refs.length > 0 && (
                 <span className="ml-1">当前文献库：<span className="font-medium text-emerald-700">{realCount} 篇真实可溯源</span> / 共 {refs.length} 篇</span>
@@ -283,8 +290,20 @@ export default function References() {
             </button>
           )}
           <div className="mt-3 space-y-2">
-            {results.length === 0 && searched && (
-              <p className="py-6 text-center text-sm text-slate-400">未找到相关文献</p>
+            {/* 部分来源失败：展示结果，但提示来源覆盖不完整 */}
+            {searched && results.length > 0 && searchHealth === 'partial' && (
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                部分文献源暂时不可用，当前结果可能覆盖不完整（{searchWarnings.length} 个来源未返回），可稍后重试获取更完整结果。
+              </div>
+            )}
+            {searched && results.length === 0 && searchHealth === 'unavailable' && (
+              <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-6 text-center">
+                <p className="text-sm font-medium text-red-700">文献源暂时不可用</p>
+                <p className="mt-1 text-xs text-red-500">学术数据库连接失败，请稍后重试</p>
+              </div>
+            )}
+            {searched && results.length === 0 && searchHealth !== 'unavailable' && (
+              <p className="py-6 text-center text-sm text-slate-400">没有匹配的文献，请尝试更换关键词</p>
             )}
             {results.map((r, i) => {
               const tag = sourceTag(r);

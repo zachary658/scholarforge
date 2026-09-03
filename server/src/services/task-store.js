@@ -331,16 +331,24 @@ export function syncProjectStage(userId, projectId) {
 // 未显式指定工作区的 AI 生成内容按题目自动归档，防止内容散落丢失。
 // 同题目重复生成复用同一工作区（按 用户+标题 匹配），不同题目各自建区。
 export function ensureAutoProject(userId, title) {
+  return resolveAutoProject(userId, title).id;
+}
+
+// 复用/创建自动工作区（返回更多元信息）：优先复用同名活动工作区（手动项目优先，其次自动项目），
+// 避免「用户已手动建同名项目，AI 又自动建一个重复项目」的问题。
+export function resolveAutoProject(userId, title) {
   const t = String(title || '').trim().slice(0, 100) || '未命名工作区';
   const existing = db.prepare(
-    "SELECT id FROM projects WHERE user_id = ? AND status = 'active' AND auto_created = 1 AND title = ? ORDER BY id LIMIT 1"
+    "SELECT id, auto_created FROM projects WHERE user_id = ? AND status = 'active' AND title = ? ORDER BY auto_created ASC, id ASC LIMIT 1"
   ).get(userId, t);
-  if (existing) return existing.id;
+  if (existing) {
+    return { id: existing.id, reused: true, title: t, auto_created: existing.auto_created };
+  }
   const info = db.prepare(
     `INSERT INTO projects (user_id, title, field, description, writing_requirements, outline_json, auto_created)
      VALUES (?, ?, '', ?, '', '[]', 1)`
   ).run(userId, t, `系统自动创建：自动保存「${t}」相关的 AI 生成内容，方便随时回看`);
-  return info.lastInsertRowid;
+  return { id: info.lastInsertRowid, reused: false, title: t, auto_created: 1 };
 }
 
 export function createProject({

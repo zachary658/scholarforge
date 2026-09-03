@@ -28,14 +28,14 @@ export default function Writing() {
   const tool = useTool();
   const integrity = useAcademicIntegrity(); // 全文生成前强制签署学术诚信承诺书
 
-  const [form, setForm] = useState({ type: 'outline', topic: '', field: '计算机科学', template_id: '' });
+  const [form, setForm] = useState({ type: 'outline', topic: '', field: '', template_id: '' });
   const [templates, setTemplates] = useState([]);
   const [copied, setCopied] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const [linkedProject, setLinkedProject] = useState(null);
   const copyTimerRef = useRef(null);
   // 深度文献调研（大纲生成后的付费升级）：多角度检索 → 解析研究框架/文献/数据
-  const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null });
+  const [distill, setDistill] = useState({ loading: false, error: '', result: null, needOrder: null, retryOrderNo: null });
   // 深度调研请求序号：换题/重新发起后使在途旧请求的响应过期，防止旧结果错挂到新题（竞态防护）
   const distillSeqRef = useRef(0);
   // 参考材料：上传解读（docx/pdf/txt）→ 勾选参与生成（材料解读 token 计入订单费用）
@@ -90,7 +90,7 @@ export default function Writing() {
   // 换题后清空旧调研结果：防止旧题的蒸馏产物错位挂在新题大纲下，且「开始深度调研」按钮被旧结果挡住无法发起新调研
   useEffect(() => {
     distillSeqRef.current += 1; // 使在途旧请求的响应序号过期，落地后直接丢弃
-    setDistill({ loading: false, error: '', result: null, needOrder: null });
+    setDistill({ loading: false, error: '', result: null, needOrder: null, retryOrderNo: null });
   }, [form.topic]);
 
   // 从工作区「全流程」跳转进来时，读取 projectId 与 type，预选写作类型并关联工作区上下文
@@ -136,6 +136,10 @@ export default function Writing() {
       tool.setError('请填写论文题目');
       return;
     }
+    if (!form.field) {
+      tool.setError('请选择学科领域');
+      return;
+    }
     // 全文生成强制承诺书门禁（与后端 403 needAcademicIntegrity 校验一致）：
     // 未同意时弹出承诺书，同意后自动重新执行本次生成
     if (form.type === 'fulltext' && !integrity.ensure(() => run(orderNo))) {
@@ -162,30 +166,47 @@ export default function Writing() {
   // 请求序号防竞态：响应落地前发现序号已过期（期间已换题/重新发起）则丢弃，防止旧结果覆盖新状态
   const runDistill = async (orderNo) => {
     if (!form.topic.trim()) return;
+    if (!form.field) {
+      setDistill((d) => ({ ...d, error: '请选择学科领域' }));
+      return;
+    }
     const seq = ++distillSeqRef.current;
-    setDistill({ loading: true, error: '', result: null, needOrder: null });
+    // 复用上次失败订单号：文献源失败后重试不额外扣费（订单服务状态仍为 failed 可重试）
+    const effectiveOrderNo = orderNo || distill.retryOrderNo;
+    setDistill({ loading: true, error: '', result: null, needOrder: null, retryOrderNo: effectiveOrderNo });
     try {
       const data = await api.smartWriting({
         topic: form.topic.trim(),
         field: form.field,
         projectId: projectId || undefined,
-        orderNo: orderNo || undefined,
+        orderNo: effectiveOrderNo || undefined,
       });
       if (seq !== distillSeqRef.current) return;
       if (data.needOrder) {
-        setDistill({ loading: false, error: '', result: null, needOrder: { itemType: data.itemType, amount: data.amount } });
+        setDistill({ loading: false, error: '', result: null, needOrder: { itemType: data.itemType, amount: data.amount }, retryOrderNo: null });
+      } else if (data.failed) {
+        // 质量门禁：文献源失败导致核心内容为空，任务未标记完成，提示可重试
+        setDistill({
+          loading: false,
+          error: data.message || '文献源暂时不可用，未能提取研究框架，请稍后重试',
+          result: null,
+          needOrder: null,
+          retryOrderNo: effectiveOrderNo || null,
+        });
       } else {
-        setDistill({ loading: false, error: '', result: data, needOrder: null });
+        setDistill({ loading: false, error: '', result: data, needOrder: null, retryOrderNo: null });
         if (data.autoProject) {
           toast.success(
-            `深度调研结果已自动保存到论文工作区「${data.autoProjectTitle || '我的论文工作区'}」；内容保留 ${data.retention_days || 30} 天，请及时下载 Word 保存`,
+            data.projectReused
+              ? `深度调研结果已保存到已有论文工作区「${data.autoProjectTitle || '我的论文工作区'}」；内容保留 ${data.retention_days || 30} 天，请及时下载 Word 保存`
+              : `深度调研结果已自动保存到论文工作区「${data.autoProjectTitle || '我的论文工作区'}」；内容保留 ${data.retention_days || 30} 天，请及时下载 Word 保存`,
             7000
           );
         }
       }
     } catch (err) {
       if (seq !== distillSeqRef.current) return;
-      setDistill({ loading: false, error: err.message || '深度调研失败', result: null, needOrder: null });
+      setDistill({ loading: false, error: err.message || '深度调研失败', result: null, needOrder: null, retryOrderNo: effectiveOrderNo || null });
     }
   };
 
@@ -249,6 +270,7 @@ export default function Writing() {
             <div>
               <label className="label">学科领域</label>
               <select className="input" value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}>
+                <option value="" disabled>请选择学科领域</option>
                 {FIELDS.map((f) => (
                   <option key={f} value={f}>{f}</option>
                 ))}

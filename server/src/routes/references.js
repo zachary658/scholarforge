@@ -42,7 +42,7 @@ router.get('/search', authRequired, async (req, res) => {
     return res.json({
       results: [],
       total: 0,
-      note: '检索结果来自公开学术数据库，并优先展示可溯源记录',
+      note: '检索结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等公开学术数据库，并优先展示可溯源记录',
     });
   }
 
@@ -66,12 +66,26 @@ router.get('/search', authRequired, async (req, res) => {
       ref_type: work.ref_type || 'journal',
       publisher: work.publisher || '',
     }));
+    const sources_used = search.sources_used || [];
+    const warnings = search.errors || [];
+    // 检索健康状态：区分「服务不可用 / 真零结果 / 部分来源失败 / 正常」，避免把故障伪装成"没有结果"
+    let health;
+    if (sources_used.length === 0 && warnings.length > 0) {
+      health = 'unavailable'; // 全部来源失败或熔断，服务不可用
+    } else if (results.length === 0) {
+      health = 'empty'; // 来源可用但确实无匹配文献
+    } else if (warnings.length > 0) {
+      health = 'partial'; // 有结果，但部分来源失败，覆盖不完整
+    } else {
+      health = 'ok';
+    }
     const payload = {
       results,
       total: results.length,
-      sources_used: search.sources_used || [],
-      warnings: search.errors || [],
-      note: '结果来自多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
+      sources_used,
+      warnings,
+      health,
+      note: '结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
     searchCache.set(cacheKey, { data: payload, at: Date.now() });
     if (searchCache.size > 200) {
@@ -98,6 +112,9 @@ router.get('/search', authRequired, async (req, res) => {
       error: '无法连接学术文献检索服务，请稍后重试',
       results: [],
       total: 0,
+      sources_used: [],
+      warnings: [],
+      health: 'unavailable',
     });
   }
 });

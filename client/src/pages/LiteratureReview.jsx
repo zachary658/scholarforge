@@ -10,10 +10,10 @@ export default function LiteratureReview() {
         subtitle: '按主题分类梳理，生成结构化文献综述并导出 Word',
         submitLabel: '生成文献综述',
         apiCall: (payload) => api.literatureReview(payload),
-        validate: (form) => (!form.topic.trim() ? '请填写研究主题' : null),
+        validate: (form) => (!form.topic.trim() ? '请填写研究主题' : !form.field ? '请选择学科领域' : null),
         fields: [
           { key: 'topic', label: '研究主题', type: 'textarea', required: true, placeholder: '例如：深度学习在医学影像分割中的应用' },
-          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
+          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '', placeholder: '请选择学科领域', options: FIELDS },
           { key: 'keywords', label: '关键词', type: 'text', placeholder: '多个关键词用逗号分隔' },
         ],
         advancedLabel: '更多选项（可选）',

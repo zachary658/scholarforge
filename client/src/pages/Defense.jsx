@@ -16,10 +16,10 @@ export default function Defense() {
         subtitle: '生成答辩PPT大纲与配套演讲稿，10-15分钟答辩全覆盖',
         submitLabel: '生成答辩材料',
         apiCall: (payload) => api.defense(payload),
-        validate: (form) => (!form.topic.trim() ? '请填写论文题目' : null),
+        validate: (form) => (!form.topic.trim() ? '请填写论文题目' : !form.field ? '请选择学科领域' : null),
         fields: [
           { key: 'topic', label: '论文题目', type: 'textarea', required: true, placeholder: '例如：基于深度学习的医学影像分割方法研究' },
-          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
+          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '', placeholder: '请选择学科领域', options: FIELDS },
           { key: 'research_content', label: '研究内容摘要', type: 'textarea', placeholder: '简要描述研究的主要内容与结论' },
         ],
         advancedLabel: '更多选项（可选）',

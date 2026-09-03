@@ -10,10 +10,10 @@ export default function Proposal() {
         subtitle: '填写研究要素，生成结构完整的开题报告并导出 Word',
         submitLabel: '生成开题报告',
         apiCall: (payload) => api.proposal(payload),
-        validate: (form) => (!form.topic.trim() ? '请填写论文题目' : null),
+        validate: (form) => (!form.topic.trim() ? '请填写论文题目' : !form.field ? '请选择学科领域' : null),
         fields: [
           { key: 'topic', label: '论文题目', type: 'textarea', required: true, placeholder: '例如：基于深度学习的医学影像分割方法研究' },
-          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '计算机科学', options: FIELDS },
+          { key: 'field', label: '学科领域', type: 'select', required: true, defaultValue: '', placeholder: '请选择学科领域', options: FIELDS },
           { key: 'direction', label: '研究方向', type: 'text', placeholder: '例如：计算机视觉 / 自然语言处理' },
           { key: 'keywords', label: '关键词', type: 'text', placeholder: '多个关键词用逗号分隔' },
         ],

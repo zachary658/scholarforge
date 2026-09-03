@@ -20,6 +20,9 @@ function renderField(field, value, onChange) {
   if (field.type === 'select') {
     return (
       <select className="input" value={value ?? ''} onChange={(e) => onChange(field.key, e.target.value)}>
+        {field.placeholder && (
+          <option value="" disabled>{field.placeholder}</option>
+        )}
         {(field.options || []).map((o) => {
           const optValue = typeof o === 'string' ? o : o.value;
           const optLabel = typeof o === 'string' ? o : o.label;
