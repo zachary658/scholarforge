@@ -1,5 +1,5 @@
 {
-  "_comment": "允许列表：以下 high/critical 漏洞为已知且无可用补丁，评估后放行。任何未列出的 high/critical 漏洞将导致 CI 失败。image-size 经 pptxgenjs 传递依赖引入，上游 advisory 均无 Patched 版本（GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr），仅在 PPTX 导出路径触发，攻击面有限。",
+  "_comment": "允许列表：以下 high/critical 漏洞为已知且无可用补丁，评估后放行。任何未列出的 high/critical 漏洞将导致 CI 失败。image-size 经 pptxgenjs 传递依赖引入（ICNS/JXL/HEIF 解析无限循环 DoS，GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr）。两点已核实：(1) 上游无已发布修复版本——npm 最新 image-size 2.0.2 仍在漏洞范围 <=2.0.2 内，无法用 overrides 锁定到已修复版本；(2) 漏洞路径不可达——server/src/services/pptx-generator.js 从未调用 pptxgenjs 的 addImage（仅 addText/addShape/addNotes），故 image-size 解析器不会被触发。若未来 PPT 生成加入图片支持，须先对用户上传图片做尺寸/解码超时校验。",
   "advisories": [
     "GHSA-5p2g-fcmc-qvqq",
     "GHSA-w3rx-r6r6-pgpr"
