@@ -321,6 +321,7 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
   if (verifiedReferences.length < 3) {
     throw new Error('真实文献不足：请先完成深度文献调研，至少取得 3 篇可回查论文后再生成正文');
   }
+  // 订单号由工作流层从项目持久化权益中补齐；这里仍保留严格的订单/项目归属校验。
   const bill = validateOrder(userId, orderNo, projectId);
   if (!bill.ok) {
     const err = new Error(bill.error);
@@ -340,7 +341,10 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
   if (running.has(projectId)) {
     return { queued: false, alreadyRunning: true, chapters: getChapters(projectId) };
   }
-  if (!claimOrderExecution(bill.order, { projectId })) {
+  // 首章抢占订单执行权；同一项目后续章节复用已绑定且仍 processing 的套餐订单。
+  // 不能对每章再次 claim，否则订单状态机会把第二章错误判为重复执行。
+  const alreadyBoundToProject = bill.order.project_id === projectId && bill.order.service_status === 'processing';
+  if (!alreadyBoundToProject && !claimOrderExecution(bill.order, { projectId })) {
     throw new Error('该订单正在生成中或服务已结束，请勿重复提交');
   }
   running.add(projectId);

@@ -10,6 +10,7 @@ import { generateDocx } from './docx-generator.js';
 import { isQuartoConfigured, exportDocument } from './quarto-exporter.js';
 import { now } from '../utils.js';
 import logger from '../logger.js';
+import { transitionServiceToCompleted } from './order-state.js';
 
 export const WORKFLOW_STATES = [
   'setup', 'researching', 'outline_review', 'chapter_generating', 'chapter_review', 'final_review', 'completed',
@@ -51,6 +52,7 @@ export function getWorkflowState(projectId, userId) {
     mode: p.workflow_mode || 'tool',
     state: p.workflow_state || 'setup',
     currentChapterIndex: p.current_chapter_index || 0,
+    orderNo: p.workflow_order_no || null,
     outlineVersion: p.outline_version || 0,
     outlineConfirmedAt: p.outline_confirmed_at || null,
     finalCheck: safeParse(p.final_check_json),
@@ -157,7 +159,13 @@ export async function generateCurrentChapter(userId, projectId, orderNo) {
     throw new Error('当前状态不允许生成章节（需在 chapter_generating/chapter_review）');
   }
   const idx = wf.currentChapterIndex;
-  const r = await generateSingleChapter(userId, projectId, idx, orderNo);
+  // 支付成功后的项目订单号持久化在项目中；后续章节/刷新后不再要求用户重复支付。
+  const effectiveOrderNo = orderNo || wf.orderNo || null;
+  const r = await generateSingleChapter(userId, projectId, idx, effectiveOrderNo);
+  if (effectiveOrderNo && !wf.orderNo) {
+    db.prepare('UPDATE projects SET workflow_order_no = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(effectiveOrderNo, now(), projectId, userId);
+  }
   const chapters = getChapters(projectId);
   if (chapters[idx] && chapters[idx].status === 'done') {
     setState(projectId, userId, 'chapter_review');
@@ -294,6 +302,12 @@ export function runFinalCheck(projectId, userId) {
 
 // 生成最终文档（复用 chapters 合并 + docx 生成）
 export async function generateFinalDocument(projectId, userId, { template_id, format } = {}) {
+  const wf = getWorkflowState(projectId, userId);
+  if (!wf || wf.state !== 'final_review') throw new Error('当前尚未完成逐章确认，不能生成最终文档');
+  const existingCheck = wf.finalCheck;
+  if (!existingCheck || existingCheck.passed !== true) {
+    throw new Error('请先运行全文一致性检查，并修复所有失败项后再输出最终文档');
+  }
   const merged = mergeChapters(userId, projectId);
   let template = null;
   if (template_id) {
@@ -320,6 +334,12 @@ export async function generateFinalDocument(projectId, userId, { template_id, fo
       projectId,
       template,
     });
+  }
+  // 项目套餐在最终文档成功生成后才结束；逐章阶段保持 processing 以便复用权益。
+  const finalOrderNo = wf.orderNo;
+  if (finalOrderNo) {
+    const finalOrder = db.prepare('SELECT id FROM orders WHERE order_no = ? AND user_id = ?').get(finalOrderNo, userId);
+    if (finalOrder) transitionServiceToCompleted(finalOrder.id, { reason: '完整论文最终文档交付' });
   }
   // 处于「全文检查」阶段时，导出即视为交付完成，推进到 completed
   let workflow = getWorkflowState(projectId, userId);

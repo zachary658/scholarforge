@@ -113,7 +113,7 @@ router.post('/:id/final-check', authRequired, (req, res) => {
 // 生成最终文档（Word / 可选 Quarto 格式）
 router.post('/:id/final-document', authRequired, async (req, res) => {
   try {
-    const doc = await generateFinalDocument(req.user.id, parseInt(req.params.id, 10), req.body || {});
+    const doc = await generateFinalDocument(parseInt(req.params.id, 10), req.user.id, req.body || {});
     res.json(doc);
   } catch (err) {
     res.status(400).json({ error: err.message });

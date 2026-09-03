@@ -298,7 +298,7 @@ export default function PaperWorkflow() {
     if (!curChapter) return;
     if (!integrity.ensure(async () => {
       try {
-        const r = await api.regenerateChapter(projectId, curChapter.id, {});
+        const r = await api.regenerateChapter(projectId, curChapter.id, { orderNo: wf?.orderNo || undefined });
         setChapters(r.chapters || chapters); await loadAll(projectId); toast.success('已重新生成本章');
       } catch (err) { const nd = err?.data?.needOrder; if (nd) setNeedPay({ itemType: err.data.itemType || 'writing_fulltext', amount: Number(err.data.amount || 0) }); else toast.error(err.message); }
     })) return;

@@ -347,6 +347,8 @@ addColumnIfMissing('projects', 'workflow_state', "TEXT DEFAULT 'setup'");
 addColumnIfMissing('projects', 'current_chapter_index', 'INTEGER DEFAULT 0');
 addColumnIfMissing('projects', 'outline_version', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('projects', 'final_check_json', 'TEXT');
+// 完整论文项目套餐订单：支付一次后贯穿逐章生成、重写与最终导出。
+addColumnIfMissing('projects', 'workflow_order_no', 'TEXT');
 
 // 课程定制价格字段：每个课程可覆盖全局报价规则，NULL=使用全局默认值
 addColumnIfMissing('courses', 'custom_base_word_count', 'INTEGER');
