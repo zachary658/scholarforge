@@ -251,7 +251,8 @@ export default function Landing() {
             ))}
           </div>
 
-          {/* 购买方式 */}
+          {/* 购买方式：未配置客服微信/二维码时整块隐藏，避免对外暴露「暂未配置」伤信任 */}
+          {(serviceWechat || serviceWechatQrcode) && (
           <div className="mt-10 flex flex-col items-center justify-center gap-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-6 py-6 sm:flex-row sm:text-left">
             {serviceWechatQrcode && (
               <img src={serviceWechatQrcode} alt="客服微信二维码" className="h-28 w-28 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
@@ -269,12 +270,13 @@ export default function Landing() {
                       <span className="ml-2 text-xs text-slate-400">添加后请备注「课程咨询」</span>
                     </>
                   ) : (
-                    <span className="text-slate-400">客服微信暂未配置，请联系站点管理员</span>
+                    <span className="text-slate-400">扫码添加客服微信详聊</span>
                   )}
                 </div>
               </div>
             </div>
           </div>
+          )}
         </div>
       </section>
 
@@ -411,7 +413,8 @@ export default function Landing() {
             </div>
           )}
 
-          {/* 购买方式 */}
+          {/* 购买方式：未配置客服微信/二维码时整块隐藏，避免对外暴露「暂未配置」伤信任 */}
+          {(serviceWechat || serviceWechatQrcode) && (
           <div className="mt-10 flex flex-col items-center justify-center gap-4 rounded-2xl border border-purple-100 bg-purple-50/60 px-6 py-6 sm:flex-row sm:text-left">
             {serviceWechatQrcode && (
               <img src={serviceWechatQrcode} alt="客服微信二维码" className="h-28 w-28 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
@@ -429,12 +432,13 @@ export default function Landing() {
                       <span className="ml-2 text-xs text-slate-400">添加后请备注「毕业作品」</span>
                     </>
                   ) : (
-                    <span className="text-slate-400">客服微信暂未配置，请联系站点管理员</span>
+                    <span className="text-slate-400">扫码添加客服微信详聊</span>
                   )}
                 </div>
               </div>
             </div>
           </div>
+          )}
         </div>
       </section>
 

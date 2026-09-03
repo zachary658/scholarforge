@@ -241,11 +241,6 @@ export default function CourseQuote() {
               </button>
             </div>
           )}
-          {!serviceWechatQrcode && !serviceWechat && (
-            <div className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              客服微信暂未配置，请联系站点管理员
-            </div>
-          )}
 
           <div className="mt-8 rounded-xl bg-slate-50 p-5 text-left">
             <div className="flex items-center gap-2 text-sm font-semibold text-ink">

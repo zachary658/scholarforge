@@ -105,7 +105,9 @@ export default function Courses() {
             {serviceWechat ? (
               <span className="font-semibold text-accent"> {serviceWechat}</span>
             ) : (
-              <span className="text-slate-400"> 客服微信暂未配置</span>
+              // 客服微信未配置时不展示具体微信号/状态，避免对外暴露「暂未配置」伤信任
+              // 支付完成后客服会主动对接，无需用户主动添加
+              null
             )}
           </div>
         </div>

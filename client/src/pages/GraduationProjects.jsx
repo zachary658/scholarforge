@@ -138,7 +138,8 @@ export default function GraduationProjects() {
             {serviceWechat ? (
               <span className="font-semibold text-accent"> {serviceWechat}</span>
             ) : (
-              <span className="text-slate-400"> 客服微信暂未配置</span>
+              // 客服微信未配置时不展示具体微信号/状态，避免对外暴露「暂未配置」伤信任
+              null
             )}
           </div>
         </div>
