@@ -26,6 +26,27 @@ jobs:
       - name: npm audit (allowlist gate)
         run: node ../scripts/audit-allowlist.mjs
       - run: npm test
+      - name: End-to-end smoke test
+        env:
+          NODE_ENV: development
+          JWT_SECRET: ci-smoke-jwt-secret-at-least-32-characters
+          ADMIN_PASSWORD: Admin123456
+          LOG_TO_FILE: "false"
+        run: |
+          npm start > /tmp/scholarforge-smoke.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3001/api/health > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/scholarforge-smoke.log
+              exit 1
+            fi
+            sleep 1
+          done
+          node scripts/smoke.mjs
       # 生成质量门禁：Promptfoo 在预置 fixture 上验证断言逻辑（mock 模式，离线确定性）。
       # 覆盖引用真实性 / 证据可溯源 / 数据不编造 / 大纲一致性 / 格式合规五个维度。
       - name: Promptfoo quality gate (mock)
