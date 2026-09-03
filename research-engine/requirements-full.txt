@@ -4,4 +4,4 @@
 
 # PaperQA2 核心（Apache-2.0）+ PyPDF 解析后端（BSD-3-Clause）。
 # 不要改用 paper-qa[pymupdf] 或直接加入 pymupdf；商业部署需先完成 AGPL/商业授权评估。
-paper-qa[pypdf]>=5.0.0
+paper-qa[pypdf]>=2026.8.12
