@@ -152,7 +152,13 @@ async function generateChapter(project, chapters, idx) {
   ].filter(Boolean).join('\n');
 
   const params = await buildChapterAIParams(project, ch, context, userId, project.id);
-  const result = await runAI('writing', params);
+  let result;
+  if (project.workflow_mode === 'full') {
+    const { orchestrateChapter } = await import('./orchestrator.js');
+    result = await orchestrateChapter({ project, chapter: ch, context: params.context, references: params.references || [], benchmarks: params.benchmarks || [], dataTables: params.dataTables || [], evidenceIds: params.evidenceIds || [] });
+  } else {
+    result = await runAI('writing', params);
+  }
   let content = result.content || '';
 
   // 占位符替换：引用编号 + 数据图表由代码生成（与全文生成路径保持一致）
@@ -170,7 +176,7 @@ async function generateChapter(project, chapters, idx) {
   } catch (err) {
     logger.warn('chapter', `章节占位符替换失败（忽略）: ${err.message}`);
   }
-  return content;
+  return { content, orchestration: result.plan ? { plan: result.plan, agents: result.agents } : null };
 }
 
 // 启动分章节生成（异步执行，立即返回）
@@ -231,10 +237,10 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
         // 每章保存时续租订单（更新 orders.updated_at），防长任务被 claim 超时抢占
         saveChapters(projectId, cur, bill.order.id);
 
-        const content = await generateChapter(project, cur, i);
+        const generated = await generateChapter(project, cur, i);
 
         cur = getChapters(projectId);
-        cur[i] = { ...cur[i], content, status: 'done' };
+        cur[i] = { ...cur[i], content: generated.content, orchestration: generated.orchestration, status: 'done' };
         saveChapters(projectId, cur, bill.order.id);
       }
       // 全部完成：标记订单服务完成（仅当仍处于 processing，防并发覆盖）
@@ -284,9 +290,9 @@ export async function regenerateChapter(userId, projectId, chapterId, orderNo) {
   try {
     chapters[idx] = { ...chapters[idx], status: 'processing', content: '', regenerate_count: regenCount + 1 };
     saveChapters(projectId, chapters);
-    const content = await generateChapter(project, chapters, idx);
+    const generated = await generateChapter(project, chapters, idx);
     const cur = getChapters(projectId);
-    cur[idx] = { ...cur[idx], content, status: 'done' };
+    cur[idx] = { ...cur[idx], content: generated.content, orchestration: generated.orchestration, status: 'done' };
     saveChapters(projectId, cur);
     return { chapter: cur[idx], chapters: cur };
   } catch (err) {
@@ -351,11 +357,17 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
   try {
     chapters[chapterIndex] = { ...chapters[chapterIndex], status: 'processing' };
     saveChapters(projectId, chapters, bill.order.id);
-    const content = await generateChapter(project, chapters, chapterIndex);
+    const generated = await generateChapter(project, chapters, chapterIndex);
     const cur = getChapters(projectId);
-    cur[chapterIndex] = { ...cur[chapterIndex], content, status: 'done' };
+    cur[chapterIndex] = { ...cur[chapterIndex], content: generated.content, orchestration: generated.orchestration, status: 'done' };
     saveChapters(projectId, cur, bill.order.id);
     return { queued: true, chapter: cur[chapterIndex], chapters: cur };
+  } catch (err) {
+    const cur = getChapters(projectId);
+    cur[chapterIndex] = { ...cur[chapterIndex], status: 'failed' };
+    saveChapters(projectId, cur);
+    transitionServiceToFailed(bill.order.id, { reason: '多模型章节生成失败' });
+    throw err;
   } finally {
     running.delete(projectId);
   }

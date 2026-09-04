@@ -226,6 +226,18 @@ export function getDefaultModel() {
   };
 }
 
+// 按预设 key 返回已配置模型；API Key 只从环境变量读取，不落库。
+export function getConfiguredModel(key) {
+  const preset = getModelPreset(key);
+  const apiKey = getModelKeyFromEnv(preset);
+  if (!preset || !apiKey) return null;
+  return { id: null, key: preset.key, name: preset.name, provider: preset.provider, base_url: preset.base_url, api_key: apiKey, model_name: preset.model_name, temperature: preset.temperature, max_tokens: preset.max_tokens };
+}
+
+export function getConfiguredModels() {
+  return MODEL_CATALOG.map((m) => getConfiguredModel(m.key)).filter(Boolean);
+}
+
 // 预设模型状态列表（供管理后台「选择模型」展示；不含 Key 明文，仅返回是否已配置）
 export function getModels() {
   const defaultKey = getSetting('ai_default_model', '');

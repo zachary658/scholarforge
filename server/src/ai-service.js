@@ -443,8 +443,8 @@ export function hasRealAIModel(model = getDefaultModel()) {
 
 // 统一入口：返回 { content, model, tokens, usedRealAI }
 // responseFormat：可选，传入 { type: 'json_object' } 时启用 JSON 模式（结构化输出）
-export async function runAI(tool, params, responseFormat = null) {
-  const model = getDefaultModel();
+export async function runAI(tool, params, responseFormat = null, modelOverride = null) {
+  const model = modelOverride || getDefaultModel();
   // 内置回退判定统一走 hasRealAIModel（单一口径，供 billing / docx-rewrite 等下游共用）
   const useBuiltin = !hasRealAIModel(model);
 
