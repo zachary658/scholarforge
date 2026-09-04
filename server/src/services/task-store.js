@@ -455,7 +455,10 @@ export function updateProject(projectId, userId, updates) {
     params.push(v);
   }
   if (sets.length === 0) return getProject(projectId, userId);
-  if (outlineChanged) sets.push('outline_confirmed_at = NULL');
+  if (outlineChanged) {
+    sets.push('outline_confirmed_at = NULL');
+    sets.push('final_check_json = NULL');
+  }
   sets.push(`updated_at = ${now()}`);
   params.push(projectId, userId);
   db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);

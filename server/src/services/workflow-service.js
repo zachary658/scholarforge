@@ -3,6 +3,7 @@
 // 复用已有 chapter-service（分章节生成/订单校验/文献≥3 校验/单章重写）与 task-store（项目持久化）。
 import db from '../db.js';
 import { getProject, saveProjectOutline, saveProjectSources, confirmOutline } from './task-store.js';
+import { filterVerifiedWritingReferences } from './paper-distillation.js';
 import { validateThesisOutline, fixOutline, parseAndValidateOutline } from './outline-validator.js';
 import { generateSingleChapter } from './chapter-service.js';
 import { mergeChapters } from './chapter-service.js';
@@ -73,6 +74,7 @@ function setState(projectId, userId, state) {
 export function createFullPaperWorkflow(projectId, userId, meta = {}) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
+  if (p.workflow_mode === 'full' && p.workflow_state && p.workflow_state !== 'setup') return getWorkflowState(projectId, userId);
   // 创建后直接进入「真实文献检索」阶段（信息填写即创建工作区，已包含标题/学科/学历）。
   // setup 仅作为「尚未创建完整论文工作流」的默认态；本函数把它推进到 researching。
   db.prepare('UPDATE projects SET workflow_mode = ?, workflow_state = ?, current_chapter_index = 0, updated_at = ? WHERE id = ? AND user_id = ?')
@@ -98,9 +100,8 @@ export function confirmLiterature(projectId, userId, references) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
   const sources = p.sources || {};
-  sources.references = Array.isArray(references) ? references : (sources.references || []);
-  saveProjectSources(projectId, userId, sources);
-  const verified = (sources.references || []).filter((r) => r && (r.source_url || r.doi || r.source_db));
+  const candidate = Array.isArray(references) ? references : (sources.references || []);
+  const verified = filterVerifiedWritingReferences(candidate);
   if (verified.length < 3) {
     const e = new Error(`真实可溯源文献不足（需≥3篇，当前 ${verified.length} 篇）。请先完成检索，不得补造参考文献。`);
     e.code = 'LITERATURE_INSUFFICIENT';
@@ -166,6 +167,8 @@ export async function generateCurrentChapter(userId, projectId, orderNo) {
     db.prepare('UPDATE projects SET workflow_order_no = ?, updated_at = ? WHERE id = ? AND user_id = ?')
       .run(effectiveOrderNo, now(), projectId, userId);
   }
+  sources.references = verified;
+  saveProjectSources(projectId, userId, sources);
   const chapters = getChapters(projectId);
   if (chapters[idx] && chapters[idx].status === 'done') {
     setState(projectId, userId, 'chapter_review');
@@ -303,7 +306,7 @@ export function runFinalCheck(projectId, userId) {
 // 生成最终文档（复用 chapters 合并 + docx 生成）
 export async function generateFinalDocument(projectId, userId, { template_id, format } = {}) {
   const wf = getWorkflowState(projectId, userId);
-  if (!wf || wf.state !== 'final_review') throw new Error('当前尚未完成逐章确认，不能生成最终文档');
+  if (!wf || !['final_review', 'completed'].includes(wf.state)) throw new Error('当前尚未完成逐章确认，不能生成最终文档');
   const existingCheck = wf.finalCheck;
   if (!existingCheck || existingCheck.passed !== true) {
     throw new Error('请先运行全文一致性检查，并修复所有失败项后再输出最终文档');

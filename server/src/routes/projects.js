@@ -250,6 +250,11 @@ router.put('/:id/chapters/:chapterId', authRequired, (req, res) => {
 // 否则回退既有 docx-generator 拼装链路。
 router.post('/:id/chapters/merge', authRequired, async (req, res) => {
   try {
+    const project = getProject(parseInt(req.params.id, 10), req.user.id);
+    if (!project) return res.status(404).json({ error: '工作区不存在' });
+    if (project.workflow_mode === 'full') {
+      return res.status(409).json({ error: '完整论文项目请在「完整论文流程」完成全文检查后输出', useWorkflow: true });
+    }
     const merged = mergeChapters(req.user.id, parseInt(req.params.id, 10));
     const requestedFormat = String(req.body?.format || '').toLowerCase().trim();
 

@@ -183,6 +183,7 @@ async function generateChapter(project, chapters, idx) {
 export async function startChapterGeneration(userId, projectId, orderNo) {
   const project = getProject(projectId, userId);
   if (!project) throw new Error('工作区不存在');
+  if (project.workflow_mode === 'full') throw new Error('该项目已启用完整论文流程，请在「完整论文流程」中逐章生成并确认');
   if (!project.outline_confirmed_at) throw new Error('请先确认大纲再生成正文');
   if ((project.outline || []).length === 0) throw new Error('大纲为空，请先生成并确认大纲');
   const verifiedReferences = filterVerifiedWritingReferences(project.sources?.references || []);
@@ -313,6 +314,7 @@ export function editChapter(userId, projectId, chapterId, content) {
   const idx = chapters.findIndex((c) => c.id === chapterId);
   if (idx === -1) throw new Error('章节不存在');
   chapters[idx] = { ...chapters[idx], content: String(content || '') };
+  db.prepare('UPDATE projects SET final_check_json = NULL, updated_at = ? WHERE id = ? AND user_id = ?').run(now(), projectId, userId);
   saveChapters(projectId, chapters);
   return { chapter: chapters[idx], chapters };
 }
