@@ -45,7 +45,8 @@ export async function orchestrateChapter({ project, chapter, context, references
   if (plan.reviewer && draft.usedRealAI) {
     const reviewerModel = getConfiguredModels().find((m) => m.key === plan.reviewer.key) || getDefaultModel();
     review = await runAI('review', { content, references, context: `论文题目：${project.title}\n章节：${chapter.chapter}` }, null, reviewerModel);
-    if (review.content && /需修改|引用问题|数据\/事实问题/.test(review.content)) {
+    // 审校模板本身总会包含「引用问题/数据问题」标题，只有明确结论为“需修改”才触发修订，避免每章无条件多花一次调用。
+    if (review.content && /审校结论[\s\S]{0,160}需修改/.test(review.content)) {
       const revised = await runAI('revise', {
         content, review: review.content,
         findings: '仅修复审校指出的问题；不得新增未提供的文献、数据或实证结果。',
