@@ -4,7 +4,6 @@ import { api, downloadDocFile } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
 import FeaturePay from '../components/FeaturePay.jsx';
-import Modal from '../components/Modal.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { FIELDS } from '../lib/constants.js';
@@ -42,10 +41,6 @@ export default function PaperWorkflow() {
   const [wf, setWf] = useState(null);          // workflow 状态对象
   const [project, setProject] = useState(null); // 完整工作区（含 outline/sources/chapters）
   const [stepIdx, setStepIdx] = useState(0);
-
-  // 创作目的弹窗：无 projectId 时展示
-  const [showPurpose, setShowPurpose] = useState(!projectId);
-  const [purposeRemember, setPurposeRemember] = useState(false);
 
   // 各步骤本地编辑状态
   const [outline, setOutline] = useState([]);
@@ -149,29 +144,10 @@ export default function PaperWorkflow() {
     return stopPoll;
   }, [projectId, generating, startChapterPoll, stopPoll]);
 
-  // ---------- 创作目的弹窗 ----------
-  const PURPOSE_KEY = 'sf_purpose_choice';
-  const handlePurpose = (choice) => {
-    if (purposeRemember) { try { localStorage.setItem(PURPOSE_KEY, choice); } catch {} }
-    if (choice === 'other') { navigate('/app'); return; }
-    // 生成完整论文：若无 projectId，引导创建
-    if (!projectId) {
-      setShowPurpose(false);
-      setCreateMode(true);
-    } else {
-      setShowPurpose(false);
-    }
-  };
-
   // 创建新论文并启动工作流
-  const [createMode, setCreateMode] = useState(false);
+  const [createMode, setCreateMode] = useState(!projectId);
   const [createForm, setCreateForm] = useState({ title: '', field: '', degree: '', writingRequirements: '' });
   const [creating, setCreating] = useState(false);
-  useEffect(() => {
-    if (!projectId) {
-      try { if (localStorage.getItem(PURPOSE_KEY) === 'full') { setShowPurpose(false); setCreateMode(true); } } catch {}
-    }
-  }, [projectId]);
   const doCreateAndStart = async (e) => {
     e.preventDefault();
     if (!createForm.title.trim()) { toast.error('请填写论文标题'); return; }
@@ -211,12 +187,23 @@ export default function PaperWorkflow() {
   const searchLiterature = async () => {
     if (!searchQuery.trim() || researchBusy) return;
     setResearchBusy(true);
+    setSearchResults([]);
     setSearchNotice('');
     try {
       const data = await api.searchRefs(searchQuery.trim());
       setSearchResults(data.results || []);
-      setSearchNotice(data.health === 'partial' ? '部分来源暂时不可用，可先检查现有结果或稍后重试。' : !data.results?.length ? '未找到匹配论文，请缩短关键词或加入英文术语。' : '请选择与研究问题相关的论文；可回查不代表内容一定适用。');
-    } catch (err) { setSearchNotice(err.message); }
+      if (data.health === 'unavailable') {
+        setSearchNotice('学术数据源暂时无法连接，请稍后重试。系统不会用 AI 编造结果。');
+      } else if (!data.results?.length) {
+        setSearchNotice('未找到匹配论文，请缩短关键词或加入英文术语。系统不会用 AI 编造结果。');
+      } else if (data.health === 'partial') {
+        setSearchNotice(`已从 ${data.sources_used?.join('、') || '可用学术源'} 找到 ${data.results.length} 篇真实记录；部分来源暂时不可用，不影响选择现有结果。`);
+      } else {
+        setSearchNotice(`已从 ${data.sources_used?.join('、') || '公开学术数据库'} 找到 ${data.results.length} 篇真实记录，请通过“查看来源”复核适用性。`);
+      }
+    } catch (err) {
+      setSearchNotice(err.status === 429 ? '本小时检索次数较多，请稍后再试；已加入的真实文献不会丢失。' : `${err.message}。系统不会用 AI 编造检索结果。`);
+    }
     finally { setResearchBusy(false); }
   };
   const selectReference = (ref) => {
@@ -387,14 +374,6 @@ export default function PaperWorkflow() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 pt-8 pb-24">
-      {/* 创作目的选择弹窗 */}
-      {showPurpose && (
-        <PurposeModal
-          remember={purposeRemember} setRemember={setPurposeRemember}
-          onChoose={handlePurpose}
-        />
-      )}
-
       {/* 创建新论文（无 projectId 时选择「生成完整论文」触发） */}
       {createMode && !projectId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -748,7 +727,6 @@ export default function PaperWorkflow() {
     </div>
   );
 }
-
 // ========== 步骤导航 ==========
 function StepNav({ stepIdx, state, project }) {
   const navRef = useRef(null);
@@ -774,36 +752,5 @@ function StepNav({ stepIdx, state, project }) {
         ))}
       </div>
     </div>
-  );
-}
-
-// ========== 创作目的选择弹窗 ==========
-function PurposeModal({ remember, setRemember, onChoose }) {
-  return (
-    <Modal onClose={() => onChoose('other')} label="选择创作目的" panelClassName="w-[520px] max-w-full">
-        <div className="border-b border-slate-100 px-6 py-4">
-          <h3 className="font-semibold text-ink">你希望 ScholarForge 如何帮你？</h3>
-          <p className="mt-1 text-sm text-slate-500">选择后会进入对应的工作模式，可随时关闭并重新选择。</p>
-        </div>
-        <div className="space-y-3 px-6 py-5">
-          <button onClick={() => onChoose('full')} className="flex w-full items-start gap-3 rounded-lg border border-accent/30 bg-accent-50/50 p-4 text-left transition hover:bg-accent-50">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-white"><Layers className="h-5 w-5" /></div>
-            <div>
-              <div className="font-semibold text-ink">生成完整论文</div>
-              <div className="mt-0.5 text-sm text-slate-500">一步步引导你完成：文献检索 → 大纲 → 逐章生成与确认 → 全文检查 → 输出 Word。</div>
-            </div>
-          </button>
-          <button onClick={() => onChoose('other')} className="flex w-full items-start gap-3 rounded-lg border border-slate-200 p-4 text-left transition hover:bg-slate-50">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><Pen className="h-5 w-5" /></div>
-            <div>
-              <div className="font-semibold text-ink">使用其他工具</div>
-              <div className="mt-0.5 text-sm text-slate-500">开题报告、文献综述、润色翻译、查重优化等独立功能。</div>
-            </div>
-          </button>
-          <label className="flex items-center gap-2 pl-1 text-xs text-slate-500">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> 记住我的选择
-          </label>
-        </div>
-    </Modal>
   );
 }

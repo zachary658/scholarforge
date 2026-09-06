@@ -18,6 +18,7 @@ export default function Modal({
   panelClassName = '',
   ariaLive = null,
   open = true,
+  dismissible = true,
 }) {
   const panelRef = useRef(null);
   const prevFocusRef = useRef(null);
@@ -43,7 +44,7 @@ export default function Modal({
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
-      if (e.key === 'Escape' && onClose) {
+      if (e.key === 'Escape' && dismissible && onClose) {
         e.stopPropagation();
         onClose();
         return;
@@ -63,7 +64,7 @@ export default function Modal({
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [open, onClose]);
+  }, [open, onClose, dismissible]);
 
   if (!open) return null;
 
@@ -74,7 +75,7 @@ export default function Modal({
       aria-label={label}
       aria-labelledby={labelledBy}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget && dismissible && onClose) onClose(); }}
     >
       <div ref={panelRef} className={`max-w-full rounded-xl bg-white shadow-card ${panelClassName}`}>
         {children}

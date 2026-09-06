@@ -6,7 +6,7 @@ import { logUsage } from '../usage.js';
 import { checkTextLength, TEXT_MAX_SHORT } from '../utils.js';
 import logger from '../logger.js';
 import { replaceEvidenceSource, removeEvidenceSource } from '../services/evidence-engine.js';
-import { searchMultiSource, verifyReferenceDois } from '../services/multi-source-search.js';
+import { searchMultiSource } from '../services/multi-source-search.js';
 import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
 import { classifyReferenceSearch, shouldCacheReferenceSearch } from '../services/research-quality.js';
 import { attestReference } from '../services/reference-proof.js';
@@ -26,7 +26,7 @@ const SEARCH_CACHE_TTL = 24 * 3600 * 1000;
 
 // 免费不限次功能的每用户每小时调用上限：文献检索调用真实外部学术 API，
 // 免费不意味着可被批量注册后无限刷（此前限流只覆盖大纲，ref_search 完全无限制）
-const REF_SEARCH_HOURLY_LIMIT = 30;
+const REF_SEARCH_HOURLY_LIMIT = 120;
 
 function isRefSearchRateLimited(userId) {
   const cutoff = Math.floor(Date.now() / 1000) - 3600;
@@ -68,9 +68,16 @@ router.get('/search', authRequired, async (req, res) => {
       ref_type: work.ref_type || 'journal',
       publisher: work.publisher || '',
     }));
-    const checked = await verifyReferenceDois(candidates, { limit: 12 });
-    const rejectedDoiCount = checked.filter((work) => work.doi_verified === false).length;
-    const results = checked.filter((work) => work.doi_verified !== false).map(attestReference);
+    // 这些记录已由公开学术数据库实时返回，其 source_url/DOI 即为存在性证据。
+    // 不再把整批结果串到 CrossRef 做第二轮 DOI 查询：那会重复依赖单一上游，
+    // CrossRef 超时/限流时反而令 OpenAlex、arXiv 等真实结果无法及时交付。
+    const traceable = candidates.filter((work) => work.doi || /^https?:\/\//i.test(work.source_url || ''));
+    const results = traceable.map((work) => attestReference({
+      ...work,
+      source_verified: true,
+      verification_source: work.source_db,
+      doi_verified: work.doi && (work.source_db === 'CrossRef' || work.all_sources?.includes('CrossRef')) ? true : null,
+    }));
     const sources_used = search.sources_used || [];
     const warnings = search.errors || [];
     const health = classifyReferenceSearch({ results, sources_used, errors: warnings });
@@ -80,7 +87,7 @@ router.get('/search', authRequired, async (req, res) => {
       sources_used,
       warnings,
       health,
-      diagnostics: { ...(search.diagnostics || {}), rejected_doi_count: rejectedDoiCount },
+      diagnostics: { ...(search.diagnostics || {}), source_verified_count: results.length },
       note: '结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
     // 故障与部分覆盖结果不进入 24 小时缓存，避免外部来源恢复后用户仍看到旧状态。

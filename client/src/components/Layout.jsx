@@ -7,6 +7,7 @@ import {
   Logout, Shield, ArrowRight, Menu, X, Lock, ChevronRight,
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
+import WorkModeGate from './WorkModeGate.jsx';
 
 // 导航字符串图标键 → 实际图标组件（与 navigation.js 的 icon 键一一对应）
 const NAV_ICONS = {
@@ -221,6 +222,7 @@ export default function Layout() {
       </main>
 
       {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}
+      <WorkModeGate />
     </div>
   );
 }
