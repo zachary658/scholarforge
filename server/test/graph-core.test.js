@@ -27,8 +27,8 @@ test('顺序边 + 状态深合并 + 单节点重试', async () => {
 test('条件边按状态路由', async () => {
   const g = createStateGraph({ x: 2 });
   g.addNode('check', async (s) => ({ result: s.x > 1 ? 'big' : 'small' }));
-  g.addNode('big', async (s) => ({ branch: 'BIG' }));
-  g.addNode('small', async (s) => ({ branch: 'SMALL' }));
+  g.addNode('big', async () => ({ branch: 'BIG' }));
+  g.addNode('small', async () => ({ branch: 'SMALL' }));
   g.setEntryPoint('check');
   g.addConditionalEdges('check', async (s) => s.result);
   const out = await g.compile().invoke({});

@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
-import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock, Shield, Book } from '../../components/Icons.jsx';
+import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, Lock, Shield, Book } from '../../components/Icons.jsx';
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 
 const nav = [

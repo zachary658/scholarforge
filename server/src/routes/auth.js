@@ -19,6 +19,11 @@ import {
   getRefreshTokenFromCookie,
 } from '../auth.js';
 import { authRequired } from '../middleware.js';
+import {
+  accountLockRemaining,
+  recordAccountFailure,
+  clearAccountFailures,
+} from '../middleware/accountLock.js';
 import { getSetting, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
 import { sendMail, buildPasswordResetEmail } from '../services/mailer.js';
 import logger from '../logger.js';
@@ -58,42 +63,9 @@ const changePasswordLimiter = makeLimiter({
   message: '操作过于频繁，请稍后再试',
 });
 
-// ===== 登录账号维度防爆破（与 IP 限流互补）=====
-// 内存 Map 按归一化账号（邮箱小写）记录连续失败次数，≥5 次锁定该账号 15 分钟；
-// 锁定期内即使密码正确也返回 429，登录成功清零计数，锁过期自动清除（单实例部署下的内存方案）。
-const ACCOUNT_LOCK_THRESHOLD = 5;      // 连续失败阈值
-const ACCOUNT_LOCK_SECONDS = 15 * 60;  // 锁定时长：15 分钟
-const ACCOUNT_FAIL_MAP_LIMIT = 10000;  // 失败记录条数上限（防恶意构造大量账号撑爆内存）
-const accountFailures = new Map();     // 归一化账号 -> { fails, lockedUntil }
-
-// 查询账号剩余锁定期（秒）；锁已过期时自动清除记录，未锁定返回 0
-function accountLockRemaining(key) {
-  const rec = accountFailures.get(key);
-  if (!rec || !rec.lockedUntil) return 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (nowSec >= rec.lockedUntil) {
-    accountFailures.delete(key); // 锁过期自动清除（同时清零失败计数）
-    return 0;
-  }
-  return rec.lockedUntil - nowSec;
-}
-
-// 记录一次登录失败：达到阈值则锁定；对不存在与存在的账号一视同仁，避免借 429 差异枚举注册邮箱
-function recordAccountFailure(key) {
-  // 内存防护：超过条数上限时先清理已解锁的旧记录
-  if (accountFailures.size > ACCOUNT_FAIL_MAP_LIMIT) {
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (const [k, rec] of accountFailures) {
-      if (!rec.lockedUntil || nowSec >= rec.lockedUntil) accountFailures.delete(k);
-    }
-  }
-  const rec = accountFailures.get(key) || { fails: 0, lockedUntil: 0 };
-  rec.fails += 1;
-  if (rec.fails >= ACCOUNT_LOCK_THRESHOLD) {
-    rec.lockedUntil = Math.floor(Date.now() / 1000) + ACCOUNT_LOCK_SECONDS;
-  }
-  accountFailures.set(key, rec);
-}
+// 登录账号维度防爆破（与 IP 限流互补）：
+// Redis 原子计数 + TTL（键为归一化邮箱的 sha256，多实例共享锁定状态），登录成功删除计数；
+// 未配置 REDIS_URL 时回退进程内存（单实例部署）。详见 src/middleware/accountLock.js。
 
 // 密码强度校验：至少 8 位，必须同时包含字母和数字
 function validatePasswordStrength(password) {
@@ -209,7 +181,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: '请填写邮箱和密码' });
   const normalizedEmail = String(email).trim().toLowerCase();
   // 账号维度防爆破：锁定期内直接拒绝（即使密码正确也返回 429，并提示剩余等待时间）
-  const lockRemaining = accountLockRemaining(normalizedEmail);
+  const lockRemaining = await accountLockRemaining(normalizedEmail);
   if (lockRemaining > 0) {
     const waitMinutes = Math.ceil(lockRemaining / 60);
     return res.status(429).json({ error: `该账号登录失败次数过多，已被临时锁定，请约 ${waitMinutes} 分钟后再试` });
@@ -218,11 +190,11 @@ router.post('/login', loginLimiter, async (req, res) => {
   // 统一错误信息，防邮箱枚举
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     // 记录账号维度失败次数（不区分账号是否存在，防止借锁定行为差异枚举邮箱）
-    recordAccountFailure(normalizedEmail);
+    await recordAccountFailure(normalizedEmail);
     return res.status(401).json({ error: '邮箱或密码错误' });
   }
   // 登录成功：清零该账号的失败计数并解除锁定
-  accountFailures.delete(normalizedEmail);
+  await clearAccountFailures(normalizedEmail);
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被禁用' });
   if (user.status === 'deleted') return res.status(403).json({ error: '账号不存在' });
   const { accessToken, refreshToken } = await issueTokens(user);

@@ -14,20 +14,15 @@ import {
   Packer,
   Paragraph,
   TextRun,
-  HeadingLevel,
   AlignmentType,
-  LevelFormat,
   Footer,
-  Header,
   PageNumber,
-  ExternalHyperlink,
   ImageRun,
   Table,
   TableRow,
   TableCell,
   WidthType,
   BorderStyle,
-  ShadingType,
 } from 'docx';
 import { latexToOMML } from './latex-omml.js';
 import { createRequire } from 'module';
@@ -202,7 +197,7 @@ function parseMarkdownToBlocks(text) {
     }
 
     // 图题/表题（图 1-1 / 表 1-1 / Fig. / Table）
-    const captionMatch = line.match(/^(图|表)\s*\d+[\.-]\d+[\s.]/);
+    const captionMatch = line.match(/^(图|表)\s*\d+[.-]\d+[\s.]/);
     if (captionMatch) {
       const isTable = captionMatch[1] === '表';
       blocks.push({ type: isTable ? 'table_caption' : 'figure_caption', text: line.trim() });
@@ -455,20 +450,20 @@ function validateChartReferences(content) {
   const figureNos = new Set();
   const tableNos = new Set();
   // 图题/表题编号：图 1-1 / 表 2-1 / 图1 / 表2
-  const capRe = /^(图|表)\s*(\d+(?:[.\-]\d+)?)/gm;
+  const capRe = /^(图|表)\s*(\d+(?:[.-]\d+)?)/gm;
   let m;
   while ((m = capRe.exec(content)) !== null) {
     (m[1] === '图' ? figureNos : tableNos).add(m[2]);
   }
-  const has = (set, num) => set.has(num) || set.has(String(num).split(/[.\-]/)[0]);
+  const has = (set, num) => set.has(num) || set.has(String(num).split(/[.-]/)[0]);
 
   // 图引用：如图1-1 / 见图2
-  const figRefRe = /(?:如图|见图)\s*(\d+(?:[.\-]\d+)?)/g;
+  const figRefRe = /(?:如图|见图)\s*(\d+(?:[.-]\d+)?)/g;
   while ((m = figRefRe.exec(content)) !== null) {
     if (!has(figureNos, m[1])) warnings.push(`正文引用了「${m[0]}」，但未找到对应图题（图 ${m[1]}），请核对图表编号`);
   }
   // 表引用：如表2-1 / 见表3
-  const tabRefRe = /(?:如表|见表)\s*(\d+(?:[.\-]\d+)?)/g;
+  const tabRefRe = /(?:如表|见表)\s*(\d+(?:[.-]\d+)?)/g;
   while ((m = tabRefRe.exec(content)) !== null) {
     if (!has(tableNos, m[1])) warnings.push(`正文引用了「${m[0]}」，但未找到对应表题（表 ${m[1]}），请核对图表编号`);
   }

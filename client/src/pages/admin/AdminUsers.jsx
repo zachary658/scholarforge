@@ -106,17 +106,6 @@ export default function AdminUsers() {
     }
   };
 
-  const toggleSupport = async (u) => {
-    setError('');
-    try {
-      await api.adminUpdateUser(u.id, { is_support: !u.is_support });
-      toast.success(u.is_support ? '已取消客服' : '已设为客服');
-      load(page);
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
-
   const remove = async (u) => {
     if (u.email === 'admin@scholarforge.com') return;
     if (!await confirm({

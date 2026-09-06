@@ -19,10 +19,12 @@ def detect_conflicts(claims: List[Dict[str, Any]], threshold: float = 0.06) -> D
         for j in range(i + 1, n):
             a = str(claims[i].get("text", ""))
             b = str(claims[j].get("text", ""))
-            a_pos = any(p in a for p in POSITIVE_PATTERNS)
-            b_neg = any(p in b for p in NEGATIVE_PATTERNS)
-            a_neg = any(p in a for p in NEGATIVE_PATTERNS)
-            b_pos = any(p in b for p in POSITIVE_PATTERNS)
+            # 方向词表为小写英文/中文，比较前统一小写，避免句首 "No significant..." 漏检
+            a_low, b_low = a.lower(), b.lower()
+            a_pos = any(p in a_low for p in POSITIVE_PATTERNS)
+            b_neg = any(p in b_low for p in NEGATIVE_PATTERNS)
+            a_neg = any(p in a_low for p in NEGATIVE_PATTERNS)
+            b_pos = any(p in b_low for p in POSITIVE_PATTERNS)
             # 方向相反才可能是矛盾
             if not ((a_pos and b_neg) or (a_neg and b_pos)):
                 continue

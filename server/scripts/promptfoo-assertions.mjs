@@ -160,7 +160,7 @@ export function normalizeHeading(text) {
     .replace(/^[（(]?[一二三四五六七八九十]+[)）、.．]\s*/, '')
     .replace(/^\s*\d+(?:\.\d+)*[、.．]?\s*/, '')
     .replace(/^\s*第[一二三四五六七八九十百\d]+[章节節部分篇]\s*/, '')
-    .replace(/[\s:：,，。.、（）()【】\[\]]/g, '')
+    .replace(/[\s:：,，。.、（）()【】[\]]/g, '')
     .trim();
 }
 
@@ -659,7 +659,6 @@ export async function assertStability(output, context = {}) {
   const config = context.config || {};
   const vars = context.vars || {};
   const runs = Math.max(2, Math.min(8, num(config.runs ?? vars.runs, 3)));
-  const threshold = num(config.threshold, DEFAULT_THRESHOLDS.stability);
   const { measureStability } = await import('./promptfoo-stability.mjs');
   const result = await measureStability({
     vars,

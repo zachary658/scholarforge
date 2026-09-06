@@ -20,12 +20,6 @@ const MAX_DOCXML_BYTES = 5 * 1024 * 1024;
 // zip 条目总数上限：正常 docx 仅几十个条目，海量条目为解压炸弹特征
 const MAX_ZIP_ENTRIES = 200;
 
-const XML_NS = 'http://www.w3.org/XML/1998/namespace';
-
-function elText(node) {
-  return node.textContent || '';
-}
-
 // 段落是否可改写：
 // - 段落样式为标题（Heading/标题/中文 Word 标题样式 ID 1-9）或含大纲级别 → 跳过（保结构）
 // - 段落含 drawing（图片/图表）、pict、OLEObject、oMath → 跳过（保图表/公式）
@@ -100,6 +94,7 @@ export function parseDocxParagraphs(docXml) {
 // 其他 run 删除，文本写入第一个 run 的 w:t（xml:space="preserve" 保留空格）
 export function setParagraphText(pNode, newText) {
   // 过滤 XML 1.0 非法控制字符：模型输出若混入控制字符会导致 Word 判定文档损坏
+  // eslint-disable-next-line no-control-regex -- 字符类刻意匹配控制字符本身
   const safeText = String(newText || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
   // 仅取段落直接子级 w:r：避免误改写/误删除 w:hyperlink、w:fldSimple、w:smartTag
   // 等内联结构内部的后代 run（此类段落整体已由 isRewritableParagraph 排除）

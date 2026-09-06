@@ -87,7 +87,7 @@ export async function svgToPng(svg, scale = 2) {
 // 安全：受限 loader 禁止加载任何外部数据源（data.url），仅允许内联数据，防止 SSRF
 // （对应 CVE-2025-27793 / open-webui GHSA-rffm-9q57-q649 的 data.url 风险）
 const restrictedLoader = {
-  load: (uri) => Promise.reject(new Error('禁止加载外部数据源')),
+  load: () => Promise.reject(new Error('禁止加载外部数据源')),
   sanitize: (uri) => String(uri),
   http: () => Promise.reject(new Error('禁止加载外部 HTTP 数据源')),
   file: () => Promise.reject(new Error('禁止加载本地文件数据源')),
@@ -400,7 +400,6 @@ export async function renderFlowchart(code) {
     if (!pos) continue;
     const x = pos.x - nodeW / 2;
     const y = pos.y - nodeH / 2;
-    const text = escapeXml(node.text);
     const textLines = wrapText(node.text, 8);
     const cy = pos.y - (textLines.length - 1) * fontSize / 2;
 

@@ -20,9 +20,9 @@ const dbMod = await import('../src/db.js');
 const db = dbMod.default;
 const {
   ORDER_STATUS, SERVICE_STATUS, StateTransitionError,
-  assertTransition, transitionStatus, recordOrderEvent,
+  assertTransition, transitionStatus,
 } = await import('../src/services/order-state.js');
-const { createFeatureOrder, markOrderPaid, genOrderNo } = await import('../src/services/payment.js');
+const { createFeatureOrder, markOrderPaid } = await import('../src/services/payment.js');
 const { classifyTaskError } = await import('../src/services/task-store.js');
 const { claimOrderExecution } = await import('../src/services/order-claim.js');
 const { hashPassword } = await import('../src/auth.js');

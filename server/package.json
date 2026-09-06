@@ -9,6 +9,7 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "test": "node --test",
+    "lint": "eslint .",
     "eval": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
     "eval:mock": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
     "eval:live": "promptfoo eval -c promptfooconfig.yaml --no-cache --no-write"
@@ -47,7 +48,10 @@
     "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "cross-env": "^7.0.3",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
     "promptfoo": "0.100.6"
   },
   "overrides": {

@@ -13,7 +13,6 @@ import {
   getFeaturePrices,
   getCourses,
   getCourse,
-  getPaymentConfig,
   invalidatePaymentCache,
   invalidateSiteCache,
 } from '../config-store.js';
@@ -81,7 +80,7 @@ const qrcodeUpload = multer({
   },
 });
 
-import { now, assertSafeAiResolvedUrl, checkFileSignature, FILE_SIGNATURES } from '../utils.js';
+import { assertSafeAiResolvedUrl, checkFileSignature, FILE_SIGNATURES } from '../utils.js';
 
 const today = () => {
   const d = new Date();

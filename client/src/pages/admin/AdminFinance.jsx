@@ -81,7 +81,6 @@ export default function AdminFinance() {
   }
   if (!data) return null;
 
-  const s = data.summary || {};
   const inc = data.income || {};
   const byType = data.byType || [];
   const byChannel = data.byChannel || [];

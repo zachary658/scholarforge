@@ -37,7 +37,7 @@ for (const [url, label] of INTERNAL_URLS) {
 test('PDF 下载拒绝 3xx 重定向（含跳向内网地址）', async () => {
   const realFetch = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (input) => {
     calls.push(String(input));
     return new Response(null, {
       status: 302,

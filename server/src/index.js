@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 
-import { ensureAdminAccount, cleanupExpiredTokens } from './auth.js';
+import { ensureAdminAccount } from './auth.js';
 import authRoutes from './routes/auth.js';
 import publicRoutes from './routes/public.js';
 import membershipRoutes from './routes/membership.js';
@@ -33,6 +33,7 @@ import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
 import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
+import { closeSharedRedisClient } from './middleware/redisClient.js';
 import logger from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -258,8 +259,9 @@ async function shutdown(signal) {
   clearInterval(intervalTasks);
   clearInterval(intervalDocs);
   clearInterval(intervalCleanup);
-  // 断开限流 Redis 连接（若配置了 REDIS_URL），避免连接句柄阻塞进程退出
+  // 断开限流 / 账号锁 Redis 连接（若配置了 REDIS_URL），避免连接句柄阻塞进程退出
   await closeRateLimitStore();
+  await closeSharedRedisClient();
   server.close((err) => {
     if (err) {
       logger.error('shutdown', `server close error: ${err.message}`);

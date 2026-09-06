@@ -44,7 +44,6 @@ token = r.data.token || '';
 // 2. 免费大纲生成（内置模板，无 AI key）
 r = await req('/api/tools/writing', { method: 'POST', body: { type: 'outline', topic: '深度学习在医学影像中的应用', field: '计算机科学' } });
 check('免费大纲生成', r.status === 200 && r.data.content && r.data.chargeType === 'unlimited', `chargeType=${r.data.chargeType}`);
-const hasOutline = !!(r.data && r.data.content);
 const outlineProjectId = r.data?.projectId;
 
 // 3. 创建全文订单 → mock 支付

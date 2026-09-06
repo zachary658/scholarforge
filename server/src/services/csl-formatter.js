@@ -151,19 +151,15 @@ export async function formatReferencesWithCsl(references, { style = DEFAULT_CSL_
  * @returns {Promise<string>}
  */
 export async function formatReferencesGBWithCsl(references) {
-  try {
-    const { text } = await formatReferencesWithCsl(references);
-    if (!text) return '';
-    // 仅清理空行与首尾空白，保留样式引擎产出的 "[n] " 前缀
-    return text
-      .split(/\n+/)
-      .map((line) => line.trim())
-      .filter((l) => l.length > 0)
-      .join('\n');
-  } catch (err) {
-    // 回退：由调用方用 formatReferencesGB 兜底
-    throw err;
-  }
+  // 解析失败直接抛出：由调用方用 formatReferencesGB 兜底
+  const { text } = await formatReferencesWithCsl(references);
+  if (!text) return '';
+  // 仅清理空行与首尾空白，保留样式引擎产出的 "[n] " 前缀
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((l) => l.length > 0)
+    .join('\n');
 }
 
 /**

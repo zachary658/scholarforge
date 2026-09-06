@@ -90,7 +90,7 @@ export async function detectClaimConflicts(claims, threshold = 0.06) {
  * @returns {Promise<{ status: string, mode: string }>}
  */
 export async function paperqaHealth() {
-  const { base, apiKey, timeout } = readConfig();
+  const { base, apiKey } = readConfig();
   if (!base) return { status: 'disabled', mode: 'builtin' };
   try {
     await assertSafeAiResolvedUrl(`${base}/api/v1/health`, { allowPrivate: true });

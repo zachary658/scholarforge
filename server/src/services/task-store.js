@@ -537,7 +537,7 @@ export function saveProjectOutline(projectId, userId, outline) {
 //   2. 大纲（如果存在，带结构）
 //   3. 同工作区最近的相关任务输出（智能截断，不超过 MAX_CONTEXT_CHARS）
 // 安全：必须校验 userId 归属，防止跨用户读取他人工作区数据（IDOR）
-export function buildProjectContext(projectId, userId, { currentToolType = '', currentAction = '', maxChars = MAX_CONTEXT_CHARS } = {}) {
+export function buildProjectContext(projectId, userId, { currentToolType = '', maxChars = MAX_CONTEXT_CHARS } = {}) {
   const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
   if (!project) return { context: '', summary: '' };
 

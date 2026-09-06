@@ -26,10 +26,10 @@ import {
   isGrobidConfigured,
   parsePdfViaGrobid,
 } from './grobid-client.js';
-// htmlTableToRows / parsePdfViaPdfjs 复用 paper-distillation 里已稳定且被测试覆盖的实现，
-// 不重复造轮子（注意：paper-distillation 的 extractPdfText 反过来会调用本模块的
+// htmlTableToRows / parsePdfViaPdfjs 复用 paper-distillation/data-extraction 里已稳定且被测试覆盖的实现，
+// 不重复造轮子（注意：data-extraction 的 extractPdfText 反过来会调用本模块的
 // parseDocument，构成 ESM 循环依赖；两者导出都是函数声明（会被提升），因此循环安全）
-import { htmlTableToRows, parsePdfViaPdfjs } from './paper-distillation.js';
+import { htmlTableToRows, parsePdfViaPdfjs } from './paper-distillation/data-extraction.js';
 import { assertSafeAiResolvedUrl } from '../utils.js';
 import logger from '../logger.js';
 

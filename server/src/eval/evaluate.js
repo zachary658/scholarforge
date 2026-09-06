@@ -71,10 +71,6 @@ export const REAL_AI_CHECKS = [
   'consistency: 同一输入多次生成的质量波动在可接受范围内（用相似度/结构一致性度量）',
 ];
 
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // 结构质量检查器：返回 { pass, issues }
 export function checkContent(content, spec = {}) {
   const text = typeof content === 'string' ? content : '';

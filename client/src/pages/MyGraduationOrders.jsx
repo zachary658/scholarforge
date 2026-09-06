@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { toast } from '../components/Toast.jsx';
-import { Refresh, Receipt, Wechat } from '../components/Icons.jsx';
+import { Refresh, Receipt } from '../components/Icons.jsx';
 import PayModal from '../components/PayModal.jsx';
 
 const STATUS_BADGE = {

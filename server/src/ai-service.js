@@ -575,7 +575,6 @@ function builtinPatentDraft(params) {
 
 // 审稿意见回复模板回退
 function builtinReviewReply(params) {
-  const title = params.title || params.topic || '论文';
   const comments = String(params.text || '').slice(0, 1000);
   return `# 审稿意见回复信（Response to Reviewers）
 
@@ -852,7 +851,7 @@ ${topic}作为${field}领域的重要研究议题，其研究具有重要的理�
 }
 
 function builtinJournal(params) {
-  const { topic = '研究主题', field = '本学科领域', research_content = '', method = '实证分析', journal_type = '核心期刊' } = params;
+  const { topic = '研究主题', field = '本学科领域', method = '实证分析' } = params;
   return `# ${topic}
 
 **摘要**：本研究围绕${topic}展开，针对${field}领域中存在的问题，构建研究框架并进行实证检验。研究发现……（200-300字摘要）

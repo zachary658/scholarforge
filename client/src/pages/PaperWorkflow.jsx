@@ -9,8 +9,7 @@ import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { FIELDS } from '../lib/constants.js';
 import {
-  Layers, Pen, Book, BookOpen, Check, X, Save, Edit, Refresh, Plus, Trash,
-  ArrowRight, ChevronRight, ChevronLeft, Brain, FileWord, ExternalLink, AlertCircle, Shield,
+  Layers, Pen, Book, Check, X, Save, Refresh, Plus, Trash, ChevronRight, ChevronLeft, Brain, FileWord, ExternalLink, AlertCircle, Shield,
 } from '../components/Icons.jsx';
 
 const DEGREES = ['本科', '硕士', '博士', '其他'];

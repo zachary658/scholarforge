@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
-import { useAuth } from '../lib/auth.jsx';
 import { PageSkeleton } from '../components/Skeleton.jsx';
 import { PAPER_STAGES } from '../lib/constants.js';
 import {
@@ -34,7 +33,6 @@ function projectProgress(p) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [docs, setDocs] = useState([]);
   const [projects, setProjects] = useState([]);

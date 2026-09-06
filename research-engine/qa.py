@@ -85,9 +85,14 @@ def answer_question(
     """
     if mode == "paperqa":
         try:
-            return _answer_paperqa(question, documents, limit, llm_config)
+            result = _answer_paperqa(question, documents, limit, llm_config)
+            # 返回值必须是合法结构：None / 缺关键字段同样按失败处理，
+            # 否则非法结构会透传到上层 Node 客户端导致崩溃
+            if isinstance(result, dict) and "evidence" in result and "mode" in result:
+                return result
         except Exception:
-            mode = "builtin"  # 完整模式失败降级，不阻断
+            pass
+        mode = "builtin"  # 完整模式失败降级，不阻断
 
     evidence = []
     for doc in _retrieve(question, documents, limit):

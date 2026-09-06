@@ -59,9 +59,10 @@ scholarforge/
 ### 1. 安装依赖
 
 ```bash
-# 后端
+# 后端（promptfoo 的传递依赖 playwright 会下载 ~200MB Chromium，
+# 本地开发/测试用不到浏览器，建议跳过以加速安装）
 cd server
-npm install
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install
 
 # 前端
 cd ../client

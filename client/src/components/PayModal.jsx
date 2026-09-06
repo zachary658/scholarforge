@@ -122,7 +122,7 @@ export default function PayModal({ order, payParams, onClose, onPaid }) {
       }, POLL_INTERVAL);
     };
 
-    const finishReal = async (s) => {
+    const finishReal = async () => {
       if (completedRef.current) return;
       completedRef.current = true;
       setDone(true);

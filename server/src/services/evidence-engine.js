@@ -490,7 +490,6 @@ export function evidenceQuality(userId, projectId) {
   const traceableChunks = Number(row?.traceable_chunks || 0);
   const chars = Number(row?.content_chars || 0);
   const traceability = chunks ? traceableChunks / chunks : 0;
-  const diversity = byType.length;
   const score = Math.round(
     Math.min(30, sources * 3) + Math.min(20, chunks) + Math.round(traceability * 30) + Math.min(20, Math.floor(chars / 2500) * 2),
   );

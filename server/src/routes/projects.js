@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { authRequired } from '../middleware.js';
 import {
   createProject, getProject, listProjects, updateProject, deleteProject, deleteProjectForever,
-  buildProjectContext, listTasks, getTaskDetail, deleteTask, confirmOutline, PAPER_STAGES,
+  buildProjectContext, listTasks, PAPER_STAGES,
 } from '../services/task-store.js';
 import {
   startChapterGeneration, regenerateChapter, editChapter, mergeChapters, isGenerating,

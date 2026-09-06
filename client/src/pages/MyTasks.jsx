@@ -5,7 +5,7 @@ import { useConfirm } from '../components/ConfirmModal.jsx';
 import Modal from '../components/Modal.jsx';
 import { TOOL_LABEL, TOOL_COLOR, CHARGE_LABEL } from '../lib/constants.js';
 import {
-  Refresh, Search, Trash, Eye, Download, Filter, ChevronLeft, ChevronRight,
+  Refresh, Search, Trash, Eye, Filter, ChevronLeft, ChevronRight,
   FileText, Edit, SpellCheck, Languages, Copy, Layers,
   Book, FileWord, AlertCircle,
 } from '../components/Icons.jsx';

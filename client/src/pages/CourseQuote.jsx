@@ -5,7 +5,7 @@ import { copyText } from '../lib/utils.js';
 import PayModal from '../components/PayModal.jsx';
 import { toast } from '../components/Toast.jsx';
 import {
-  BookOpen, ChevronLeft, Receipt, Wechat, Refresh, Check, Cart, Info, Copy, X,
+  BookOpen, ChevronLeft, Receipt, Refresh, Check, Cart, Info, Copy, X,
 } from '../components/Icons.jsx';
 
 const PAPER_TYPES = ['毕业论文', '课程论文', '期刊论文', '其他'];

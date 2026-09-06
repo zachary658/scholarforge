@@ -2,14 +2,6 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { Refresh, Save } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
-import { PAYMENT_METHOD_LABEL } from '../../lib/constants.js';
-
-function fmtDateTime(ts) {
-  if (!ts) return '—';
-  const d = new Date(Number(ts) * 1000);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString('zh-CN');
-}
 
 export default function AdminQuotes() {
   const [list, setList] = useState([]);

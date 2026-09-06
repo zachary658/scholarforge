@@ -59,7 +59,8 @@ def parse_evidence_blocks(
     """
     text = _clean(text)
     if not text:
-        return {"blocks": [], "metadata": {"title": "", "authors": [], "doi": "", "year": ""}}
+        # 与非空路径保持同一 metadata 结构（含 journal 键），上层解析无需分支
+        return {"blocks": [], "metadata": {"title": "", "authors": [], "doi": "", "year": "", "journal": ""}}
 
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     blocks: List[Dict[str, Any]] = []
