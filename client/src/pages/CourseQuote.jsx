@@ -76,6 +76,15 @@ export default function CourseQuote() {
   const [course, setCourse] = useState(null);
   const [site, setSite] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const projectId = searchParams.get('projectId');
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) return;
+    api.getProject(projectId).then(({ project }) => {
+      if (!cancelled && project) setForm(current => ({ ...current, major: project.field || '', note: `论文项目：${project.title}\n${project.writing_requirements || ''}\n希望专家帮助：` }));
+    }).catch(err => toast.error(err.message));
+    return () => { cancelled = true; };
+  }, [projectId]);
   const [quote, setQuote] = useState(null);
   const [loading, setLoading] = useState(true);
   const [quoting, setQuoting] = useState(false);

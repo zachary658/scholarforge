@@ -1,6 +1,6 @@
 // 全局 Toast 通知组件
 // 用法：在任意组件中调用 toast.success('消息') / toast.error('消息') / toast.info('消息')
-import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Check, X, AlertCircle, Info } from './Icons.jsx';
 
 const ToastContext = createContext(null);
@@ -37,13 +37,13 @@ export function ToastProvider({ children }) {
     return id;
   }, [remove]);
 
-  const api = {
+  const api = useMemo(() => ({
     success: (msg, d) => add('success', msg, d),
     error: (msg, d) => add('error', msg, d ?? 5000),
     info: (msg, d) => add('info', msg, d),
     warning: (msg, d) => add('warning', msg, d),
     remove,
-  };
+  }), [add, remove]);
 
   globalToast = api;
 

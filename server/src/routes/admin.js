@@ -411,9 +411,26 @@ router.delete('/templates/:id', (req, res) => {
 // 不提供 Key 的录入/编辑/存储，从源头杜绝 Key 因拖库/配置失误泄露或被前端截获。
 // 新增模型：在 model-catalog.js 追加预设 + 配置对应环境变量即可，无需改动本接口。
 
-router.get('/models', (_req, res) => {
+router.get('/models', async (_req, res) => {
   // getModels() 已脱敏：仅返回是否已配置（api_key_configured / api_key_masked），不含 Key 明文
-  res.json({ models: getModels() });
+  const { getRoleRouting } = await import('../services/orchestrator.js');
+  res.json({ models: getModels(), roleRouting: getRoleRouting() });
+});
+
+router.put('/models/roles', (req, res) => {
+  const routing = req.body || {};
+  const cleaned = {};
+  for (const group of ['general', 'technical', 'social']) {
+    const roles = routing[group] || {};
+    cleaned[group] = {};
+    for (const role of ['writer', 'reviewer']) {
+      const key = roles[role] || '';
+      if (typeof key !== 'string' || (key && !(role === 'reviewer' && key === 'off') && !getModelPreset(key))) return res.status(400).json({ error: '未知的角色模型' });
+      cleaned[group][role] = key;
+    }
+  }
+  setSetting('ai_role_routing', JSON.stringify(cleaned));
+  res.json({ ok:true, roleRouting:cleaned });
 });
 
 // 设置默认模型（仅接受内置预设的 key）

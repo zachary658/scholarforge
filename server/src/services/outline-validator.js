@@ -100,8 +100,9 @@ export function validateThesisOutlineStructure(outline) {
   }
   if (outline.length > 15) errors.push(`章节数超过上限（最多 15 章，当前 ${outline.length} 章）`);
   for (const ch of outline) {
-    const raw = ch.chapter || ch.title;
+    const raw = ch?.chapter || ch?.title;
     if (typeof raw !== 'string' || !raw.trim()) errors.push('存在缺少标题的章节');
+    if (ch?.sections !== undefined && (!Array.isArray(ch.sections) || ch.sections.some(s => !s || typeof s.title !== 'string' || !s.title.trim()))) errors.push('小节须为包含有效标题的列表');
   }
   return { errors, ok: errors.length === 0 };
 }
@@ -114,8 +115,8 @@ export function validateThesisOutline(outline, { fix = false } = {}) {
   let refSeen = 0;
   let thesisCount = 0;
 
-  for (const ch of outline || []) {
-    const raw = ch.chapter || ch.title || '';
+  for (const ch of Array.isArray(outline) ? outline : []) {
+    const raw = ch?.chapter || ch?.title || '';
     if (!raw) continue;
     const cls = classifyChapter(raw);
     if (cls.kind === 'forbidden') forbiddenChapters.push(raw);

@@ -21,7 +21,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runAI } from '../src/ai-service.js';
 import logger from '../src/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,11 +58,12 @@ export function parseVarValue(value, fallback = null) {
   }
 }
 
-// 模式优先级：用例显式 mode > 用例带了 fixture > 环境变量 SF_PROMPTFOO_MOCK > 默认 live
+// Offline is a hard boundary: explicit live cases exercise the built-in engine,
+// never real credentials. Fixture cases continue testing deterministic assertions.
 export function resolveMode(vars = {}, config = {}, env = process.env) {
+  if (isTruthyEnv(env.SF_PROMPTFOO_MOCK) || config.mock === true) return vars.mode === 'live' && !vars.fixture ? 'builtin' : 'mock';
   if (vars.mode === 'live' || vars.mode === 'mock') return vars.mode;
   if (vars.fixture) return 'mock';
-  if (isTruthyEnv(env.SF_PROMPTFOO_MOCK) || config.mock === true) return 'mock';
   return 'live';
 }
 
@@ -125,7 +125,9 @@ export async function runGeneration(vars = {}, options = {}) {
   const started = Date.now();
   try {
     const params = applyPromptVariant(buildRunParams(vars), prompt, config);
-    const result = await runAI(tool, params);
+    const { runAI } = await import('../src/ai-service.js');
+    const builtinOnly = mode === 'builtin' || config.forceBuiltin === true;
+    const result = await runAI(tool, params, null, builtinOnly ? { provider:'builtin', name:'内置模板引擎', model_name:'builtin' } : null);
     // 基线模式要求走内置模板引擎；若环境已配置真实模型则如实告警，
     // 避免「基线」与「实验组」实际同源却无人知晓，导致对比结论失真。
     if (config.forceBuiltin === true && result.usedRealAI) {
@@ -136,7 +138,7 @@ export async function runGeneration(vars = {}, options = {}) {
       metadata: {
         usedRealAI: !!result.usedRealAI,
         tool,
-        mode: 'live',
+        mode,
         variant: config.variant || 'default',
         latencyMs: Date.now() - started,
       },

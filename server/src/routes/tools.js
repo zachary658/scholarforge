@@ -162,7 +162,7 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
   if (projectId) {
     const ctx = buildProjectContext(projectId, userId, { currentToolType: toolType, currentAction: action });
     if (ctx.context) {
-      params = { ...params, context: ctx.context };
+      params = { ...params, context: [ctx.context, params?.context].filter(Boolean).join('\n\n') };
       contextSummary = ctx.summary;
     }
   }
@@ -458,6 +458,12 @@ router.post('/writing', authRequired, async (req, res) => {
   if (lenErr) return res.status(400).json({ error: lenErr });
 
   // 大纲强制确认：全文生成必须先有已确认的大纲（关联论文工作区）
+  const writingProject = projectId ? getProject(projectId, req.user.id) : null;
+  if (projectId && !writingProject) return res.status(404).json({ error: '工作区不存在' });
+  if (writingProject?.workflow_mode === 'full') {
+    if (type === 'fulltext') return res.status(400).json({ error: '请在完整论文流程中逐章生成并确认，不支持绕过确认一次生成全文' });
+    if (type === 'outline' && (writingProject.workflow_state !== 'outline_review' || writingProject.chapters?.length)) return res.status(400).json({ error: '请在大纲确认阶段生成；已有正文时请保留原结构' });
+  }
   if (type === 'fulltext') {
     if (!hasAgreedAcademicIntegrity(req.user.id)) {
       return res.status(403).json({ error: '请先阅读并同意《学术诚信承诺书》', needAcademicIntegrity: true });
@@ -525,7 +531,7 @@ router.post('/writing', authRequired, async (req, res) => {
     }
     // 大纲生成（免费快速版）：把检索到的真实文献/数据持久化到工作区，
     // 供后续章节/全文生成复用；已有深度蒸馏产物（framework 非空）时保留不覆盖
-    if (type === 'outline' && projectId && sourceRefs?.length) {
+    if (type === 'outline' && projectId && sourceRefs?.length && writingProject?.workflow_mode !== 'full') {
       try {
         const existing = getProject(projectId, req.user.id)?.sources || {};
         if (!existing.framework) {
@@ -554,6 +560,7 @@ router.post('/writing', authRequired, async (req, res) => {
         type,
         topic,
         field,
+        context: writingProject ? `学历：${writingProject.degree || '未指定'}\n写作要求：${writingProject.writing_requirements || '未指定'}\n${type === 'outline' ? '仅输出正文章节及小节；参考文献由系统统一生成，不要作为正文章节。按用户指定的研究类型组织结构；没有实际实验数据时不得默认安排已完成的实验结果或虚构实证结论。' : ''}` : '',
         ...(sourceRefs?.length ? { references: sourceRefs } : {}),
         ...(sourceBenchmarks?.length ? { benchmarks: sourceBenchmarks } : {}),
         ...(sourceTables?.length ? { dataTables: sourceTables } : {}),
@@ -638,7 +645,13 @@ router.post('/writing', authRequired, async (req, res) => {
     if (type === 'outline' && result.projectId && result.content) {
       try {
         const proj = getProject(result.projectId, req.user.id);
-        if (sourceRefs?.length && !proj?.sources?.framework) {
+        if (writingProject?.workflow_mode === 'full' && (!proj || proj.workflow_state !== 'outline_review'
+          || proj.outline_version !== writingProject.outline_version
+          || JSON.stringify(proj.outline) !== JSON.stringify(writingProject.outline)
+          || JSON.stringify(proj.sources) !== JSON.stringify(writingProject.sources))) {
+          throw new Error('生成期间大纲或资料已变更，已保留你最新保存的内容');
+        }
+        if (sourceRefs?.length && !proj?.sources?.framework && proj?.workflow_mode !== 'full') {
           saveProjectSources(result.projectId, req.user.id, {
             framework: proj?.sources?.framework || null,
             references: sourceRefs,
@@ -652,12 +665,13 @@ router.post('/writing', authRequired, async (req, res) => {
           logger.warn('tools', `大纲已确认，跳过自动覆盖 project=${result.projectId}`);
         } else {
           const { outlineTextToStructure } = await import('../services/paper-distillation.js');
-          const structure = outlineTextToStructure(result.content);
+          const structure = outlineTextToStructure(result.content).filter(ch => !/^(?:第[一二三四五六七八九十\d]+章\s*)?(?:参考文献|references|bibliography)$/i.test((ch.chapter || '').trim()));
           if (structure.length > 0) {
             saveProjectOutline(result.projectId, req.user.id, structure);
-          }
+          } else if (writingProject?.workflow_mode === 'full') throw new Error('未解析出有效正文章节');
         }
       } catch (err) {
+        if (writingProject?.workflow_mode === 'full') throw new Error(`大纲未能保存，请重试或手工填写：${err.message}`);
         logger.warn('tools', `大纲结构化写入失败（忽略，仅影响工作区大纲展示）: ${err.message}`);
       }
     }

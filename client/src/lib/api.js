@@ -318,6 +318,7 @@ export const api = {
 
   // ===== admin: 模型（预设目录 + 环境变量 Key，后台仅支持选择默认模型与测试连接） =====
   adminListModels: () => request('/admin/models'),
+  adminSaveModelRoles: (payload) => request('/admin/models/roles', { method:'PUT', body:payload }),
   adminSetDefaultModel: (key) => request('/admin/models/default', { method: 'PUT', body: { key } }),
   adminTestModel: (key) => request(`/admin/models/${key}/test`, { method: 'POST' }),
 
@@ -409,7 +410,8 @@ export const api = {
   saveOutlineValidated: (id, payload) => request(`/workflow/${id}/outline`, { method: 'POST', body: payload }),
   confirmOutlineValidated: (id) => request(`/workflow/${id}/outline/confirm`, { method: 'POST' }),
   generateCurrentChapter: (id, orderNo) => request(`/workflow/${id}/chapters/current/generate`, { method: 'POST', body: orderNo ? { orderNo } : {} }),
-  confirmCurrentChapter: (id) => request(`/workflow/${id}/chapters/current/confirm`, { method: 'POST' }),
+  confirmCurrentChapter: (id, payload) => request(`/workflow/${id}/chapters/current/confirm`, { method: 'POST', body: payload }),
+  reopenResearch: (id) => request(`/workflow/${id}/literature/reopen`, { method: 'POST' }),
   backToChapter: (id, index) => request(`/workflow/${id}/chapters/back`, { method: 'POST', body: { index } }),
   runFinalCheck: (id) => request(`/workflow/${id}/final-check`, { method: 'POST' }),
   generateFinalDocument: (id, payload) => request(`/workflow/${id}/final-document`, { method: 'POST', body: payload || {} }),

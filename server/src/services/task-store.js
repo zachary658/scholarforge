@@ -411,7 +411,9 @@ export function listProjects(userId) {
 }
 
 export function updateProject(projectId, userId, updates) {
-  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent', 'workflow_mode', 'workflow_state', 'current_chapter_index', 'outline_version', 'final_check_json'];
+  const existing = getProject(projectId, userId);
+  if (existing?.workflow_mode === 'full' && ('outline' in updates || 'outline_json' in updates)) throw new Error('请在完整论文流程中修改并确认大纲');
+  const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent'];
   const sets = [];
   const params = [];
   let outlineChanged = false;
@@ -498,6 +500,12 @@ export function confirmOutline(projectId, userId) {
 // 分章节生成与全文生成统一从 sources_json 消费，保证蒸馏结果贯通到正文
 export function saveProjectSources(projectId, userId, sources) {
   if (!projectId || !userId) return false;
+  const existing = getProject(projectId, userId);
+  if (existing?.workflow_mode === 'full' && existing.workflow_state !== 'researching') throw new Error('请先返回文献核验阶段再更新研究资料');
+  if (existing?.workflow_mode === 'full' && existing.chapters?.length) {
+    const identities = refs => JSON.stringify((refs || []).map(r => String(r.doi || r.title || '').trim().toLowerCase()));
+    if (identities(existing.sources?.references) !== identities(sources?.references)) throw new Error('已有正文引用编号绑定当前文献顺序，不能更换或重排文献；请新建项目以保留已有正文');
+  }
   const r = db.prepare(
     'UPDATE projects SET sources_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
   ).run(JSON.stringify(sources || {}), now(), projectId, userId);
@@ -512,8 +520,10 @@ export function saveProjectSources(projectId, userId, sources) {
 // 每次保存新大纲都要求重新确认，避免旧确认被复用于已变更的论文结构。
 export function saveProjectOutline(projectId, userId, outline) {
   if (!projectId || !userId || !Array.isArray(outline) || outline.length === 0) return false;
+  const existing = getProject(projectId, userId);
+  if (existing?.workflow_mode === 'full' && (existing.workflow_state !== 'outline_review' || (existing.chapters?.length && JSON.stringify(existing.outline) !== JSON.stringify(outline)))) throw new Error('请在大纲确认阶段操作，已生成正文的结构需保留');
   const r = db.prepare(
-    'UPDATE projects SET outline_json = ?, outline_confirmed_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?'
+    'UPDATE projects SET outline_json = ?, outline_confirmed_at = NULL, final_check_json = NULL, updated_at = ? WHERE id = ? AND user_id = ?'
   ).run(JSON.stringify(outline), now(), projectId, userId);
   if (r.changes > 0) syncProjectStage(userId, projectId);
   return r.changes > 0;

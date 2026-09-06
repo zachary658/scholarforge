@@ -202,7 +202,7 @@ if (fs.existsSync(clientDist)) {
 }
 
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   logger.info('server', `ScholarForge server running at http://localhost:${PORT}`);
 });
 

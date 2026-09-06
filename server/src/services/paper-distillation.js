@@ -22,6 +22,7 @@
  *   - 图表/表格由代码重绘，且强制附带来源标注，避免查重与学术不端风险
  */
 import { searchMultiSource } from './multi-source-search.js';
+import { hasReferenceProof } from './reference-proof.js';
 import { runAI } from '../ai-service.js';
 import { getDefaultModel } from '../config-store.js';
 import { dedupKeyOf, assertSafeAiResolvedUrl, createSemaphore } from '../utils.js';
@@ -321,7 +322,7 @@ export function isVerifiedWritingReference(ref) {
   const source = String(ref.source_db || '').toLowerCase();
   const trustedSource = ['openalex', 'semantic scholar', 'crossref', 'arxiv'].some((name) => source.includes(name));
   const traceable = Boolean(ref.doi || /^https?:\/\//i.test(String(ref.source_url || '')));
-  return trustedSource && traceable;
+  return (trustedSource || hasReferenceProof(ref)) && traceable;
 }
 
 export function filterVerifiedWritingReferences(references) {
@@ -944,7 +945,7 @@ export function formatReferencesGB(references) {
     const authors = (r.authors || '佚名').replace(/\.\s*$/, '');
     const title = (r.title || '').trim();
     const journal = (r.journal || '').trim();
-    const year = (r.year || '').trim();
+    const year = String(r.year || '').trim();
     const doi = (r.doi || '').trim();
     let line = `[${i + 1}] ${authors}. ${title}`;
     if (journal) line += `[J]. ${journal}`;
@@ -1026,7 +1027,7 @@ export function ensureGroundedVisuals(content, { benchmarks = [], tables = [], r
   let output = String(content || '')
     // 内置演示引擎历史上会输出“示例数据，请替换”的回归表；这类数值没有证据，必须删除。
     .replace(/[^\n]*示例数据[^\n]*\n(?:\s*\n)?(?:\|[^\n]*\|\n)+(?:\s*\n)?[^\n]*示例数据[^\n]*\n?/g, '');
-  if (!/实验|结果|分析|评估|对比|experiment|result/i.test(chapterName)) return output;
+  if (!/实验|结果|分析|评估|对比|文献|综述|experiment|result|literature|review/i.test(chapterName)) return output;
   const existingVega = (output.match(/```vega\b/g) || []).length;
   const labels = [...new Set((benchmarks || []).flatMap((b) => (b.metrics || []).map((m) => m.label)))];
   for (const label of labels) {
@@ -1037,7 +1038,7 @@ export function ensureGroundedVisuals(content, { benchmarks = [], tables = [], r
   }
   // OA 全文不可用时，不编造实验数值；改用检索记录自带的年份与引用次数生成可核查图表。
   const safeRefs = filterVerifiedWritingReferences(references);
-  if ((output.match(/```vega\b/g) || []).length < 2 && safeRefs.length >= 3) {
+  if (/文献|综述|literature|review/i.test(chapterName) && (output.match(/```vega\b/g) || []).length < 2 && safeRefs.length >= 3) {
     const years = new Map();
     for (const ref of safeRefs) {
       const year = String(ref.year || '').match(/(?:19|20)\d{2}/)?.[0];
@@ -1070,7 +1071,7 @@ export function ensureGroundedVisuals(content, { benchmarks = [], tables = [], r
       output += normalized.slice(1).map((row) => `| ${row.join(' | ')} |`).join('\n');
       output += `\n\n数据引自：${table.source || '已核验论文'}${table.year ? `（${table.year}）` : ''}${table.source_url ? `，${table.source_url}` : ''}。`;
     }
-    if ((output.match(/^\|.+\|$/gm) || []).length < 2 && safeRefs.length >= 3) {
+    if (/文献|综述|literature|review/i.test(chapterName) && (output.match(/^\|.+\|$/gm) || []).length < 2 && safeRefs.length >= 3) {
       output += '\n\n### 真实参考论文汇总\n\n| 论文题目 | 年份 | 来源 | DOI/回查入口 |\n| --- | --- | --- | --- |\n';
       output += safeRefs.slice(0, 8).map((ref) => {
         const locator = ref.doi ? `DOI: ${ref.doi}` : ref.source_url;

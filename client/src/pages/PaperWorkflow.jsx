@@ -4,6 +4,7 @@ import { api, downloadDocFile } from '../lib/api.js';
 import { useToast } from '../components/Toast.jsx';
 import { useConfirm } from '../components/ConfirmModal.jsx';
 import FeaturePay from '../components/FeaturePay.jsx';
+import Modal from '../components/Modal.jsx';
 import AcademicIntegrityModal from '../components/AcademicIntegrityModal.jsx';
 import { useAcademicIntegrity } from '../lib/useAcademicIntegrity.js';
 import { FIELDS } from '../lib/constants.js';
@@ -26,7 +27,7 @@ const WF_STEPS = [
 ];
 
 function isVerifiedRef(r) {
-  return Boolean(r && (r.source_url || r.doi || r.source_db));
+  return Boolean(r?.verification_proof);
 }
 
 export default function PaperWorkflow() {
@@ -54,16 +55,24 @@ export default function PaperWorkflow() {
   const [outlineSavedAt, setOutlineSavedAt] = useState(null);
 
   const [references, setReferences] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchNotice, setSearchNotice] = useState('');
+  const [researchBusy, setResearchBusy] = useState(false);
+  const [outlineBusy, setOutlineBusy] = useState(false);
   const [refForm, setRefForm] = useState({ title: '', authors: '', year: '', source_db: '', source_url: '', doi: '' });
 
   const [chapters, setChapters] = useState([]);
+  const currentIdx = wf?.currentChapterIndex || 0;
+  const curChapter = chapters[currentIdx];
   const [generating, setGenerating] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const actionLock = useRef(false);
   const [needPay, setNeedPay] = useState(null);
   const [currentChapterContent, setCurrentChapterContent] = useState('');
 
   const [finalCheck, setFinalCheck] = useState(null);
   const [finalDoc, setFinalDoc] = useState(null);
-  const [expertUrl, setExpertUrl] = useState('');
 
   const pollRef = useRef(null);
   const pollInFlight = useRef(false);
@@ -78,8 +87,10 @@ export default function PaperWorkflow() {
         api.getProject(id),
       ]);
       setWf(w.workflow);
+      setFinalCheck(w.workflow?.finalCheck || null);
       const proj = p.project || p;
       setProject(proj);
+      setSearchQuery(q => q || proj.title || '');
       const idx = WF_STEPS.findIndex((s) => s.key === (w.workflow?.state));
       setStepIdx(idx >= 0 ? idx : 0);
       // 初始化各步骤本地状态
@@ -89,10 +100,6 @@ export default function PaperWorkflow() {
         const gc = await api.getChapters(id);
         setChapters(gc.chapters || []);
         setGenerating(!!gc.generating);
-      } catch {}
-      try {
-        const ec = await api.getExpertConsult(id);
-        setExpertUrl(ec.url || `/app/courses?projectId=${id}`);
       } catch {}
     } catch (err) {
       toast.error('加载工作流失败：' + err.message);
@@ -115,7 +122,7 @@ export default function PaperWorkflow() {
     if (wf?.state === 'chapter_review' && curChapter) {
       setCurrentChapterContent(curChapter.content || '');
     }
-  }, [wf?.state, currentIdx, curChapter?.id]);
+  }, [wf?.state, currentIdx, curChapter?.id, curChapter?.content]);
   const startChapterPoll = useCallback((id) => {
     stopPoll();
     pollRef.current = setInterval(async () => {
@@ -135,6 +142,13 @@ export default function PaperWorkflow() {
     }, 2500);
   }, [stopPoll]);
 
+  // Resume polling after a refresh/navigation during a long-running generation.
+  useEffect(() => {
+    if (projectId && generating) startChapterPoll(projectId);
+    else stopPoll();
+    return stopPoll;
+  }, [projectId, generating, startChapterPoll, stopPoll]);
+
   // ---------- 创作目的弹窗 ----------
   const PURPOSE_KEY = 'sf_purpose_choice';
   const handlePurpose = (choice) => {
@@ -153,6 +167,11 @@ export default function PaperWorkflow() {
   const [createMode, setCreateMode] = useState(false);
   const [createForm, setCreateForm] = useState({ title: '', field: '', degree: '', writingRequirements: '' });
   const [creating, setCreating] = useState(false);
+  useEffect(() => {
+    if (!projectId) {
+      try { if (localStorage.getItem(PURPOSE_KEY) === 'full') { setShowPurpose(false); setCreateMode(true); } } catch {}
+    }
+  }, [projectId]);
   const doCreateAndStart = async (e) => {
     e.preventDefault();
     if (!createForm.title.trim()) { toast.error('请填写论文标题'); return; }
@@ -189,13 +208,33 @@ export default function PaperWorkflow() {
 
   // ---------- 文献检索步骤 ----------
   const verifiedCount = references.filter(isVerifiedRef).length;
+  const searchLiterature = async () => {
+    if (!searchQuery.trim() || researchBusy) return;
+    setResearchBusy(true);
+    setSearchNotice('');
+    try {
+      const data = await api.searchRefs(searchQuery.trim());
+      setSearchResults(data.results || []);
+      setSearchNotice(data.health === 'partial' ? '部分来源暂时不可用，可先检查现有结果或稍后重试。' : !data.results?.length ? '未找到匹配论文，请缩短关键词或加入英文术语。' : '请选择与研究问题相关的论文；可回查不代表内容一定适用。');
+    } catch (err) { setSearchNotice(err.message); }
+    finally { setResearchBusy(false); }
+  };
+  const selectReference = (ref) => {
+    setReferences(current => current.some(r => r.title === ref.title || (r.doi && r.doi === ref.doi)) ? current : [...current, ref]);
+  };
+  const generateOutline = async () => {
+    setOutlineBusy(true);
+    try {
+      await api.writing({ type: 'outline', topic: project.title, field: project.field, projectId });
+      await loadAll(projectId);
+      toast.success('大纲已生成，请编辑并确认');
+    } catch (err) { toast.error(err.message); }
+    finally { setOutlineBusy(false); }
+  };
   const importRefs = async () => {
     try {
       const d = await api.listRefs({ projectId });
-      const mapped = (d.references || []).map((r) => ({
-        title: r.title || '', authors: r.authors || '', year: r.year || '',
-        source_db: r.source_db || r.source || '', source_url: r.source_url || '', doi: r.doi || '',
-      }));
+      const mapped = d.references || [];
       setReferences(mapped);
       toast.success(`已从文献库导入 ${mapped.length} 条`);
     } catch (err) {
@@ -209,28 +248,35 @@ export default function PaperWorkflow() {
   };
   const removeRef = (i) => setReferences(references.filter((_, idx) => idx !== i));
   const confirmLiterature = async () => {
+    if (researchBusy) return;
+    setResearchBusy(true);
     try {
       await api.confirmLiterature(projectId, references);
       await loadAll(projectId);
       toast.success('文献已确认，进入大纲环节');
+      if (!project?.outline?.length) await generateOutline();
     } catch (err) {
       if (err.code === 'LITERATURE_INSUFFICIENT') toast.error(err.message);
       else toast.error('确认失败：' + err.message);
-    }
+    } finally { setResearchBusy(false); }
   };
 
   // ---------- 大纲步骤 ----------
   const loadExistingOutline = () => { setOutline(project?.outline || []); setOutlineFromText(false); setOutlineErrors(null); toast.success('已载入现有大纲'); };
   const saveOutline = async (doConfirm) => {
+    if (outlineBusy) return;
+    setOutlineBusy(true);
     setOutlineErrors(null);
     try {
       const payload = outlineFromText
         ? { text: outlineText, fromText: true, autoFix: true }
         : { outline, autoFix: true };
       if (doConfirm) {
+        await api.saveOutlineValidated(projectId, payload);
         await api.confirmOutlineValidated(projectId);
         await loadAll(projectId);
         toast.success('大纲已确认，开始逐章生成');
+        generateChapter();
       } else {
         await api.saveOutlineValidated(projectId, payload);
         setOutlineSavedAt(Date.now());
@@ -244,7 +290,7 @@ export default function PaperWorkflow() {
       } else {
         toast.error('操作失败：' + err.message);
       }
-    }
+    } finally { setOutlineBusy(false); }
   };
   const addChapter = () => setOutline([...outline, { chapter: `第${outline.length + 1}章 新章节`, sections: [] }]);
   const updateChapterTitle = (i, v) => setOutline(outline.map((c, idx) => idx === i ? { ...c, chapter: v } : c));
@@ -254,8 +300,6 @@ export default function PaperWorkflow() {
   const removeSection = (ci, si) => setOutline(outline.map((c, idx) => idx === ci ? { ...c, sections: (c.sections || []).filter((_, j) => j !== si) } : c));
 
   // ---------- 章节生成 / 确认 ----------
-  const currentIdx = wf?.currentChapterIndex || 0;
-  const curChapter = chapters[currentIdx];
   const doGenerateChapter = async (orderNo) => {
     setGenerating(true);
     try {
@@ -279,29 +323,37 @@ export default function PaperWorkflow() {
     doGenerateChapter();
   };
   const confirmChapter = async () => {
+    if (generating || actionLock.current) return;
+    actionLock.current = true; setActionBusy(true);
     try {
-      const r = await api.confirmCurrentChapter(projectId);
+      const r = await api.confirmCurrentChapter(projectId, { chapterId: curChapter?.id, content: currentChapterContent });
       setWf(r.workflow || wf);
       const idx = WF_STEPS.findIndex((s) => s.key === r.workflow?.state);
       if (idx >= 0) setStepIdx(idx);
       await loadAll(projectId);
       if (r.workflow?.state === 'final_review') toast.success('全部章节已确认，进入全文检查');
-      else toast.success('本章已确认，继续下一章');
+      else { toast.success('本章已确认，正在生成下一章'); await doGenerateChapter(r.workflow?.orderNo); }
     } catch (err) { toast.error(err.message); }
+    finally { actionLock.current = false; setActionBusy(false); }
   };
   const saveCurrentChapter = async () => {
-    if (!curChapter) return;
+    if (!curChapter || generating || actionLock.current) return;
+    actionLock.current = true; setActionBusy(true);
     try { await api.editChapter(projectId, curChapter.id, currentChapterContent); toast.success('本章已保存'); }
     catch (err) { toast.error(err.message); }
+    finally { actionLock.current = false; setActionBusy(false); }
   };
   const regenerateCurrent = async () => {
     if (!curChapter) return;
-    if (!integrity.ensure(async () => {
+    const execute = async () => {
+      setGenerating(true);
       try {
         const r = await api.regenerateChapter(projectId, curChapter.id, { orderNo: wf?.orderNo || undefined });
         setChapters(r.chapters || chapters); await loadAll(projectId); toast.success('已重新生成本章');
-      } catch (err) { const nd = err?.data?.needOrder; if (nd) setNeedPay({ itemType: err.data.itemType || 'writing_fulltext', amount: Number(err.data.amount || 0) }); else toast.error(err.message); }
-    })) return;
+      } catch (err) { toast.error(err.message); }
+      finally { setGenerating(false); }
+    };
+    if (integrity.ensure(execute)) await execute();
   };
   const backToChapter = async (index) => {
     const ok = await confirm({ title: '返回上一步', message: '将回到指定章节重新生成/调整，已确认进度可能重置，确定继续？', confirmText: '返回' });
@@ -316,6 +368,8 @@ export default function PaperWorkflow() {
     catch (err) { toast.error(err.message); }
   };
   const exportFinal = async () => {
+    if (actionLock.current) return;
+    actionLock.current = true; setActionBusy(true);
     try {
       const d = await api.generateFinalDocument(projectId, {});
       setFinalDoc(d.doc || null);
@@ -324,6 +378,7 @@ export default function PaperWorkflow() {
       else if (d.quarto) toast.success('已生成文档');
       await loadAll(projectId);
     } catch (err) { toast.error(err.message); }
+    finally { actionLock.current = false; setActionBusy(false); }
   };
 
   if (loading) {
@@ -331,7 +386,7 @@ export default function PaperWorkflow() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-6 pt-8 pb-24">
       {/* 创作目的选择弹窗 */}
       {showPurpose && (
         <PurposeModal
@@ -395,6 +450,14 @@ export default function PaperWorkflow() {
 
       {/* 步骤导航 */}
       <StepNav stepIdx={stepIdx} state={wf?.state} project={project} />
+      {project && <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+        <p className="font-medium">{wf?.orderNo ? '本项目套餐已绑定，后续章节无需再次支付' : '大纲免费；正文按项目一次付费，生成前显示价格'}</p>
+        <p className="mt-1 text-slate-500">包含全文逐章生成、每章最多 3 次成功重写及 Word 导出。技术失败保留原稿，不扣成功重写次数。人工专家服务另行报价。</p>
+        {wf?.state !== 'researching' && <button disabled={generating || researchBusy || outlineBusy} className="mt-2 text-accent underline" onClick={async () => {
+          if (!await confirm({ title: '重新核验文献', message: '正文会保留，但需要重新确认各章和全文检查。是否继续？' })) return;
+          try { await api.reopenResearch(projectId); await loadAll(projectId); } catch (err) { toast.error(err.message); }
+        }}>重新核验文献</button>}
+      </div>}
 
       {/* 内容区 */}
       {!wf && projectId && (
@@ -428,9 +491,20 @@ export default function PaperWorkflow() {
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button onClick={importRefs} className="btn-ghost text-xs"><Book className="h-3.5 w-3.5" /> 从文献库导入</button>
-              <button onClick={() => window.open(`/app/literature-review?projectId=${projectId}`, '_blank')} className="btn-ghost text-xs">深度文献检索</button>
-              <button onClick={() => window.open(`/app/references?projectId=${projectId}`, '_blank')} className="btn-ghost text-xs">检索文献</button>
             </div>
+            <form className="mt-4 flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); searchLiterature(); }}>
+              <input aria-label="文献检索关键词" className="input min-w-0 flex-1" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="论文题目或中英文关键词" />
+              <button disabled={researchBusy} className="btn-primary">{researchBusy ? '处理中…' : '检索真实论文'}</button>
+            </form>
+            {searchNotice && <p role="status" className="mt-3 text-sm text-slate-600">{searchNotice}</p>}
+            <ul className="mt-3 divide-y divide-slate-100">
+              {searchResults.map((r, i) => <li key={r.doi || r.source_url || i} className="flex items-start justify-between gap-3 py-3">
+                <div className="min-w-0"><p className="text-sm font-medium">{r.title}</p><p className="text-xs text-slate-500">{r.year} · {r.source_db}</p>
+                  {/^https?:\/\//i.test(r.source_url || '') && <a className="text-xs text-accent underline" href={r.source_url} target="_blank" rel="noopener noreferrer">查看来源</a>}
+                </div>
+                <button className="btn-ghost shrink-0 text-xs" disabled={references.some(x => x.title === r.title)} onClick={() => selectReference(r)}>{references.some(x => x.title === r.title) ? '已选择' : '加入论文'}</button>
+              </li>)}
+            </ul>
           </div>
 
           {/* 添加文献表单 */}
@@ -461,14 +535,14 @@ export default function PaperWorkflow() {
                       <div className="truncate text-sm font-medium text-ink">{r.title || '未命名文献'}</div>
                       <div className="text-xs text-slate-400">{r.authors || ''} {r.year ? `· ${r.year}` : ''} {r.source_db ? `· ${r.source_db}` : ''} {r.doi ? `· DOI:${r.doi}` : ''}</div>
                     </div>
-                    <button onClick={() => removeRef(i)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash className="h-4 w-4" /></button>
+                    <button aria-label={`移除文献 ${r.title}`} onClick={() => removeRef(i)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash className="h-4 w-4" /></button>
                   </li>
                 ))}
               </ul>
             )}
             <div className="mt-4 flex justify-end">
-              <button onClick={confirmLiterature} disabled={verifiedCount < 3} className="btn-primary text-sm">
-                <Check className="h-4 w-4" /> 确认文献{verifiedCount < 3 ? '（需≥3篇）' : ''}
+              <button onClick={confirmLiterature} disabled={references.length < 3 || researchBusy} className="btn-primary text-sm">
+                <Check className="h-4 w-4" /> {researchBusy ? '核验中…' : '核验并确认文献'}{references.length < 3 ? '（需≥3篇）' : ''}
               </button>
             </div>
           </div>
@@ -483,7 +557,7 @@ export default function PaperWorkflow() {
               <p className="text-sm text-slate-500">大纲必须是<span className="font-medium text-ink">论文正文章节结构</span>（如：绪论 / 文献综述 / 研究设计 / 现状与问题 / 对策 / 结论），系统会拒绝开题报告式结构。</p>
               <div className="flex gap-2">
                 <button onClick={loadExistingOutline} className="btn-ghost text-xs"><Refresh className="h-3.5 w-3.5" /> 载入现有大纲</button>
-                <button onClick={() => window.open(`/app/writing?projectId=${projectId}&type=outline`, '_blank')} className="btn-ghost text-xs">去 AI 生成大纲</button>
+                <button onClick={generateOutline} disabled={outlineBusy} className="btn-secondary text-xs">{outlineBusy ? '大纲生成中…' : 'AI 生成大纲'}</button>
               </div>
             </div>
             {outlineFromText ? (
@@ -494,13 +568,13 @@ export default function PaperWorkflow() {
                   <div key={ci} className="rounded-lg border border-slate-200 p-3">
                     <div className="flex items-center gap-2">
                       <input value={ch.chapter || ch.title || ''} onChange={(e) => updateChapterTitle(ci, e.target.value)} className="input flex-1 font-medium" placeholder="章节标题" />
-                      <button onClick={() => removeChapter(ci)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash className="h-4 w-4" /></button>
+                      <button aria-label={`移除第 ${ci + 1} 章`} onClick={() => removeChapter(ci)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500"><Trash className="h-4 w-4" /></button>
                     </div>
                     {(ch.sections || []).map((sec, si) => (
                       <div key={si} className="mt-2 flex items-center gap-2 pl-4">
                         <span className="text-slate-300">└</span>
                         <input value={sec.title || ''} onChange={(e) => updateSection(ci, si, e.target.value)} className="input flex-1 text-sm" placeholder="小节标题" />
-                        <button onClick={() => removeSection(ci, si)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"><X className="h-3.5 w-3.5" /></button>
+                        <button aria-label={`移除第 ${ci + 1} 章第 ${si + 1} 小节`} onClick={() => removeSection(ci, si)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"><X className="h-3.5 w-3.5" /></button>
                       </div>
                     ))}
                     <button onClick={() => addSection(ci)} className="mt-2 ml-4 text-xs text-accent hover:underline">+ 添加小节</button>
@@ -525,8 +599,8 @@ export default function PaperWorkflow() {
               </div>
             )}
             <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => saveOutline(false)} className="btn-secondary text-sm"><Save className="h-4 w-4" /> 保存并校验</button>
-              <button onClick={() => saveOutline(true)} className="btn-primary text-sm"><Check className="h-4 w-4" /> 确认大纲并进入正文</button>
+              <button disabled={outlineBusy} onClick={() => saveOutline(false)} className="btn-secondary text-sm"><Save className="h-4 w-4" /> 保存并校验</button>
+              <button disabled={outlineBusy} onClick={() => saveOutline(true)} className="btn-primary text-sm"><Check className="h-4 w-4" /> 确认大纲并进入正文</button>
             </div>
             {outlineSavedAt && !outlineErrors && <p className="mt-2 text-right text-xs text-green-600">大纲已通过结构校验</p>}
           </div>
@@ -541,15 +615,15 @@ export default function PaperWorkflow() {
             <p className="mt-1 text-sm text-slate-500">系统将按大纲<span className="font-medium">一次只生成一章</span>，确认后再继续下一章，保证内容与大纲一致、前后衔接。</p>
             <div className="mt-4 flex items-center justify-between rounded-lg bg-accent-50/60 p-4">
               <div>
-                <div className="text-xs text-slate-500">当前章节（第 {currentIdx + 1} / {chapters.length} 章）</div>
-                <div className="mt-0.5 font-semibold text-ink">{curChapter?.chapter || '—'}</div>
+                <div className="text-xs text-slate-500">当前章节（第 {currentIdx + 1} / {project?.outline?.length || 0} 章）</div>
+                <div className="mt-0.5 font-semibold text-ink">{curChapter?.chapter || project?.outline?.[currentIdx]?.chapter || '—'}</div>
               </div>
               <button onClick={generateChapter} disabled={generating} className="btn-primary text-sm">
                 <Pen className={`h-4 w-4 ${generating ? 'animate-spin' : ''}`} /> {generating ? '生成中…' : '生成本章'}
               </button>
             </div>
             <div className="mt-3 flex justify-end">
-              <button onClick={() => backToChapter(0)} className="btn-ghost text-xs"><ChevronLeft className="h-3.5 w-3.5" /> 返回调整大纲</button>
+              <button disabled={generating} onClick={() => backToChapter(0)} className="btn-ghost text-xs"><ChevronLeft className="h-3.5 w-3.5" /> 返回第一章</button>
             </div>
           </div>
           {/* 已生成章节预览 */}
@@ -580,19 +654,22 @@ export default function PaperWorkflow() {
               <h3 className="font-semibold text-ink">单章确认 · {curChapter?.chapter}</h3>
               <span className="text-xs text-slate-400">第 {currentIdx + 1} / {chapters.length} 章</span>
             </div>
+            {curChapter?.orchestration?.usedRealAI === false && <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">当前为本地模板演示，未调用真实大模型。内容仅用于测试流程，不代表论文质量或真实研究结论。</p>}
             <textarea
-              value={currentChapterContent !== '' ? currentChapterContent : (curChapter?.content || '')}
+              value={currentChapterContent}
+              disabled={generating || actionBusy}
+              aria-label="当前章节正文"
               onChange={(e) => setCurrentChapterContent(e.target.value)}
               className="input mt-3 min-h-[260px] resize-y font-mono text-sm"
               placeholder="本章内容…"
             />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex gap-2">
-                <button onClick={saveCurrentChapter} className="btn-ghost text-xs"><Save className="h-3.5 w-3.5" /> 保存编辑</button>
-                <button onClick={regenerateCurrent} className="btn-ghost text-xs"><Refresh className="h-3.5 w-3.5" /> 重写本章</button>
-                {currentIdx > 0 && <button onClick={() => backToChapter(currentIdx - 1)} className="btn-ghost text-xs"><ChevronLeft className="h-3.5 w-3.5" /> 上一章</button>}
+                <button disabled={generating || actionBusy} onClick={saveCurrentChapter} className="btn-ghost text-xs"><Save className="h-3.5 w-3.5" /> 保存编辑</button>
+                <button disabled={generating || actionBusy || (curChapter?.regenerate_count || 0) >= 3} onClick={regenerateCurrent} className="btn-ghost text-xs"><Refresh className="h-3.5 w-3.5" /> {generating ? '重写中…' : `重写本章（剩余 ${Math.max(0, 3 - (curChapter?.regenerate_count || 0))} 次）`}</button>
+                {currentIdx > 0 && <button disabled={generating || actionBusy} onClick={() => backToChapter(currentIdx - 1)} className="btn-ghost text-xs"><ChevronLeft className="h-3.5 w-3.5" /> 上一章</button>}
               </div>
-              <button onClick={confirmChapter} className="btn-primary text-sm"><Check className="h-4 w-4" /> 确认本章并继续</button>
+              <button disabled={generating || actionBusy || !currentChapterContent.trim()} onClick={confirmChapter} className="btn-primary text-sm"><Check className="h-4 w-4" /> {actionBusy ? '处理中…' : '保存并确认本章，继续下一步'}</button>
             </div>
           </div>
         </div>
@@ -606,7 +683,7 @@ export default function PaperWorkflow() {
               <h3 className="font-semibold text-ink">全文一致性检查</h3>
               <button onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> 运行检查</button>
             </div>
-            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验章节完整性、大纲一致性、重复段落、图表编号、引文范围与未引用文献。</p>}
+            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验章节完整性、逐章确认、大纲一致性、重复段落、引文范围与遗留占位符。规则检查不替代人工学术审核。</p>}
             {finalCheck && (
               <div className="mt-3 space-y-2">
                 {finalCheck.checks.map((c) => (
@@ -623,7 +700,8 @@ export default function PaperWorkflow() {
               </div>
             )}
             <div className="mt-4 flex justify-end gap-3">
-              <button onClick={exportFinal} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> 生成最终文档（Word）</button>
+              <button disabled={actionBusy} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
+              <button onClick={exportFinal} disabled={!finalCheck?.passed || generating || actionBusy} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '导出中…' : '生成最终文档（Word）'}</button>
             </div>
             {finalDoc && <p className="mt-2 text-right text-xs text-green-600">已生成最终文档</p>}
           </div>
@@ -636,9 +714,10 @@ export default function PaperWorkflow() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50"><Check className="h-7 w-7 text-green-500" /></div>
           <h3 className="mt-3 text-lg font-semibold text-ink">论文已生成完成</h3>
           <p className="mt-1 text-sm text-slate-500">最终文档已导出，可在「工作区详情 → 成果文件」中再次下载。</p>
-          <div className="mt-5 flex justify-center gap-3">
-            <button onClick={exportFinal} className="btn-secondary text-sm"><FileWord className="h-4 w-4" /> 重新下载 Word</button>
-            <button onClick={() => window.open(expertUrl || `/app/courses?projectId=${projectId}`, '_blank')} className="btn-primary text-sm"><ExternalLink className="h-4 w-4" /> 进入专家咨询</button>
+          <div className="mt-5 flex flex-wrap justify-center gap-3">
+            <button disabled={actionBusy} onClick={exportFinal} className="btn-secondary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '下载中…' : '重新下载 Word'}</button>
+            <button disabled={actionBusy} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
+            <button onClick={() => navigate(`/app/courses?projectId=${projectId}`)} className="btn-primary text-sm"><ExternalLink className="h-4 w-4" /> 进入专家咨询</button>
           </div>
         </div>
       )}
@@ -653,13 +732,13 @@ export default function PaperWorkflow() {
       )}
 
       {/* 右下角专家服务悬浮入口 */}
-      {projectId && (
+      {projectId && wf?.state === 'completed' && (
         <button
-          onClick={() => window.open(expertUrl || `/app/courses?projectId=${projectId}`, '_blank')}
+          onClick={() => navigate(`/app/courses?projectId=${projectId}`)}
           className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-sm font-medium text-white shadow-card hover:opacity-90"
-          title="AI 数字员工专家团队，可携带本论文上下文"
+          title="联系人工专家，携带当前论文资料"
         >
-          <Brain className="h-4 w-4" /> 专家服务
+          <Brain className="h-4 w-4" /> 对 AI 文章不满意？咨询专家
         </button>
       )}
 
@@ -672,16 +751,25 @@ export default function PaperWorkflow() {
 
 // ========== 步骤导航 ==========
 function StepNav({ stepIdx, state, project }) {
+  const navRef = useRef(null);
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector('[aria-current="step"]');
+    if (active) nav.scrollLeft = Math.max(0, active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2);
+  }, [state]);
+  const steps = WF_STEPS.filter(s => s.key !== 'chapter_review');
+  const activeIdx = steps.findIndex(s => s.key === (state === 'chapter_review' ? 'chapter_generating' : state));
+  stepIdx = Math.max(0, activeIdx);
   return (
     <div className="mt-6">
-      <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {WF_STEPS.map((s, i) => (
+      <div ref={navRef} className="relative flex items-center gap-1 overflow-x-auto pb-1">
+        {steps.map((s, i) => (
           <div key={s.key} className="flex items-center">
-            <div className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${i === stepIdx ? 'bg-accent text-white' : i < stepIdx ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
+            <div aria-current={i === stepIdx ? 'step' : undefined} className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${i === stepIdx ? 'bg-accent text-white' : i < stepIdx ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
               <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${i === stepIdx ? 'bg-white/20' : i < stepIdx ? 'bg-green-500 text-white' : 'bg-slate-200'}`}>{i < stepIdx ? <Check className="h-3 w-3" /> : i + 1}</span>
-              {s.label}
+              {s.key === 'chapter_generating' ? (project?.outline?.length ? `正文（第 ${(project?.current_chapter_index || 0) + 1}/${project.outline.length} 章）` : '逐章生成与确认') : s.label}
             </div>
-            {i < WF_STEPS.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />}
+            {i < steps.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />}
           </div>
         ))}
       </div>
@@ -692,8 +780,7 @@ function StepNav({ stepIdx, state, project }) {
 // ========== 创作目的选择弹窗 ==========
 function PurposeModal({ remember, setRemember, onChoose }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-[520px] max-w-full rounded-xl bg-white shadow-card">
+    <Modal onClose={() => onChoose('other')} label="选择创作目的" panelClassName="w-[520px] max-w-full">
         <div className="border-b border-slate-100 px-6 py-4">
           <h3 className="font-semibold text-ink">你希望 ScholarForge 如何帮你？</h3>
           <p className="mt-1 text-sm text-slate-500">选择后会进入对应的工作模式，可随时关闭并重新选择。</p>
@@ -717,7 +804,6 @@ function PurposeModal({ remember, setRemember, onChoose }) {
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> 记住我的选择
           </label>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

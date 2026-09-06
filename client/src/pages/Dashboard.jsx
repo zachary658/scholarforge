@@ -97,7 +97,7 @@ export default function Dashboard() {
               </p>
             </div>
             <button
-              onClick={() => navigate(`/app/projects`)}
+              onClick={() => navigate(recentProject.workflow_mode === 'full' ? `/app/paper-workflow?projectId=${recentProject.id}` : `/app/projects?projectId=${recentProject.id}`)}
               className="btn-primary flex-shrink-0"
             >
               继续 <ChevronRight className="h-4 w-4" />

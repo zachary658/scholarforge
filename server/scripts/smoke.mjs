@@ -31,14 +31,14 @@ const email = `smoke_${Date.now()}@test.com`;
 let r = await req('/api/auth/register', { method: 'POST', auth: false, body: { email, password: 'pass1234', name: '冒烟测试', agree_terms: true, device_fingerprint: 'a'.repeat(16) } });
 if (r.status !== 200 || !r.data.token) {
   // 风控拦截：改用管理员接口创建测试用户
-  let ar = await req('/api/auth/login', { method: 'POST', auth: false, body: { email: 'admin@scholarforge.com', password: process.env.ADMIN_PASSWORD || 'Admin123456' } });
+  let ar = await req('/api/auth/login', { method: 'POST', auth: false, body: { email: process.env.ADMIN_EMAIL || 'admin@scholarforge.com', password: process.env.ADMIN_PASSWORD || 'Admin123456' } });
   const adminToken = ar.data?.token;
   if (adminToken) {
     await req('/api/admin/users', { method: 'POST', body: { email, password: 'pass1234', name: '冒烟测试' }, tk: adminToken });
   }
   r = await req('/api/auth/login', { method: 'POST', auth: false, body: { email, password: 'pass1234' } });
 }
-check('注册/登录测试用户', r.status === 200 && r.data.token, JSON.stringify(r.data).slice(0, 120));
+check('注册/登录测试用户', r.status === 200 && r.data.token, r.data.error || '');
 token = r.data.token || '';
 
 // 2. 免费大纲生成（内置模板，无 AI key）
@@ -101,8 +101,9 @@ check('订单完成后单章重写可用（3次上限内）', r.status === 200 &
 // 11. 无真实来源的孤立项目必须先被文献门禁拦截，不能先收费再生成无依据正文
 r = await req('/api/projects', { method: 'POST', body: { title: '第三个项目', field: '计算机科学' } });
 const p3 = r.data.project?.id;
-await req(`/api/projects/${p3}`, { method: 'PUT', body: { outline: [{ chapter: '第一章', sections: [{ title: '1.1' }] }] } });
-await req(`/api/projects/${p3}/outline/confirm`, { method: 'POST' });
+await req(`/api/projects/${p3}`, { method: 'PUT', body: { outline: [{ chapter: '第一章 绪论', sections: [{ title: '1.1 研究背景' }] }] } });
+r = await req(`/api/projects/${p3}/outline/confirm`, { method: 'POST' });
+check('无文献项目的大纲前置确认成功', r.status === 200, r.data.error || '');
 r = await req(`/api/projects/${p3}/chapters/generate`, { method: 'POST', body: {} });
 check('无真实文献不进入付费正文生成', r.status === 400 && /真实文献不足/.test(r.data.error || ''), r.data.error || '');
 

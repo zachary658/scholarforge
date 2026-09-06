@@ -10,6 +10,7 @@ import { claimOrderExecution } from './order-claim.js';
 import { transitionServiceToCompleted, transitionServiceToFailed } from './order-state.js';
 import logger from '../logger.js';
 import { replaceCitePlaceholders, filterVerifiedWritingReferences } from './paper-distillation.js';
+import { hasReferenceProof } from './reference-proof.js';
 
 // 蒸馏产物注入：分章节生成消费工作区 sources（smart-writing 持久化的框架/文献/数据/表格）
 async function buildChapterAIParams(project, ch, context, userId, projectId) {
@@ -71,7 +72,21 @@ const running = new Set();
 const MAX_CHAPTERS = 15;
 
 export function isGenerating(projectId) {
-  return running.has(projectId);
+  if (running.has(projectId)) return true;
+  const row = db.prepare('SELECT chapters_json, updated_at FROM projects WHERE id = ?').get(projectId);
+  try { return now() - Number(row?.updated_at || 0) < 900 && JSON.parse(row?.chapters_json || '[]').some(c => c.status === 'processing'); }
+  catch { return false; }
+}
+
+function claimChapterWork(projectId, index) {
+  const row = db.prepare('SELECT chapters_json, updated_at FROM projects WHERE id = ?').get(projectId);
+  const chapters = JSON.parse(row?.chapters_json || '[]');
+  if (!chapters[index]) throw new Error('章节不存在');
+  if (now() - Number(row.updated_at) < 900 && chapters.some(c => c.status === 'processing')) throw new Error('该论文正在生成，请稍后再试');
+  chapters[index] = { ...chapters[index], status: 'processing' };
+  const r = db.prepare('UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ? AND chapters_json = ?')
+    .run(JSON.stringify(chapters), now(), projectId, row.chapters_json);
+  if (r.changes !== 1) throw new Error('章节状态已变化，请刷新后重试');
 }
 
 function getChapters(projectId) {
@@ -86,7 +101,7 @@ function saveChapters(projectId, chapters, orderId = null) {
     db.prepare("UPDATE orders SET updated_at = ? WHERE id = ? AND service_status = 'processing'")
       .run(now(), orderId);
   }
-  db.prepare('UPDATE projects SET chapters_json = ?, updated_at = ? WHERE id = ?')
+  db.prepare('UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ?')
     .run(JSON.stringify(chapters), now(), projectId);
 }
 
@@ -132,8 +147,17 @@ function buildChapters(outline) {
   }));
 }
 
+function initializeChapterDrafts(project) {
+  const drafts = buildChapters(project.outline);
+  // Multiple workers may both observe an empty project; only the first initializes it.
+  db.prepare("UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ? AND (chapters_json IS NULL OR chapters_json = '[]' OR chapters_json = '')")
+    .run(JSON.stringify(drafts), now(), project.id);
+  return getChapters(project.id);
+}
+
 // 生成单章内容
 async function generateChapter(project, chapters, idx) {
+  if (project.workflow_mode === 'full' && !(project.sources?.references || []).every(hasReferenceProof)) throw new Error('文献未核验，请先重新确认真实文献');
   const userId = project.user_id;
   const ch = chapters[idx];
   const outlineText = (project.outline || []).map((c) => {
@@ -160,6 +184,18 @@ async function generateChapter(project, chapters, idx) {
     result = await runAI('writing', params);
   }
   let content = result.content || '';
+  if (!content.trim()) throw new Error('模型未返回正文，请重试');
+  const refs = project.sources?.references || [];
+  if ([...content.matchAll(/\[CITE:(\d+)\]/g)].some(m => Number(m[1]) < 1 || Number(m[1]) > refs.length)) throw new Error('生成内容包含无效引文，已停止交付，请重试');
+  // Resolve only retrieved project-owned evidence; never trust model-supplied source labels.
+  content = content.replace(/\[EVIDENCE:(\d+)[^\]]*\]/g, (_marker, id) => {
+    if (!(params.evidenceIds || []).map(String).includes(id)) throw new Error('生成内容包含未知证据编号');
+    const evidence = db.prepare('SELECT * FROM evidence_chunks WHERE id = ? AND user_id = ? AND project_id = ?').get(Number(id), userId, project.id);
+    if (!evidence) throw new Error('证据已更新，请重新生成');
+    const refIndex = refs.findIndex(r => r.title === evidence.source_title);
+    if (refIndex >= 0) return `[CITE:${refIndex + 1}]`;
+    return `（资料：${evidence.source_title}${evidence.page_number ? `，第${evidence.page_number}页` : ''}）`;
+  });
 
   // 占位符替换：引用编号 + 数据图表由代码生成（与全文生成路径保持一致）
   // 注意：章节内只替换编号，不追加参考文献列表（参考文献在全文合并/导出时统一生成一次）
@@ -176,7 +212,7 @@ async function generateChapter(project, chapters, idx) {
   } catch (err) {
     logger.warn('chapter', `章节占位符替换失败（忽略）: ${err.message}`);
   }
-  return { content, orchestration: result.plan ? { plan: result.plan, agents: result.agents } : null };
+  return { content, orchestration: result.plan ? { plan: result.plan, agents: result.agents, tokens: result.tokens, elapsedMs: result.elapsedMs, usedRealAI: result.usedRealAI } : null };
 }
 
 // 启动分章节生成（异步执行，立即返回）
@@ -205,8 +241,7 @@ export async function startChapterGeneration(userId, projectId, orderNo) {
 
   let chapters = getChapters(projectId);
   if (chapters.length === 0) {
-    chapters = buildChapters(project.outline);
-    saveChapters(projectId, chapters);
+    chapters = initializeChapterDrafts(project);
   }
 
   // 全部已完成则直接返回，不重复入队
@@ -268,18 +303,22 @@ export async function regenerateChapter(userId, projectId, chapterId, orderNo) {
   const project = getProject(projectId, userId);
   if (!project) throw new Error('工作区不存在');
   // 章节重写是同一订单服务的一部分：允许订单已完成（completed）后继续重写（受重写次数上限约束）
-  const bill = validateOrder(userId, orderNo, projectId, { allowCompleted: true });
+  const bill = validateOrder(userId, orderNo || project.workflow_order_no, projectId, { allowCompleted: true });
   if (!bill.ok) {
     const err = new Error(bill.error);
     err.needOrder = bill.needOrder;
     err.itemType = bill.itemType;
     throw err;
   }
+  if (bill.order.project_id !== projectId || (project.workflow_mode === 'full' && project.workflow_order_no && bill.order.order_no !== project.workflow_order_no)) {
+    throw new Error('重写须使用已绑定本论文的原项目订单');
+  }
 
   const chapters = getChapters(projectId);
   const idx = chapters.findIndex((c) => c.id === chapterId);
   if (idx === -1) throw new Error('章节不存在');
-  if (running.has(projectId)) throw new Error('该论文正在生成中，请稍后再试');
+  if (project.workflow_mode === 'full' && (idx !== project.current_chapter_index || !['chapter_review', 'chapter_generating'].includes(project.workflow_state))) throw new Error('请先返回对应章节再重写');
+  if (isGenerating(projectId)) throw new Error('该论文正在生成中，请稍后再试');
 
   // 重写次数限制：每章最多重写 3 次（含生成完成后），防一单无限白嫖 AI
   const regenCount = Number(chapters[idx].regenerate_count || 0);
@@ -287,18 +326,20 @@ export async function regenerateChapter(userId, projectId, chapterId, orderNo) {
     throw new Error(`该章节重写次数已达上限（每章最多 ${MAX_REGEN_PER_CHAPTER} 次）`);
   }
 
+  const previous = { ...chapters[idx] };
+  claimChapterWork(projectId, idx);
   running.add(projectId);
   try {
-    chapters[idx] = { ...chapters[idx], status: 'processing', content: '', regenerate_count: regenCount + 1 };
-    saveChapters(projectId, chapters);
     const generated = await generateChapter(project, chapters, idx);
     const cur = getChapters(projectId);
-    cur[idx] = { ...cur[idx], content: generated.content, orchestration: generated.orchestration, status: 'done' };
+    cur[idx] = { ...cur[idx], content: generated.content, orchestration: generated.orchestration, status: 'done', confirmed: false, confirmed_at: null, regenerate_count: regenCount + 1 };
+    for (let i = idx + 1; i < cur.length; i++) cur[i] = { ...cur[i], confirmed: false, confirmed_at: null };
     saveChapters(projectId, cur);
+    if (project.workflow_mode === 'full') db.prepare("UPDATE projects SET workflow_state = 'chapter_review' WHERE id = ?").run(projectId);
     return { chapter: cur[idx], chapters: cur };
   } catch (err) {
     const cur = getChapters(projectId);
-    cur[idx] = { ...cur[idx], status: 'failed' };
+    cur[idx] = previous;
     saveChapters(projectId, cur);
     throw err;
   } finally {
@@ -313,7 +354,10 @@ export function editChapter(userId, projectId, chapterId, content) {
   const chapters = getChapters(projectId);
   const idx = chapters.findIndex((c) => c.id === chapterId);
   if (idx === -1) throw new Error('章节不存在');
-  chapters[idx] = { ...chapters[idx], content: String(content || '') };
+  if (running.has(projectId) || chapters.some(c => c.status === 'processing')) throw new Error('生成中，请稍后再编辑');
+  if (project.workflow_mode === 'full' && (idx !== project.current_chapter_index || project.workflow_state !== 'chapter_review')) throw new Error('请在当前章节确认页面编辑');
+  chapters[idx] = { ...chapters[idx], content: String(content || ''), confirmed: false, confirmed_at: null };
+  for (let i = idx + 1; i < chapters.length; i++) chapters[i] = { ...chapters[i], confirmed: false, confirmed_at: null };
   db.prepare('UPDATE projects SET final_check_json = NULL, updated_at = ? WHERE id = ? AND user_id = ?').run(now(), projectId, userId);
   saveChapters(projectId, chapters);
   return { chapter: chapters[idx], chapters };
@@ -330,7 +374,7 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
     throw new Error('真实文献不足：请先完成深度文献调研，至少取得 3 篇可回查论文后再生成正文');
   }
   // 订单号由工作流层从项目持久化权益中补齐；这里仍保留严格的订单/项目归属校验。
-  const bill = validateOrder(userId, orderNo, projectId);
+  const bill = validateOrder(userId, orderNo, projectId, { allowCompleted: project.workflow_mode === 'full' });
   if (!bill.ok) {
     const err = new Error(bill.error);
     err.needOrder = bill.needOrder;
@@ -339,8 +383,7 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
   }
   let chapters = getChapters(projectId);
   if (chapters.length === 0) {
-    chapters = buildChapters(project.outline);
-    saveChapters(projectId, chapters);
+    chapters = initializeChapterDrafts(project);
   }
   if (!chapters[chapterIndex]) throw new Error('章节不存在');
   if (chapters[chapterIndex].status === 'done') {
@@ -355,10 +398,11 @@ export async function generateSingleChapter(userId, projectId, chapterIndex, ord
   if (!alreadyBoundToProject && !claimOrderExecution(bill.order, { projectId })) {
     throw new Error('该订单正在生成中或服务已结束，请勿重复提交');
   }
+  // Persist paid entitlement before calling the model: timeouts must not reopen checkout.
+  if (project.workflow_mode === 'full') db.prepare('UPDATE projects SET workflow_order_no = COALESCE(workflow_order_no, ?) WHERE id = ? AND user_id = ?').run(bill.order.order_no, projectId, userId);
+  claimChapterWork(projectId, chapterIndex);
   running.add(projectId);
   try {
-    chapters[chapterIndex] = { ...chapters[chapterIndex], status: 'processing' };
-    saveChapters(projectId, chapters, bill.order.id);
     const generated = await generateChapter(project, chapters, chapterIndex);
     const cur = getChapters(projectId);
     cur[chapterIndex] = { ...cur[chapterIndex], content: generated.content, orchestration: generated.orchestration, status: 'done' };

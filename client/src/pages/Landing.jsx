@@ -96,7 +96,7 @@ export default function Landing() {
                 {siteDesc}
               </div>
               <h1 className="animate-fade-up text-[52px] font-extrabold leading-[1.08] tracking-tight" style={{ animationDelay: '0.08s' }}>
-                10 分钟出稿
+                从真实资料开始
                 <br />
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-sky-300 bg-clip-text text-transparent">真实文献可溯源</span>
               </h1>
@@ -155,7 +155,7 @@ export default function Landing() {
                     <div className="flex items-center gap-1.5 font-semibold">
                       <Book className="h-3.5 w-3.5" />真实文献（可溯源）
                     </div>
-                    <p className="mt-1">张伟, 李娜. 深度学习在医学影像分割中的应用研究[J]. 计算机学报, 2023. <span className="text-emerald-600">来源：中国知网 CNKI</span></p>
+                    <p className="mt-1">在项目中检索论文、打开来源链接，确认后再用于写作。此卡片为界面示意，不代表已生成的研究成果。</p>
                   </div>
                 </div>
               </div>

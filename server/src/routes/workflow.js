@@ -5,10 +5,16 @@ import {
   createFullPaperWorkflow, getWorkflowState, confirmLiterature,
   saveOutlineValidated, confirmOutlineValidated, generateCurrentChapter,
   confirmChapter, backToChapter, runFinalCheck, generateFinalDocument, buildExpertContext,
+  reopenResearch,
 } from '../services/workflow-service.js';
 import { getFeaturePrice } from '../config-store.js';
 
 const router = Router();
+
+router.post('/:id/literature/reopen', authRequired, (req, res) => {
+  try { res.json({ workflow: reopenResearch(Number(req.params.id), req.user.id) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
 
 // 创建「生成完整论文」工作流（写入模式/初始状态 + 论文元信息）
 router.post('/:id/start', authRequired, (req, res) => {
@@ -31,10 +37,10 @@ router.get('/:id/state', authRequired, (req, res) => {
 });
 
 // researching → outline_review：确认/保存真实文献，校验可溯源文献数
-router.post('/:id/literature/confirm', authRequired, (req, res) => {
+router.post('/:id/literature/confirm', authRequired, async (req, res) => {
   const { references } = req.body || {};
   try {
-    const wf = confirmLiterature(parseInt(req.params.id, 10), req.user.id, references);
+    const wf = await confirmLiterature(parseInt(req.params.id, 10), req.user.id, references);
     res.json({ ok: true, workflow: wf });
   } catch (err) {
     res.status(err.code === 'LITERATURE_INSUFFICIENT' ? 422 : 400).json({ error: err.message, code: err.code });
@@ -82,7 +88,7 @@ router.post('/:id/chapters/current/generate', authRequired, async (req, res) => 
 // chapter_review：确认当前章 → 推进到下一章或 final_review
 router.post('/:id/chapters/current/confirm', authRequired, (req, res) => {
   try {
-    const wf = confirmChapter(req.user.id, parseInt(req.params.id, 10));
+    const wf = confirmChapter(req.user.id, parseInt(req.params.id, 10), req.body || {});
     res.json({ ok: true, workflow: wf });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -126,11 +132,6 @@ router.get('/:id/expert-consult', authRequired, (req, res) => {
   if (!ctx) return res.status(404).json({ error: '工作区不存在' });
   const params = new URLSearchParams({
     projectId: String(ctx.projectId),
-    title: ctx.title,
-    field: ctx.field,
-    degree: ctx.degree,
-    writingRequirements: ctx.writingRequirements,
-    completion: ctx.completion,
   });
   res.json({ ok: true, context: ctx, url: `/app/courses?${params.toString()}` });
 });

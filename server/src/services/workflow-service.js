@@ -3,15 +3,19 @@
 // 复用已有 chapter-service（分章节生成/订单校验/文献≥3 校验/单章重写）与 task-store（项目持久化）。
 import db from '../db.js';
 import { getProject, saveProjectOutline, saveProjectSources, confirmOutline } from './task-store.js';
-import { filterVerifiedWritingReferences } from './paper-distillation.js';
-import { validateThesisOutline, fixOutline, parseAndValidateOutline } from './outline-validator.js';
-import { generateSingleChapter } from './chapter-service.js';
+import { validateThesisOutline, parseAndValidateOutline, stripChapterNumber } from './outline-validator.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { generateSingleChapter, isGenerating } from './chapter-service.js';
 import { mergeChapters } from './chapter-service.js';
 import { generateDocx } from './docx-generator.js';
 import { isQuartoConfigured, exportDocument } from './quarto-exporter.js';
 import { now } from '../utils.js';
-import logger from '../logger.js';
 import { transitionServiceToCompleted } from './order-state.js';
+import { inspectPaper, contentVersion } from './final-quality.js';
+import { resolveWritingReferences } from './reference-verification.js';
+import { hasReferenceProof } from './reference-proof.js';
 
 export const WORKFLOW_STATES = [
   'setup', 'researching', 'outline_review', 'chapter_generating', 'chapter_review', 'final_review', 'completed',
@@ -43,7 +47,16 @@ function getChapters(projectId) {
 }
 
 function saveChaptersRaw(projectId, chapters) {
-  db.prepare('UPDATE projects SET chapters_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(chapters), now(), projectId);
+  db.prepare('UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ?').run(JSON.stringify(chapters), now(), projectId);
+}
+
+export function reopenResearch(projectId, userId) {
+  const p = getProject(projectId, userId);
+  if (!p || p.workflow_mode !== 'full') throw new Error('完整论文工作流不存在');
+  if (isGenerating(projectId)) throw new Error('请等待当前章节生成完成');
+  saveChaptersRaw(projectId, (p.chapters || []).map(c => ({ ...c, confirmed: false, confirmed_at: null })));
+  db.prepare("UPDATE projects SET workflow_state = 'researching', outline_confirmed_at = NULL, current_chapter_index = 0 WHERE id = ? AND user_id = ?").run(projectId, userId);
+  return getWorkflowState(projectId, userId);
 }
 
 export function getWorkflowState(projectId, userId) {
@@ -96,22 +109,29 @@ export function createFullPaperWorkflow(projectId, userId, meta = {}) {
 }
 
 // researching 阶段：确认/保存真实文献，校验可溯源文献数量，推进到 outline_review
-export function confirmLiterature(projectId, userId, references) {
+export async function confirmLiterature(projectId, userId, references) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
   const sources = p.sources || {};
+  if (p.workflow_mode !== 'full' || p.workflow_state !== 'researching') throw new Error('请在文献确认阶段操作');
   const candidate = Array.isArray(references) ? references : (sources.references || []);
-  const verified = filterVerifiedWritingReferences(candidate);
+  const verified = await resolveWritingReferences(candidate);
   if (verified.length < 3) {
     const e = new Error(`真实可溯源文献不足（需≥3篇，当前 ${verified.length} 篇）。请先完成检索，不得补造参考文献。`);
     e.code = 'LITERATURE_INSUFFICIENT';
     throw e;
   }
+  if (getProject(projectId, userId)?.workflow_state !== 'researching') throw new Error('流程已变更，请刷新后重试');
+  sources.references = verified;
+  saveProjectSources(projectId, userId, sources);
   return setState(projectId, userId, 'outline_review');
 }
 
 // 保存并校验大纲（结构文本或结构化数组）。invalid 时抛出 OUTLINE_INVALID 并附带详情。
 export function saveOutlineValidated(projectId, userId, outlineOrText, { fromText = false, autoFix = false } = {}) {
+  const project = getProject(projectId, userId);
+  if (!project) throw new Error('工作区不存在');
+  if (project.workflow_mode === 'full' && project.workflow_state !== 'outline_review') throw new Error('请在大纲确认阶段修改结构');
   let outline;
   let parsed = null;
   if (fromText) {
@@ -121,6 +141,11 @@ export function saveOutlineValidated(projectId, userId, outlineOrText, { fromTex
     outline = outlineOrText;
     parsed = validateThesisOutline(outline, { fix: false });
   }
+  // Bibliography is compiled from verified records at export, never authored as a chapter.
+  if (Array.isArray(outline)) {
+    outline = outline.filter(ch => !/^(参考文献|references|bibliography)$/i.test(stripChapterNumber(ch?.chapter || ch?.title)));
+    parsed = validateThesisOutline(outline, { fix: false });
+  }
   if (!parsed.valid) {
     const e = new Error('大纲未通过论文结构校验，请修订后确认（开题报告式结构需改为论文正文章节）。');
     e.code = 'OUTLINE_INVALID';
@@ -128,6 +153,7 @@ export function saveOutlineValidated(projectId, userId, outlineOrText, { fromTex
     throw e;
   }
   if (autoFix && parsed.outline && parsed.outline !== outline) outline = parsed.outline;
+  if (project.chapters?.length && JSON.stringify(outline) !== JSON.stringify(project.outline)) throw new Error('已生成正文的项目暂不支持更换大纲结构，请新建项目以保留已有内容');
   // 提升大纲版本，并清空旧确认（要求重新确认）
   db.prepare('UPDATE projects SET outline_version = outline_version + 1, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(now(), projectId, userId);
@@ -143,23 +169,28 @@ export function confirmOutlineValidated(projectId, userId) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
   const v = validateThesisOutline(p.outline || [], { fix: false });
+  if (p.workflow_mode === 'full' && ((p.sources?.references || []).length < 3 || !p.sources.references.every(hasReferenceProof))) throw new Error('请先确认可回查的真实文献');
   if (!v.valid) {
     const e = new Error('大纲未通过论文结构校验，无法进入正文生成。');
     e.code = 'OUTLINE_INVALID';
     e.details = v;
     throw e;
   }
-  const np = confirmOutline(projectId, userId);
+  if (p.workflow_mode !== 'full') { confirmOutline(projectId, userId); return getWorkflowState(projectId, userId); }
+  if (p.workflow_state !== 'outline_review') throw new Error('当前阶段不能确认大纲');
+  confirmOutline(projectId, userId);
   return setState(projectId, userId, 'chapter_generating');
 }
 
 // 生成当前章节（单章），完成后若成功则进入 chapter_review
 export async function generateCurrentChapter(userId, projectId, orderNo) {
   const wf = getWorkflowState(projectId, userId);
+  if (!wf || wf.mode !== 'full') throw new Error('完整论文工作流不存在');
   if (wf.state !== 'chapter_generating' && wf.state !== 'chapter_review') {
     throw new Error('当前状态不允许生成章节（需在 chapter_generating/chapter_review）');
   }
   const idx = wf.currentChapterIndex;
+  if (orderNo && wf.orderNo && orderNo !== wf.orderNo) throw new Error('请使用本项目已绑定的套餐订单');
   // 支付成功后的项目订单号持久化在项目中；后续章节/刷新后不再要求用户重复支付。
   const effectiveOrderNo = orderNo || wf.orderNo || null;
   const r = await generateSingleChapter(userId, projectId, idx, effectiveOrderNo);
@@ -167,8 +198,6 @@ export async function generateCurrentChapter(userId, projectId, orderNo) {
     db.prepare('UPDATE projects SET workflow_order_no = ?, updated_at = ? WHERE id = ? AND user_id = ?')
       .run(effectiveOrderNo, now(), projectId, userId);
   }
-  sources.references = verified;
-  saveProjectSources(projectId, userId, sources);
   const chapters = getChapters(projectId);
   if (chapters[idx] && chapters[idx].status === 'done') {
     setState(projectId, userId, 'chapter_review');
@@ -177,13 +206,21 @@ export async function generateCurrentChapter(userId, projectId, orderNo) {
 }
 
 // 确认当前章节：标记 confirmed，推进 currentChapterIndex；若全部完成 → final_review
-export function confirmChapter(userId, projectId) {
+export function confirmChapter(userId, projectId, { content, chapterId } = {}) {
   const wf = getWorkflowState(projectId, userId);
-  if (wf.state !== 'chapter_review') throw new Error('当前没有可确认的章节');
+  if (!wf || wf.state !== 'chapter_review' || isGenerating(projectId)) throw new Error('当前没有可确认的章节或正在生成');
   const idx = wf.currentChapterIndex;
   const chapters = getChapters(projectId);
   if (!chapters[idx]) throw new Error('章节不存在');
   if (chapters[idx].status !== 'done') throw new Error('该章节尚未生成完成，无法确认');
+  if (chapterId && chapterId !== chapters[idx].id) throw new Error('章节已切换，请刷新后确认');
+  if (chapters.slice(0, idx).some(c => !c.confirmed)) throw new Error('请按顺序确认前面的章节');
+  if (content !== undefined && (typeof content !== 'string' || content.length > 200000)) throw new Error('章节正文格式不正确或过长');
+  if (content !== undefined && content !== chapters[idx].content) {
+    for (let i = idx + 1; i < chapters.length; i++) chapters[i] = { ...chapters[i], confirmed: false, confirmed_at: null };
+  }
+  if (content !== undefined) chapters[idx].content = String(content);
+  if (!String(chapters[idx].content || '').trim()) throw new Error('请先填写正文再确认');
   chapters[idx] = { ...chapters[idx], confirmed: true, confirmed_at: now() };
   saveChaptersRaw(projectId, chapters);
 
@@ -199,11 +236,16 @@ export function confirmChapter(userId, projectId) {
 // 返回上一章（调整大纲或重写）
 export function backToChapter(userId, projectId, index) {
   const wf = getWorkflowState(projectId, userId);
+  if (!wf || isGenerating(projectId)) throw new Error('工作流不存在或正在生成');
   if (wf.state === 'completed' || wf.state === 'final_review' || wf.state === 'chapter_review' || wf.state === 'chapter_generating') {
     const total = (wf.project.outline || []).length;
     const idx = Math.max(0, Math.min(index ?? wf.currentChapterIndex - 1, total - 1));
+    if (!Number.isInteger(idx) || idx > wf.currentChapterIndex) throw new Error('请按顺序操作章节');
+    const chapters = getChapters(projectId);
+    for (let i = idx; i < chapters.length; i++) chapters[i] = { ...chapters[i], confirmed: false, confirmed_at: null };
+    saveChaptersRaw(projectId, chapters);
     db.prepare('UPDATE projects SET current_chapter_index = ?, workflow_state = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-      .run(idx, 'chapter_generating', now(), projectId, userId);
+      .run(idx, chapters[idx]?.status === 'done' ? 'chapter_review' : 'chapter_generating', now(), projectId, userId);
     return getWorkflowState(projectId, userId);
   }
   throw new Error('当前状态不可返回上一步');
@@ -213,98 +255,27 @@ export function backToChapter(userId, projectId, index) {
 export function runFinalCheck(projectId, userId) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
-  const chapters = p.chapters || [];
-  const outline = p.outline || [];
-  const checks = [];
-
-  // 1. 章节编号连续 & 全部已确认/生成
-  const notDone = chapters.filter((c) => c.status !== 'done');
-  checks.push({
-    key: 'chapter_complete',
-    status: notDone.length === 0 ? 'pass' : 'fail',
-    detail: notDone.length === 0 ? '全部章节已生成' : `有 ${notDone.length} 章尚未生成：${notDone.map((c) => c.chapter).join('、')}`,
-  });
-
-  // 2. 标题与大纲一致（章节数与大纲一致，且章名对应）
-  const nameMatch = chapters.length === outline.length &&
-    chapters.every((c, i) => (c.chapter || '').replace(/^第.章\s*/, '') === (outline[i]?.chapter || outline[i]?.title || '').replace(/^第.章\s*/, ''));
-  checks.push({
-    key: 'outline_consistency',
-    status: nameMatch ? 'pass' : 'warn',
-    detail: nameMatch ? '章节标题与大纲一致' : '部分章节标题与大纲不完全一致（可继续，但建议核对）',
-  });
-
-  // 3. 重复段落（跨章节正文去重）
-  const bodies = chapters.map((c) => (c.content || '').trim()).filter(Boolean);
-  let dupCount = 0;
-  for (let i = 0; i < bodies.length; i++) {
-    for (let j = i + 1; j < bodies.length; j++) {
-      if (bodies[i].length > 200 && bodies[i] === bodies[j]) dupCount += 1;
-    }
+  const result = inspectPaper(p);
+  if (!(p.sources?.references || []).every(hasReferenceProof)) {
+    result.passed = false;
+    result.checks.push({ key: 'reference_proof', status: 'fail', detail: '文献记录发生变化或尚未经过服务端核验' });
   }
-  checks.push({
-    key: 'duplicate_paragraphs',
-    status: dupCount === 0 ? 'pass' : 'fail',
-    detail: dupCount === 0 ? '未发现完全重复的章节正文' : `检测到 ${dupCount} 处重复章节正文`,
-  });
-
-  // 4. 图表编号连续（## 图1 / 表1 顺序）
-  const figureNums = [];
-  const tableNums = [];
-  for (const b of bodies) {
-    for (const m of b.matchAll(/图\s*(\d+)/g)) figureNums.push(Number(m[1]));
-    for (const m of b.matchAll(/表\s*(\d+)/g)) tableNums.push(Number(m[1]));
-  }
-  const figOk = figureNums.length === 0 || figureNums.every((n, i) => i === 0 || n === figureNums[i - 1] + 1);
-  const tabOk = tableNums.length === 0 || tableNums.every((n, i) => i === 0 || n === tableNums[i - 1] + 1);
-  checks.push({
-    key: 'figure_numbering',
-    status: figOk && tabOk ? 'pass' : 'warn',
-    detail: figOk && tabOk ? '图表编号连续' : '图表编号存在跳号（建议核对）',
-  });
-
-  // 5. 引文对应 & 无法核验引用
-  const refs = (p.sources?.references || []).filter((r) => r && (r.source_url || r.doi || r.source_db));
-  const cited = new Set();
-  const unverifiable = [];
-  const refPattern = /\[(\d+(?:[,-]\d+)*)\]/g;
-  for (const b of bodies) {
-    for (const m of b.matchAll(refPattern)) {
-      for (const part of m[1].split(',')) {
-        const n = Number(part.trim());
-        if (Number.isFinite(n)) cited.add(n);
-        else if (/\D/.test(part)) unverifiable.push(part);
-      }
-    }
-  }
-  const maxRef = refs.length;
-  const outOfRange = [...cited].filter((n) => n < 1 || n > maxRef);
-  checks.push({
-    key: 'citation_range',
-    status: outOfRange.length === 0 ? 'pass' : 'fail',
-    detail: outOfRange.length === 0 ? `引文编号均在 1–${maxRef} 范围内` : `存在超出文献范围的引文编号：${outOfRange.join(', ')}`,
-  });
-
-  // 6. 未引用文献
-  const uncited = Math.max(0, maxRef - cited.size);
-  checks.push({
-    key: 'uncited_references',
-    status: uncited === 0 ? 'pass' : 'warn',
-    detail: uncited === 0 ? '全部文献均被正文引用' : `有 ${uncited} 篇文献未被正文引用（建议补充引用或移除）`,
-  });
-
-  const failed = checks.filter((c) => c.status === 'fail');
-  const result = {
-    passed: failed.length === 0,
-    generatedAt: now(),
-    checks,
-  };
-  db.prepare('UPDATE projects SET final_check_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(result), now(), projectId);
+  db.prepare('UPDATE projects SET final_check_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .run(JSON.stringify(result), now(), projectId, userId);
   return result;
 }
 
 // 生成最终文档（复用 chapters 合并 + docx 生成）
-export async function generateFinalDocument(projectId, userId, { template_id, format } = {}) {
+const exportsInFlight = new Map();
+export async function generateFinalDocument(projectId, userId, options = {}) {
+  const key = `${userId}:${projectId}:${options.template_id || ''}:${options.format || 'docx'}`;
+  if (exportsInFlight.has(key)) return exportsInFlight.get(key);
+  const pending = exportFinalDocument(projectId, userId, options);
+  exportsInFlight.set(key, pending);
+  try { return await pending; } finally { exportsInFlight.delete(key); }
+}
+
+async function exportFinalDocument(projectId, userId, { template_id, format } = {}) {
   const wf = getWorkflowState(projectId, userId);
   if (!wf || !['final_review', 'completed'].includes(wf.state)) throw new Error('当前尚未完成逐章确认，不能生成最终文档');
   const existingCheck = wf.finalCheck;
@@ -312,6 +283,16 @@ export async function generateFinalDocument(projectId, userId, { template_id, fo
     throw new Error('请先运行全文一致性检查，并修复所有失败项后再输出最终文档');
   }
   const merged = mergeChapters(userId, projectId);
+  if (existingCheck.contentVersion !== contentVersion(wf.project) || !inspectPaper(wf.project).passed || !(wf.project.sources?.references || []).every(hasReferenceProof)) {
+    throw new Error('内容已更新或仍有未确认章节，请重新运行全文检查');
+  }
+  const cached = existingCheck.finalDocument;
+  if ((!format || format === 'docx') && cached && cached.templateId === (template_id || null)) {
+    const row = db.prepare('SELECT id, file_path FROM generated_docs WHERE id = ? AND user_id = ? AND project_id = ?').get(cached.id, userId, projectId);
+    if (row && existsSync(join(fileURLToPath(new URL('../../uploads/docs/', import.meta.url)), row.file_path))) {
+      return { doc: { id: row.id, downloadUrl: `/api/docs/download/${row.id}` }, content: merged.content, workflow: wf };
+    }
+  }
   let template = null;
   if (template_id) {
     template = db.prepare('SELECT * FROM templates WHERE id = ? AND (user_id = ? OR is_global = 1)').get(template_id, userId);
@@ -338,6 +319,12 @@ export async function generateFinalDocument(projectId, userId, { template_id, fo
       template,
     });
   }
+  const latest = getWorkflowState(projectId, userId);
+  if (!latest || !['final_review', 'completed'].includes(latest.state) || contentVersion(latest.project) !== existingCheck.contentVersion) {
+    throw new Error('导出期间内容已改变，请重新确认并检查后导出');
+  }
+  if (doc) db.prepare('UPDATE projects SET final_check_json = ? WHERE id = ? AND user_id = ?')
+    .run(JSON.stringify({ ...existingCheck, finalDocument: { id: doc.id, templateId: template_id || null } }), projectId, userId);
   // 项目套餐在最终文档成功生成后才结束；逐章阶段保持 processing 以便复用权益。
   const finalOrderNo = wf.orderNo;
   if (finalOrderNo) {

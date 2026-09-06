@@ -19,6 +19,14 @@ test('章节生成轮询禁止并发请求', () => {
   assert.match(code, /finally \{ pollInFlightRef\.current = false; \}/);
 });
 
+test('完整论文在生成中刷新后恢复轮询，离开页面清理定时器', () => {
+  const code = source('../src/pages/PaperWorkflow.jsx');
+  assert.match(code, /if \(projectId && generating\) startChapterPoll\(projectId\)/);
+  assert.match(code, /\[projectId, generating, startChapterPoll, stopPoll\]/);
+  assert.match(code, /if \(pollInFlight\.current\) return/);
+  assert.match(code, /return stopPoll/);
+});
+
 test('任务重试使用可清理的递归 timeout，不使用异步 interval', () => {
   const code = source('../src/pages/MyTasks.jsx');
   assert.doesNotMatch(code, /setInterval\(async/);

@@ -59,16 +59,19 @@ test('ensureGroundedVisuals：实验章节自动补入至少两张真实指标�
   assert.ok(out.includes('| 方法 | 准确率 |'));
 });
 
-test('ensureGroundedVisuals：没有实验指标时用真实文献元数据补足图表并删除示例数值', () => {
+test('ensureGroundedVisuals：缺实验数据不拿文献统计凑数，综述可使用文献元数据', () => {
   const references = [2022, 2023, 2024].map((year, i) => ({
     title: `Real Paper ${i}`, year, source_db: 'OpenAlex', source_url: `https://openalex.org/W${i}`,
     cited_by_count: 10 + i,
   }));
   const example = '结果如下（示例数据，请替换为真实数据）：\n\n| 方法 | 准确率 | F1 |\n| --- | --- | --- |\n| A | 99 | 98 |\n\n注：以上是示例数据，请替换为真实数据。';
   const out = ensureGroundedVisuals(example, { references }, '第四章 实验结果');
-  assert.equal((out.match(/```vega/g) || []).length, 2);
-  assert.ok(out.includes('真实参考论文汇总'));
+  assert.equal((out.match(/```vega/g) || []).length, 0);
+  assert.ok(!out.includes('真实参考论文汇总'));
   assert.ok(!out.includes('| A | 99 | 98 |'));
+  const review = ensureGroundedVisuals('', { references }, '文献综述');
+  assert.equal((review.match(/```vega/g) || []).length, 2);
+  assert.ok(review.includes('真实参考论文汇总'));
 });
 
 test('replaceCitePlaceholders：越界引用被移除', () => {

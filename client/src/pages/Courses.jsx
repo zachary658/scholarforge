@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { toast } from '../components/Toast.jsx';
 import { Book, BookOpen, Check, Gift, Refresh, Wechat, ArrowRight, Receipt } from '../components/Icons.jsx';
@@ -37,6 +37,15 @@ function reqSummary(r) {
 
 export default function Courses() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get('projectId');
+  const [project, setProject] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) { setProject(null); return; }
+    api.getProject(projectId).then(d => { if (!cancelled) setProject(d.project); }).catch(err => toast.error(err.message));
+    return () => { cancelled = true; };
+  }, [projectId]);
   const [courses, setCourses] = useState([]);
   const [myCourses, setMyCourses] = useState([]);
   const [serviceWechat, setServiceWechat] = useState('');
@@ -83,6 +92,7 @@ export default function Courses() {
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-8">
+      {project && <div className="card mb-5 p-4"><p className="font-medium">为《{project.title}》预约人工指导</p><p className="mt-1 text-sm text-slate-500">{project.field} · {project.degree} · 已带入论文要求，选择服务后可补充需要专家帮助的部分。</p></div>}
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">论文 1 对 1 指导</h1>
@@ -199,7 +209,7 @@ export default function Courses() {
                         </div>
                       </div>
                       <button
-                        onClick={() => navigate(`/app/courses/quote?course=${c.id}`)}
+                        onClick={() => navigate(`/app/courses/quote?course=${c.id}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`)}
                         className="btn-primary mt-4 w-full"
                       >
                         {c.purchased ? (

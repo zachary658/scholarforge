@@ -13,6 +13,8 @@ const PROVIDER_LABELS = {
 
 export default function AdminModels() {
   const [models, setModels] = useState([]);
+  const [roleRouting, setRoleRouting] = useState({});
+  const [savingRoles, setSavingRoles] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [setting, setSetting] = useState(null); // 正在设为默认的模型 key
@@ -25,6 +27,7 @@ export default function AdminModels() {
     try {
       const data = await api.adminListModels();
       setModels(Array.isArray(data.models) ? data.models : []);
+      setRoleRouting(data.roleRouting || {});
     } catch (err) {
       setError(err.message);
     } finally {
@@ -83,7 +86,7 @@ export default function AdminModels() {
             <p className="mt-1 leading-relaxed">
               每个模型的 API Key 通过服务器环境变量 <code className="rounded bg-white/60 px-1 font-mono text-xs">LLM_API_KEY_&lt;KEY&gt;</code>{' '}
               注入（如 <code className="rounded bg-white/60 px-1 font-mono text-xs">LLM_API_KEY_DEEPSEEK</code>），
-              不写入数据库、不返回给前端，杜绝 Key 被盗用或泄露的风险。
+              不写入数据库、不返回给前端，降低数据库泄露或前端暴露带来的风险。仍需妥善保护服务器环境变量。
             </p>
             <p className="mt-1 leading-relaxed">
               后续新增模型：只需在服务端 <code className="rounded bg-white/60 px-1 font-mono text-xs">model-catalog.js</code>{' '}
@@ -96,6 +99,22 @@ export default function AdminModels() {
       {error && (
         <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
+
+      <section className="card mt-6 p-5">
+        <h2 className="font-semibold">按学科配置写作与独立审校</h2>
+        <p className="mt-1 text-sm text-slate-500">未指定主写模型时使用默认模型；自动审校使用另一已配置模型，没有第二个模型时跳过。请依据你自己的学科样例评测选择，系统不预设某家模型一定更强。</p>
+        <div className="mt-4 space-y-3">
+          {[['general','通用'],['technical','理工科'],['social','人文社科']].map(([group,label]) => <div key={group} className="grid items-center gap-2 sm:grid-cols-3">
+            <span className="text-sm">{label}</span>
+            {['writer','reviewer'].map(role => <select key={role} aria-label={`${label}${role === 'writer' ? '主写' : '审校'}模型`} className="input text-sm" value={roleRouting[group]?.[role] || ''} onChange={e => setRoleRouting(r => ({...r,[group]:{...r[group],[role]:e.target.value}}))}>
+              <option value="">{role === 'writer' ? '默认主写模型' : '自动选择独立审校'}</option>
+              {role === 'reviewer' && <option value="off">关闭模型审校（保留规则检查）</option>}
+              {models.filter(m => m.api_key_configured || m.key === roleRouting[group]?.[role]).map(m => <option key={m.key} value={m.key}>{m.name}{m.api_key_configured ? '' : '（未配置，运行时回退）'}</option>)}
+            </select>)}
+          </div>)}
+        </div>
+        <button className="btn-primary mt-4" disabled={savingRoles || loading} onClick={async () => { setSavingRoles(true); try { const d = await api.adminSaveModelRoles(roleRouting); setRoleRouting(d.roleRouting); toast.success('角色分工已保存'); } catch(err) { toast.error(err.message); } finally { setSavingRoles(false); } }}>{savingRoles ? '保存中…' : '保存角色分工'}</button>
+      </section>
 
       {loading ? (
         <div className="mt-6 text-sm text-slate-400">加载中…</div>
@@ -181,7 +200,7 @@ export default function AdminModels() {
           })}
 
           <div className="rounded-lg bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-500">
-            未选择默认模型或所选模型未配置 Key 时，系统自动启用备用写作引擎（标准模式），保证所有功能可用。
+            请至少配置一个可用写作模型。开发环境可用模板演示流程；生产环境的完整论文正文不会以演示模板代替真实模型交付。
           </div>
         </div>
       )}

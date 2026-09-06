@@ -409,7 +409,7 @@ function buildUserPrompt(tool, params) {
     case 'review':
       return `请审校以下论文内容：\n\n${wrapUserContent(params.text || params.content || '')}${ctx}`;
     case 'revise':
-      return `审校报告：\n${wrapUserContent(params.review || '（无）')}\n\n规则检查发现的问题：\n${wrapUserContent(params.findings || '（无）')}\n\n论文全文：\n${wrapUserContent(params.content || '')}\n\n请输出修订后的完整论文。`;
+      return `审校报告：\n${wrapUserContent(params.review || '（无）')}\n\n规则检查发现的问题：\n${wrapUserContent(params.findings || '（无）')}\n\n论文全文：\n${wrapUserContent(params.content || '')}\n\n请输出修订后的完整论文。${ctx}`;
     case 'review_verdict':
       return `请复核以下论文：\n\n${wrapUserContent(params.content || '')}`;
     default:

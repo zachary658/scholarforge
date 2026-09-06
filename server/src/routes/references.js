@@ -9,6 +9,7 @@ import { replaceEvidenceSource, removeEvidenceSource } from '../services/evidenc
 import { searchMultiSource, verifyReferenceDois } from '../services/multi-source-search.js';
 import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
 import { classifyReferenceSearch, shouldCacheReferenceSearch } from '../services/research-quality.js';
+import { attestReference } from '../services/reference-proof.js';
 
 const router = Router();
 
@@ -69,7 +70,7 @@ router.get('/search', authRequired, async (req, res) => {
     }));
     const checked = await verifyReferenceDois(candidates, { limit: 12 });
     const rejectedDoiCount = checked.filter((work) => work.doi_verified === false).length;
-    const results = checked.filter((work) => work.doi_verified !== false);
+    const results = checked.filter((work) => work.doi_verified !== false).map(attestReference);
     const sources_used = search.sources_used || [];
     const warnings = search.errors || [];
     const health = classifyReferenceSearch({ results, sources_used, errors: warnings });
