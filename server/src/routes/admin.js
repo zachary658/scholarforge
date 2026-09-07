@@ -420,12 +420,14 @@ router.get('/models', async (_req, res) => {
 router.put('/models/roles', (req, res) => {
   const routing = req.body || {};
   const cleaned = {};
+  const orchestrationRoles = ['architect', 'evidence', 'methodologist', 'visual', 'writer', 'reviewer', 'verifier', 'synthesizer'];
   for (const group of ['general', 'technical', 'social']) {
     const roles = routing[group] || {};
     cleaned[group] = {};
-    for (const role of ['writer', 'reviewer']) {
+    for (const role of orchestrationRoles) {
       const key = roles[role] || '';
-      if (typeof key !== 'string' || (key && !(role === 'reviewer' && key === 'off') && !getModelPreset(key))) return res.status(400).json({ error: '未知的角色模型' });
+      if (typeof key !== 'string' || (key && key !== 'off' && !getModelPreset(key))) return res.status(400).json({ error: '未知的角色模型' });
+      if (role === 'writer' && key === 'off') return res.status(400).json({ error: '章节主笔不能关闭' });
       cleaned[group][role] = key;
     }
   }

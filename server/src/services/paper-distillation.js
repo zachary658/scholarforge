@@ -24,7 +24,8 @@
 import { searchMultiSource } from './multi-source-search.js';
 import { hasReferenceProof } from './reference-proof.js';
 import { runAI } from '../ai-service.js';
-import { getDefaultModel } from '../config-store.js';
+import { getConfiguredModels } from '../config-store.js';
+import { getRoleModel } from './orchestrator.js';
 import { dedupKeyOf, assertSafeAiResolvedUrl, createSemaphore } from '../utils.js';
 
 // 出站 PDF 下载并发上限：防止大量并发外站请求拖垮出网带宽 / 触发目标站限流（L-3）
@@ -47,8 +48,7 @@ let _hasRealAICacheAt = 0;
 function hasRealAI() {
   const now = Date.now();
   if (_hasRealAICache !== null && now - _hasRealAICacheAt < 60_000) return _hasRealAICache;
-  const model = getDefaultModel();
-  _hasRealAICache = !!(model && model.provider !== 'builtin' && model.api_key);
+  _hasRealAICache = getConfiguredModels().length > 0;
   _hasRealAICacheAt = now;
   return _hasRealAICache;
 }
@@ -76,7 +76,7 @@ async function translateAbstractIfNeeded(abstract, tokenAcc) {
 // ===== Map 阶段：单篇论文框架提取 =====
 // 从摘要中提取：研究方法、创新点、主要结论、结构特征
 // 有真实AI时用AI提取（更准确），否则用规则提取（关键词匹配）
-export async function extractFramework(paper, tokenAcc) {
+export async function extractFramework(paper, tokenAcc, field = '') {
   const abstract = paper.abstract || '';
   if (!abstract) {
     return {
@@ -95,10 +95,12 @@ export async function extractFramework(paper, tokenAcc) {
   if (hasRealAI()) {
     // 用 AI 提取框架（JSON 模式：结构化输出，替代脆弱的正则解析）
     try {
+      const evidenceModel = getRoleModel({ field, task: 'research', role: 'evidence' });
+      if (!evidenceModel) throw new Error('证据分析角色未启用');
       const result = await runAI('framework_extract', {
         topic: paper.title,
         context: `摘要：${zhAbstract}`,
-      }, { type: 'json_object' });
+      }, { type: 'json_object' }, evidenceModel);
       if (tokenAcc) {
         tokenAcc.promptTokens += result.promptTokens || 0;
         tokenAcc.completionTokens += result.completionTokens || 0;
@@ -158,7 +160,9 @@ const DEFAULT_PERSPECTIVES = [
 export async function discoverPerspectives(topic, field, tokenAcc) {
   if (hasRealAI()) {
     try {
-      const result = await runAI('perspective_extract', { topic, field }, { type: 'json_object' });
+      const architectModel = getRoleModel({ field, task: 'research', role: 'architect' });
+      if (!architectModel) throw new Error('结构规划角色未启用');
+      const result = await runAI('perspective_extract', { topic, field }, { type: 'json_object' }, architectModel);
       if (tokenAcc) {
         tokenAcc.promptTokens += result.promptTokens || 0;
         tokenAcc.completionTokens += result.completionTokens || 0;
@@ -436,7 +440,7 @@ export async function smartWriting(params) {
   for (let i = 0; i < papersForMap.length; i += batchSize) {
     const batch = papersForMap.slice(i, i + batchSize);
     const batchFrameworks = await Promise.all(batch.map(async (p) => {
-      const f = await extractFramework(p, tokenAcc).catch(() => null);
+      const f = await extractFramework(p, tokenAcc, field).catch(() => null);
       if (f) f.perspective = p._view || '综合';
       return f;
     }));
@@ -457,7 +461,7 @@ export async function smartWriting(params) {
     context: buildFrameworkContext(mergedFramework, mergedPapers),
     references,
     benchmarks: enrichedBenchmarks,
-  });
+  }, null, getRoleModel({ field, task: 'outline', role: 'writer' }));
   tokenAcc.promptTokens += outlineResult.promptTokens || 0;
   tokenAcc.completionTokens += outlineResult.completionTokens || 0;
 

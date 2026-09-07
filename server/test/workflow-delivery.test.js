@@ -127,6 +127,67 @@ test('多模型计划遵守角色配置、单模型降级，且不返回 API 密
   }
 });
 
+test('指挥中枢按章节任务并行组织专家、双审和总编，且支持无网络测试', async () => {
+  const { setSetting } = await import('../src/config-store.js');
+  const { analyzeAcademicMission, orchestrateAcademicTask, orchestrateChapter } = await import('../src/services/orchestrator.js');
+  process.env.LLM_API_KEY_DEEPSEEK = 'orchestrator-test-deepseek';
+  process.env.LLM_API_KEY_QWEN = 'orchestrator-test-qwen';
+  setSetting('ai_role_routing', JSON.stringify({
+    technical: {
+      architect: 'deepseek', evidence: 'qwen', methodologist: 'deepseek', visual: 'qwen',
+      writer: 'qwen', reviewer: 'deepseek', verifier: 'deepseek', synthesizer: 'qwen',
+    },
+  }));
+  const calls = [];
+  const runner = async (tool, params, _format, model) => {
+    calls.push({ tool, model: model.key });
+    const draft = '## 2.1 研究方法\n本节基于已核验证据说明方法边界与实施步骤。\n\n## 2.2 结果分析\n本节仅陈述证据包能够支持的结果。';
+    const content = tool === 'writing' || tool === 'proposal' ? draft
+      : tool === 'orchestrator_synthesize' ? `${params.content}\n\n以上结论均受现有证据范围约束。`
+        : tool === 'orchestrator_review' || tool === 'orchestrator_verify' ? '通过\n未发现需要修改的硬问题。'
+          : `${tool} 工作简报`;
+    return { content, model: { key: model.key, name: model.name }, tokens: 10, promptTokens: 5, completionTokens: 5, usedRealAI: true };
+  };
+  try {
+    const mission = analyzeAcademicMission({ field: '计算机科学', chapter: { chapter: '第二章 实验方法与结果分析' } });
+    assert.equal(mission.profile, 'empirical');
+    assert.equal(mission.needsMethodologist, true);
+    assert.equal(mission.needsVisual, true);
+
+    const result = await orchestrateChapter({
+      project: { title: '可信学术写作系统', field: '计算机科学' },
+      chapter: { chapter: '第二章 实验方法与结果分析', sections: [{ title: '研究方法' }, { title: '结果分析' }] },
+      context: '仅使用项目证据。',
+      references: refs,
+      runner,
+    });
+    assert.equal(result.plan.mode, 'multi-model');
+    assert.equal(result.usedRealAI, true);
+    assert.match(result.content, /证据范围约束/);
+    assert.deepEqual(new Set(calls.map((item) => item.model)), new Set(['deepseek', 'qwen']));
+    for (const tool of ['orchestrator_plan', 'orchestrator_evidence', 'orchestrator_method', 'orchestrator_visual', 'writing', 'orchestrator_review', 'orchestrator_verify', 'orchestrator_synthesize']) {
+      assert.ok(calls.some((item) => item.tool === tool), `${tool} 应被调用`);
+    }
+    assert.equal(result.agents.length, 8);
+    assert.ok(result.agents.every((agent) => agent.status === 'success'));
+
+    calls.length = 0;
+    const proposal = await orchestrateAcademicTask({
+      tool: 'proposal',
+      params: { topic: '可信学术写作系统', field: '计算机科学', research_content: '研究系统方法与验证方案' },
+      runner,
+    });
+    assert.equal(proposal.model.name, '多模型指挥中枢');
+    assert.equal(proposal.orchestration.plan.mode, 'multi-model');
+    assert.ok(calls.some((item) => item.tool === 'proposal' && item.model === 'qwen'));
+    assert.ok(calls.some((item) => item.tool === 'orchestrator_verify' && item.model === 'deepseek'));
+  } finally {
+    delete process.env.LLM_API_KEY_DEEPSEEK;
+    delete process.env.LLM_API_KEY_QWEN;
+    setSetting('ai_role_routing', '{}');
+  }
+});
+
 test('离线质量评测不能被 live 用例切换到真实 API', async () => {
   const { resolveMode, runGeneration } = await import('../scripts/promptfoo-provider.mjs');
   const env = { SF_PROMPTFOO_MOCK:'1' };

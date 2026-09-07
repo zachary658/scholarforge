@@ -1,5 +1,5 @@
 import db from './db.js';
-import { MODEL_CATALOG, getModelPreset, getModelKeyFromEnv } from './model-catalog.js';
+import { MODEL_CATALOG, getModelPreset, getModelKeyFromEnv, getModelRuntimeConfig } from './model-catalog.js';
 
 // 读取单个设置
 export function getSetting(key, fallback = '') {
@@ -211,16 +211,18 @@ export function getDefaultModel() {
   if (!preset) return null;
   const apiKey = getModelKeyFromEnv(preset);
   if (!apiKey) return null;
+  const runtime = getModelRuntimeConfig(preset);
   return {
     id: null,
     key: preset.key,
     name: preset.name,
     provider: preset.provider,
-    base_url: preset.base_url,
+    base_url: runtime.base_url,
     api_key: apiKey,
-    model_name: preset.model_name,
+    model_name: runtime.model_name,
     temperature: preset.temperature ?? 0.7,
     max_tokens: preset.max_tokens || 2048,
+    strengths: preset.strengths || [],
     is_default: 1,
     is_active: 1,
   };
@@ -231,7 +233,8 @@ export function getConfiguredModel(key) {
   const preset = getModelPreset(key);
   const apiKey = getModelKeyFromEnv(preset);
   if (!preset || !apiKey) return null;
-  return { id: null, key: preset.key, name: preset.name, provider: preset.provider, base_url: preset.base_url, api_key: apiKey, model_name: preset.model_name, temperature: preset.temperature, max_tokens: preset.max_tokens };
+  const runtime = getModelRuntimeConfig(preset);
+  return { id: null, key: preset.key, name: preset.name, provider: preset.provider, base_url: runtime.base_url, api_key: apiKey, model_name: runtime.model_name, temperature: preset.temperature, max_tokens: preset.max_tokens, strengths: preset.strengths || [] };
 }
 
 export function getConfiguredModels() {
@@ -243,15 +246,17 @@ export function getModels() {
   const defaultKey = getSetting('ai_default_model', '');
   return MODEL_CATALOG.map((m) => {
     const keyConfigured = !!getModelKeyFromEnv(m);
+    const runtime = getModelRuntimeConfig(m);
     return {
       id: m.key,
       key: m.key,
       name: m.name,
       provider: m.provider,
-      base_url: m.base_url,
-      model_name: m.model_name,
+      base_url: runtime.base_url,
+      model_name: runtime.model_name,
       temperature: m.temperature ?? 0.7,
       max_tokens: m.max_tokens || 2048,
+      strengths: m.strengths || [],
       env_key: m.env_key,
       api_key_configured: keyConfigured,
       api_key_masked: keyConfigured ? `已通过 ${m.env_key} 环境变量配置` : `未配置（需设置 ${m.env_key}）`,

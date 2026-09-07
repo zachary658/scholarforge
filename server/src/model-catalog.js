@@ -18,6 +18,7 @@ export const MODEL_CATALOG = [
     env_key: 'LLM_API_KEY_DEEPSEEK',
     temperature: 0.7,
     max_tokens: 8192,
+    strengths: ['reasoning', 'technical', 'methods', 'review'],
   },
   {
     key: 'qwen',
@@ -28,6 +29,7 @@ export const MODEL_CATALOG = [
     env_key: 'LLM_API_KEY_QWEN',
     temperature: 0.7,
     max_tokens: 8192,
+    strengths: ['chinese', 'writing', 'technical', 'data', 'visual'],
   },
   {
     key: 'zhipu',
@@ -38,6 +40,7 @@ export const MODEL_CATALOG = [
     env_key: 'LLM_API_KEY_ZHIPU',
     temperature: 0.7,
     max_tokens: 8192,
+    strengths: ['chinese', 'structured', 'review', 'verification'],
   },
   {
     key: 'kimi',
@@ -48,6 +51,7 @@ export const MODEL_CATALOG = [
     env_key: 'LLM_API_KEY_KIMI',
     temperature: 0.7,
     max_tokens: 8192,
+    strengths: ['long_context', 'research', 'social', 'evidence'],
   },
   {
     key: 'openai',
@@ -58,6 +62,7 @@ export const MODEL_CATALOG = [
     env_key: 'LLM_API_KEY_OPENAI',
     temperature: 0.7,
     max_tokens: 8192,
+    strengths: ['planning', 'synthesis', 'reasoning', 'review', 'writing'],
   },
 ];
 
@@ -70,4 +75,15 @@ export function getModelPreset(key) {
 export function getModelKeyFromEnv(preset) {
   if (!preset || !preset.env_key) return '';
   return (process.env[preset.env_key] || '').trim();
+}
+
+// 服务商升级模型或使用兼容网关时无需改代码：部署者可只在服务器环境中覆盖地址与模型名。
+// 这些值不包含凭据，可以在管理后台脱敏状态页展示，便于核对实际运行配置。
+export function getModelRuntimeConfig(preset) {
+  if (!preset) return null;
+  const suffix = preset.key.toUpperCase();
+  return {
+    base_url: (process.env[`LLM_BASE_URL_${suffix}`] || preset.base_url).trim().replace(/\/$/, ''),
+    model_name: (process.env[`LLM_MODEL_${suffix}`] || preset.model_name).trim(),
+  };
 }

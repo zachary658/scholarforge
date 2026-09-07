@@ -131,6 +131,13 @@ const SYSTEM_PROMPTS = {
   revise: '你是一位严谨的学术论文修订专家。你会收到论文全文、审校报告与规则检查发现的问题。请据此修订论文：1) 修复报告中列出的引用、结构、数据与事实问题；2) 保持原有章节结构、字数规模与学术风格，不要缩写为摘要；3) 引用编号必须与文末参考文献一一对应，不得新增无法对应的引用；4) 直接输出修订后的完整论文全文，不要输出任何解释、对比或说明。',
   // 审校链轻量复审：只出结论，用于修订后的低成本复核
   review_verdict: '你是一位学术论文复核专家。请快速判断给定论文是否存在需要修改的引用错误、结构缺失或明显事实问题。第一行只输出「通过」或「需修改」，第二行用一句话说明理由。不要输出其他任何内容。',
+  orchestrator_plan: '你是学术写作团队的结构规划专家。只制定当前章节或学术文稿的论证路线、结构目标、前后衔接和篇幅重点，不撰写正文，不添加任何输入中没有的事实、数据或文献。输出简洁的 Markdown 工作简报。',
+  orchestrator_evidence: '你是证据分析专家。仅依据给定的真实参考文献、项目证据和材料，整理当前章节可安全使用的论据，指出每项论据可对应的 [CITE:n] 或 [EVIDENCE:id]。禁止凭常识补造作者、论文、数据、DOI 或结论；证据不足必须明确指出。',
+  orchestrator_method: '你是研究方法专家。针对当前章节检查研究设计、变量、算法、方法步骤和适用边界，提出可执行的方法论建议。不得声称用户已经完成未提供的实验、调查或统计检验，不得编造样本量和结果。',
+  orchestrator_visual: '你是学术图表设计专家。根据给定的真实 benchmark、表格和证据，规划本章真正有解释价值的图、表、公式或流程图。具体数值只能取自输入；无真实数据时只能建议无数值流程图/概念图，不得虚构数据。输出图表清单、位置与依据，不直接生成正文。',
+  orchestrator_review: '你是独立逻辑审校专家。检查当前章节是否覆盖大纲、论证连贯、概念一致、与上下文衔接，且没有把建议写成事实。第一行只能是「通过」或「需修改」，随后列出最少且明确的修改项。不得改写正文或引入新资料。',
+  orchestrator_verify: '你是独立事实与引用核验专家。逐项检查当前章节中的 [CITE:n]、[EVIDENCE:id]、数字、实验结论和图表是否能由提供的证据包支持。第一行只能是「通过」或「需修改」；随后列出无法支持或越界的陈述。不得联网猜测，不得补造来源。',
+  orchestrator_synthesize: '你是学术写作团队的总编。基于主笔稿、逻辑审校和事实核验报告，输出当前章节或学术文稿的完整定稿。保持原有文档类型、结构及大致篇幅，只修复明确问题；事实、数据和引用只能来自给定证据包，引用保留为合法 [CITE:n]/[EVIDENCE:id]。章节任务不得自行输出参考文献列表，其他文档遵守其原始格式要求；不要解释编辑过程。',
 };
 
 // 为所有 system prompt 追加防注入指令
@@ -412,6 +419,20 @@ function buildUserPrompt(tool, params) {
       return `审校报告：\n${wrapUserContent(params.review || '（无）')}\n\n规则检查发现的问题：\n${wrapUserContent(params.findings || '（无）')}\n\n论文全文：\n${wrapUserContent(params.content || '')}\n\n请输出修订后的完整论文。${ctx}`;
     case 'review_verdict':
       return `请复核以下论文：\n\n${wrapUserContent(params.content || '')}`;
+    case 'orchestrator_plan':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n学科：${wrapUserContent(params.field || '')}\n当前章节：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n小节：${wrapUserContent((params.chapter?.sections || []).map((s) => s.title || s).join('；'))}\n\n请输出本章结构与论证工作简报。${ctx}`;
+    case 'orchestrator_evidence':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n当前章节：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n\n请仅从已提供证据中整理可用论据与对应引用标记。${ctx}`;
+    case 'orchestrator_method':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n学科：${wrapUserContent(params.field || '')}\n当前章节与小节：${wrapUserContent(`${params.chapter?.chapter || params.chapter?.title || ''} ${(params.chapter?.sections || []).map((s) => s.title || s).join('；')}`)}\n\n请给出方法设计与边界检查简报。${ctx}`;
+    case 'orchestrator_visual':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n当前章节：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n\n请规划有证据支撑的图表、公式或流程图；没有真实数值时不得建议数值图表。${ctx}`;
+    case 'orchestrator_review':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n当前章节：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n\n主笔稿：\n${wrapUserContent(params.content || '')}\n\n请进行独立逻辑审校。${ctx}`;
+    case 'orchestrator_verify':
+      return `论文题目：${wrapUserContent(params.topic || '')}\n当前章节：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n\n待核验主笔稿：\n${wrapUserContent(params.content || '')}\n\n请逐项核验事实、引用、数据与图表。${ctx}`;
+    case 'orchestrator_synthesize':
+      return `论文题目或任务：${wrapUserContent(params.topic || '')}\n当前章节或文档：${wrapUserContent(params.chapter?.chapter || params.chapter?.title || '')}\n\n主笔稿：\n${wrapUserContent(params.content || '')}\n\n逻辑审校报告：\n${wrapUserContent(params.review || '通过')}\n\n事实与引用核验报告：\n${wrapUserContent(params.verification || '通过')}\n\n修订要求：${wrapUserContent(params.findings || '保持原稿，仅做必要编辑')}\n\n请保持原文档类型与结构，输出完整定稿。${ctx}`;
     default:
       return JSON.stringify(params);
   }
@@ -421,7 +442,10 @@ function buildUserPrompt(tool, params) {
 // 下限 8192、上限 AI_MAX_OUTPUT_TOKENS（成本熔断）；普通工具不覆盖，沿用模型目录默认值。
 // 此前两分支均为 model.max_tokens || 2048，与不覆盖完全等价，覆盖从未生效，已修复。
 export function resolveMaxTokensOverride(tool, params, model) {
-  if ((tool === 'writing' && params?.type === 'fulltext') || tool === 'revise') {
+  if (['orchestrator_plan', 'orchestrator_evidence', 'orchestrator_method', 'orchestrator_visual', 'orchestrator_review', 'orchestrator_verify'].includes(tool)) {
+    return Math.min(1600, AI_MAX_OUTPUT_TOKENS);
+  }
+  if ((tool === 'writing' && params?.type === 'fulltext') || tool === 'revise' || tool === 'orchestrator_synthesize') {
     return Math.min(Math.max(model?.max_tokens || 8192, 8192), AI_MAX_OUTPUT_TOKENS);
   }
   return null;

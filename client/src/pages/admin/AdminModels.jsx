@@ -11,6 +11,24 @@ const PROVIDER_LABELS = {
   openai: 'OpenAI',
 };
 
+const ROLE_OPTIONS = [
+  ['architect', '结构规划'],
+  ['evidence', '证据分析'],
+  ['methodologist', '方法设计'],
+  ['visual', '图表设计'],
+  ['writer', '章节主笔'],
+  ['reviewer', '逻辑审校'],
+  ['verifier', '事实与引用核验'],
+  ['synthesizer', '总编整合'],
+];
+
+const STRENGTH_LABELS = {
+  reasoning: '推理', technical: '理工', methods: '方法', review: '审校', chinese: '中文写作',
+  writing: '长文写作', data: '数据分析', visual: '图表', structured: '结构化', verification: '事实核验',
+  long_context: '长上下文', research: '文献研究', social: '人文社科', evidence: '证据分析',
+  planning: '规划', synthesis: '综合整合',
+};
+
 export default function AdminModels() {
   const [models, setModels] = useState([]);
   const [roleRouting, setRoleRouting] = useState({});
@@ -67,6 +85,7 @@ export default function AdminModels() {
   };
 
   const providerLabel = (v) => PROVIDER_LABELS[v] || v;
+  const configuredCount = models.filter((model) => model.api_key_configured).length;
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
@@ -101,16 +120,26 @@ export default function AdminModels() {
       )}
 
       <section className="card mt-6 p-5">
-        <h2 className="font-semibold">按学科配置写作与独立审校</h2>
-        <p className="mt-1 text-sm text-slate-500">未指定主写模型时使用默认模型；自动审校使用另一已配置模型，没有第二个模型时跳过。请依据你自己的学科样例评测选择，系统不预设某家模型一定更强。</p>
-        <div className="mt-4 space-y-3">
-          {[['general','通用'],['technical','理工科'],['social','人文社科']].map(([group,label]) => <div key={group} className="grid items-center gap-2 sm:grid-cols-3">
-            <span className="text-sm">{label}</span>
-            {['writer','reviewer'].map(role => <select key={role} aria-label={`${label}${role === 'writer' ? '主写' : '审校'}模型`} className="input text-sm" value={roleRouting[group]?.[role] || ''} onChange={e => setRoleRouting(r => ({...r,[group]:{...r[group],[role]:e.target.value}}))}>
-              <option value="">{role === 'writer' ? '默认主写模型' : '自动选择独立审校'}</option>
-              {role === 'reviewer' && <option value="off">关闭模型审校（保留规则检查）</option>}
-              {models.filter(m => m.api_key_configured || m.key === roleRouting[group]?.[role]).map(m => <option key={m.key} value={m.key}>{m.name}{m.api_key_configured ? '' : '（未配置，运行时回退）'}</option>)}
-            </select>)}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">多模型指挥中枢</h2>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${configuredCount >= 2 ? 'bg-green-50 text-green-700' : configuredCount === 1 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+            {configuredCount >= 2 ? `${configuredCount} 个模型 · 协作就绪` : configuredCount === 1 ? '1 个模型 · 单模型降级' : '尚未配置真实模型'}
+          </span>
+        </div>
+        <p className="mt-1 text-sm leading-6 text-slate-500">系统先识别学科和章节类型，再并行调用规划、证据、方法与图表专家，由主笔撰写、双模型审校、总编整合。留空时按模型能力标签自动分配；只配置一个模型时自动降级为单模型，不伪装协作。</p>
+        <div className="mt-4 space-y-5">
+          {[['general','通用'],['technical','理工科'],['social','人文社科']].map(([group,label]) => <div key={group} className="rounded-lg border border-slate-200 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-ink">{label}</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {ROLE_OPTIONS.map(([role, roleLabel]) => <label key={role} className="grid grid-cols-[110px_1fr] items-center gap-2 text-sm">
+                <span className="text-slate-600">{roleLabel}</span>
+                <select aria-label={`${label}${roleLabel}模型`} className="input text-sm" value={roleRouting[group]?.[role] || ''} onChange={e => setRoleRouting(r => ({...r,[group]:{...r[group],[role]:e.target.value}}))}>
+                  <option value="">按能力自动分配</option>
+                  {role !== 'writer' && <option value="off">关闭此角色</option>}
+                  {models.filter(m => m.api_key_configured || m.key === roleRouting[group]?.[role]).map(m => <option key={m.key} value={m.key}>{m.name}{m.api_key_configured ? '' : '（未配置，运行时回退）'}</option>)}
+                </select>
+              </label>)}
+            </div>
           </div>)}
         </div>
         <button className="btn-primary mt-4" disabled={savingRoles || loading} onClick={async () => { setSavingRoles(true); try { const d = await api.adminSaveModelRoles(roleRouting); setRoleRouting(d.roleRouting); toast.success('角色分工已保存'); } catch(err) { toast.error(err.message); } finally { setSavingRoles(false); } }}>{savingRoles ? '保存中…' : '保存角色分工'}</button>
@@ -145,6 +174,10 @@ export default function AdminModels() {
                   <span className={`rounded-md px-2 py-0.5 text-xs ${configured ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}>
                     {configured ? '已配置 Key' : '未配置 Key'}
                   </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(m.strengths || []).map((strength) => <span key={strength} className="rounded-full bg-accent-50 px-2 py-0.5 text-[11px] text-accent">{STRENGTH_LABELS[strength] || strength}</span>)}
                 </div>
 
                 <div className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">

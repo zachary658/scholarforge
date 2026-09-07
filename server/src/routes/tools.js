@@ -19,6 +19,7 @@ import { claimOrderExecution } from '../services/order-claim.js';
 import { transitionServiceToFailed, transitionServiceToCompleted } from '../services/order-state.js';
 import db from '../db.js';
 import { assessResearchDelivery } from '../services/research-quality.js';
+import { orchestrateAcademicTask, shouldOrchestrateAcademicTask } from '../services/orchestrator.js';
 
 const router = Router();
 
@@ -223,7 +224,9 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
   // 执行 AI
   let aiResult;
   try {
-    aiResult = await runAI(toolType, params);
+    aiResult = shouldOrchestrateAcademicTask(toolType)
+      ? await orchestrateAcademicTask({ tool: toolType, params })
+      : await runAI(toolType, params);
     // 内容安全审核：AI 输出（违规则不返回结果）
     const outCheck = await checkContent(aiResult.content);
     if (!outCheck.safe) throw new Error(outCheck.reason);
@@ -384,6 +387,7 @@ export async function executeWithBilling({ userId, featureKey, toolType, action,
     autoProjectTitle: autoProject ? inferAutoProjectTitle(params) : null,
     retention_days: parseInt(getSetting('doc_retention_days', '30'), 10) || 30,
     orderNo: order?.order_no || null,
+    orchestration: aiResult.orchestration || null,
   };
 }
 
@@ -441,6 +445,7 @@ async function runDocumentTool(req, res, {
       autoProjectTitle: result.autoProjectTitle,
       retention_days: result.retention_days,
       orderNo: result.orderNo,
+      orchestration: result.orchestration,
     });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: `${errorPrefix}失败：` + err.message });
@@ -597,6 +602,7 @@ router.post('/writing', authRequired, async (req, res) => {
         const chain = await runReviewChain({
           content: result.content,
           references: sourceRefs || [],
+          field,
           userId: req.user.id,
           logUsage,
         });

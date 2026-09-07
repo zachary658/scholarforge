@@ -634,6 +634,23 @@ export default function PaperWorkflow() {
               <span className="text-xs text-slate-400">第 {currentIdx + 1} / {chapters.length} 章</span>
             </div>
             {curChapter?.orchestration?.usedRealAI === false && <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">当前为本地模板演示，未调用真实大模型。内容仅用于测试流程，不代表论文质量或真实研究结论。</p>}
+            {Array.isArray(curChapter?.orchestration?.agents) && curChapter.orchestration.agents.length > 0 && (
+              <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                <summary className="cursor-pointer font-medium text-ink">
+                  多模型协作记录 · {curChapter.orchestration.plan?.mode === 'multi-model' ? '协作模式' : '单模型降级'}
+                </summary>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {curChapter.orchestration.agents.map((agent, index) => (
+                    <div key={`${agent.role}-${index}`} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
+                      <span className="text-slate-600">{agent.label || agent.role}</span>
+                      <span className={agent.status === 'success' ? 'text-green-600' : agent.status === 'rejected' || agent.status === 'failed' ? 'text-red-600' : 'text-slate-400'}>
+                        {agent.model?.name || '未调用'} · {agent.status === 'success' ? '完成' : agent.status === 'disabled' ? '已关闭' : agent.status === 'builtin' ? '演示模式' : agent.status === 'rejected' ? '结果已拦截' : '已降级'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
             <textarea
               value={currentChapterContent}
               disabled={generating || actionBusy}

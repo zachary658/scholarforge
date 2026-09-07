@@ -3,6 +3,7 @@
 // 成本上限：AI 审校 1 次 + AI 修订 ≤1 次 + AI 复审结论 1 次（仅修订发生时），
 // 任何环节失败均降级保留原稿，绝不因审校链阻断主流程。
 import { runAI } from '../ai-service.js';
+import { getRoleModel } from './orchestrator.js';
 import logger from '../logger.js';
 
 // —— 确定性规则审校（不调用 AI）——
@@ -101,7 +102,7 @@ function isSaneRevision(revised, original) {
 // —— 审校链主流程 ——
 // logUsage：可选回调（tools 侧传入，用于把每次 AI 调用记入 usage_logs 核对成本）
 // 返回 { content, revised, verdict, recheckVerdict, initialFindings, findings, report, reviseNote }
-export async function runReviewChain({ content, references = [], userId = null, logUsage: log = null }) {
+export async function runReviewChain({ content, references = [], field = '', userId = null, logUsage: log = null }) {
   const rule1 = ruleReview(content, references);
   let report = '';
   let verdict = 'pass';
@@ -109,7 +110,9 @@ export async function runReviewChain({ content, references = [], userId = null, 
 
   // 第一步：AI 审校（生成审校报告，供展示与修订依据）
   try {
-    const ai1 = await runAI('review', { content });
+    const reviewerModel = getRoleModel({ field, task: 'fulltext_review', role: 'reviewer' });
+    if (!reviewerModel) throw new Error('逻辑审校角色未启用或未配置模型');
+    const ai1 = await runAI('review', { content }, null, reviewerModel);
     if (ai1.usedRealAI && ai1.content) {
       report = ai1.content;
       verdict = parseReviewVerdict(report);
@@ -140,7 +143,9 @@ export async function runReviewChain({ content, references = [], userId = null, 
   if (needsFix && aiAvailable) {
     try {
       const findings = rule1.errors.map((e) => `- ${e.detail}`).join('\n') || '（规则检查未发现硬伤，依据审校报告修订）';
-      const rev = await runAI('revise', { content, review: report, findings });
+      const revisionModel = getRoleModel({ field, task: 'fulltext_revision', role: 'synthesizer' })
+        || getRoleModel({ field, task: 'fulltext_revision', role: 'writer' });
+      const rev = await runAI('revise', { content, review: report, findings }, null, revisionModel);
       if (rev.usedRealAI && isSaneRevision(rev.content, content)) {
         finalContent = rev.content;
         revised = true;
@@ -170,7 +175,9 @@ export async function runReviewChain({ content, references = [], userId = null, 
   let recheckVerdict = null;
   if (revised && aiAvailable) {
     try {
-      const ai2 = await runAI('review_verdict', { content: finalContent });
+      const verifierModel = getRoleModel({ field, task: 'fulltext_review', role: 'verifier' });
+      if (!verifierModel) throw new Error('事实核验角色未启用或未配置模型');
+      const ai2 = await runAI('review_verdict', { content: finalContent }, null, verifierModel);
       if (ai2.usedRealAI && ai2.content) {
         recheckVerdict = /需修改|不通过/.test(ai2.content.split('\n')[0] || '') ? 'revise' : 'pass';
         log?.({
