@@ -19,6 +19,10 @@ const CHECK_LABELS = {
   chapter_confirmed: '章节确认状态',
   outline_consistency: '大纲一致性',
   references_present: '真实文献数量',
+  foreign_references: '外文文献数量',
+  word_count: '全文字数',
+  section_structure: '正文结构',
+  logic_coherence: '全文逻辑',
   duplicate_paragraphs: '重复段落',
   citation_range: '引用编号范围',
   citation_present: '正文引用',
@@ -95,6 +99,7 @@ export default function PaperWorkflow() {
   const [finalDoc, setFinalDoc] = useState(null);
   const [showCheckDetails, setShowCheckDetails] = useState(false);
   const [fixingCheck, setFixingCheck] = useState(false);
+  const [checkingFinal, setCheckingFinal] = useState(false);
 
   const pollRef = useRef(null);
   const pollInFlight = useRef(false);
@@ -378,13 +383,18 @@ export default function PaperWorkflow() {
 
   // ---------- 全文检查 / 输出 ----------
   const runCheck = async () => {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setCheckingFinal(true);
     try {
       const d = await api.runFinalCheck(projectId);
       setFinalCheck(d.check);
       setShowCheckDetails(false);
-      if (d.check.passed) toast.success('一致性检查通过'); else toast.error('发现一致性问题，请点击“查看错误”定位并修复');
+      if (d.check.referenceSupplement?.added > 0) toast.info(`已从真实学术数据库自动补充 ${d.check.referenceSupplement.added} 篇文献`);
+      if (d.check.passed) toast.success('字数、结构、逻辑和文献检查均已通过'); else toast.error('发现一致性问题，请点击“查看错误”定位并修复');
     }
     catch (err) { toast.error(err.message); }
+    finally { actionLock.current = false; setCheckingFinal(false); }
   };
   const autoFixCheck = async () => {
     if (actionLock.current) return;
@@ -731,9 +741,9 @@ export default function PaperWorkflow() {
           <div className="card p-5">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-ink">全文一致性检查</h3>
-              <button disabled={fixingCheck || actionBusy} onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> 重新检查</button>
+              <button disabled={fixingCheck || checkingFinal || actionBusy} onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> {checkingFinal ? '正在补全文献并检查…' : '重新检查'}</button>
             </div>
-            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验章节完整性、逐章确认、大纲一致性、重复段落、引文范围与遗留占位符。规则检查不替代人工学术审核。</p>}
+            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验全文字数、章节结构、跨章逻辑、引用与占位符；文献会自动补足至不少于 10 篇且至少 3 篇外文，并全部保留真实来源核验信息。</p>}
             {finalCheck && (
               <div className="mt-3">
                 <div className={`rounded-lg border p-4 ${finalCheck.passed ? 'border-green-200 bg-green-50/50' : 'border-red-200 bg-red-50/50'}`}>
@@ -744,6 +754,8 @@ export default function PaperWorkflow() {
                         <div className={`text-sm font-semibold ${finalCheck.passed ? 'text-green-700' : 'text-red-700'}`}>
                           {finalCheck.passed ? '全部检查通过，可进入下一步' : `发现 ${finalCheck.summary?.failed ?? finalCheck.checks.filter((c) => c.status === 'fail').length} 项错误`}
                         </div>
+                        {finalCheck.referenceSupplement && <p className="mt-0.5 text-xs text-slate-600">真实文献 {finalCheck.referenceSupplement.total} 篇，其中外文 {finalCheck.referenceSupplement.foreign} 篇{finalCheck.referenceSupplement.added > 0 ? `；本次自动补充 ${finalCheck.referenceSupplement.added} 篇` : ''}。</p>}
+                        {!!finalCheck.referenceSupplement?.errors?.length && <p className="mt-0.5 text-xs text-amber-700">部分学术数据源暂时不可用，系统已保留现有真实文献，可稍后重新检查。</p>}
                         {!finalCheck.passed && <p className="mt-0.5 text-xs text-slate-600">先查看具体位置，再由系统自动处理可纠错项。</p>}
                       </div>
                     </div>
@@ -752,7 +764,7 @@ export default function PaperWorkflow() {
                         <button onClick={() => setShowCheckDetails((value) => !value)} className="btn-secondary text-sm">
                           {showCheckDetails ? '收起错误' : '查看错误'}
                         </button>
-                        <button disabled={fixingCheck || actionBusy} onClick={autoFixCheck} className="btn-primary text-sm">
+                        <button disabled={fixingCheck || checkingFinal || actionBusy} onClick={autoFixCheck} className="btn-primary text-sm">
                           <Refresh className={`h-4 w-4 ${fixingCheck ? 'animate-spin' : ''}`} /> {fixingCheck ? '正在自动纠错并复检…' : '一键纠错'}
                         </button>
                       </div>
@@ -791,8 +803,8 @@ export default function PaperWorkflow() {
               </div>
             )}
             <div className="mt-4 flex justify-end gap-3">
-              <button disabled={actionBusy || fixingCheck} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
-              <button onClick={exportFinal} disabled={!finalCheck?.passed || generating || actionBusy || fixingCheck} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '导出中…' : '下一步：生成最终文档（Word）'}</button>
+              <button disabled={actionBusy || fixingCheck || checkingFinal} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
+              <button onClick={exportFinal} disabled={!finalCheck?.passed || generating || actionBusy || fixingCheck || checkingFinal} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '导出中…' : '下一步：生成最终文档（Word）'}</button>
             </div>
             {finalDoc && <p className="mt-2 text-right text-xs text-green-600">已生成最终文档</p>}
           </div>

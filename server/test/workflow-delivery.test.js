@@ -10,11 +10,12 @@ const db = (await import('../src/db.js')).default;
 const store = await import('../src/services/task-store.js');
 const workflow = await import('../src/services/workflow-service.js');
 const { inspectPaper, contentVersion } = await import('../src/services/final-quality.js');
+const { supplementVerifiedReferences, isForeignReference } = await import('../src/services/reference-policy.js');
 const { attestReference, hasReferenceProof } = await import('../src/services/reference-proof.js');
 const { createFeatureOrder, markOrderPaid } = await import('../src/services/payment.js');
 const { regenerateChapter } = await import('../src/services/chapter-service.js');
 const uid = db.prepare('INSERT INTO users (email,password_hash,name) VALUES (?,?,?)').run('workflow@example.test', 'unused', 'Workflow tester').lastInsertRowid;
-const refs = [1,2,3].map(i => attestReference({ title: `Fixture reference ${i}`, doi: `10.1000/fixture-${i}`, source_db: 'CrossRef', year: 2024 }));
+const refs = Array.from({ length: 10 }, (_, index) => index + 1).map(i => attestReference({ title: `Fixture reference ${i}`, doi: `10.1000/fixture-${i}`, source_db: 'CrossRef', year: 2024, language: i <= 3 ? 'en' : 'zh' }));
 const outline = [{ chapter: '第一章 绪论', sections: [] }, { chapter: '第二章 结论', sections: [] }];
 
 test('签名核验不能被手填来源、篡改元数据或更换 DOI 绕过', () => {
@@ -67,7 +68,10 @@ test('一键纠错可对齐标题、移除重复段落和章节内伪造文献�
 
   const before = workflow.runFinalCheck(p.id, uid);
   assert.equal(before.passed, false);
-  const result = await workflow.autoFixFinalCheck(p.id, uid, { runner: async () => { throw new Error('本用例不应调用模型'); } });
+  const result = await workflow.autoFixFinalCheck(p.id, uid, { runner: async (tool) => {
+    if (tool === 'review') return { content: '## 审校结论\n整体评价：通过', usedRealAI: true };
+    throw new Error('本用例不应调用修订模型');
+  } });
   assert.equal(result.check.passed, true);
   assert.equal(result.nextAction, 'final_document');
   assert.ok(result.fixes.some((item) => item.key === 'outline_consistency'));
@@ -91,18 +95,95 @@ test('一键纠错调用主笔模型修复引用越界与占位符，但只允�
     SET workflow_mode = 'full', workflow_state = 'final_review', outline_json = ?, chapters_json = ?, sources_json = ?, outline_confirmed_at = ?
     WHERE id = ? AND user_id = ?`)
     .run(JSON.stringify(outline), JSON.stringify(chapters), JSON.stringify({ references: refs }), new Date().toISOString(), p.id, uid);
-  let received = null;
+  const received = [];
   const runner = async (tool, params) => {
-    received = { tool, params };
+    received.push({ tool, params });
+    if (tool === 'review') return { content: '## 审校结论\n整体评价：通过', usedRealAI: true, model: { name: 'fixture-reviewer' } };
     return { content: correctedBody, usedRealAI: true, model: { name: 'fixture' } };
   };
 
   const result = await workflow.autoFixFinalCheck(p.id, uid, { runner });
   assert.equal(result.check.passed, true);
-  assert.equal(received.tool, 'revise');
-  assert.equal(received.params.references.length, 3);
-  assert.match(received.params.context, /不得输出 \[CITE:n\]/);
+  const reviseCall = received.find((call) => call.tool === 'revise');
+  assert.ok(reviseCall);
+  assert.equal(reviseCall.params.references.length, 10);
+  assert.match(reviseCall.params.context, /不得输出 \[CITE:n\]/);
   assert.equal(store.getProject(p.id, uid).chapters[0].content, correctedBody);
+});
+
+test('全文检查按用户要求校验字数，并定位缺失的大纲小节', () => {
+  const structuredOutline = [{ chapter: '第一章 绪论', sections: [{ title: '1.1 研究背景' }, { title: '1.2 研究意义' }] }];
+  const result = inspectPaper({
+    title: '质量门禁', degree: '本科', writing_requirements: '全文不少于1000字',
+    outline: structuredOutline, sources: { references: refs },
+    chapters: [{ ...structuredOutline[0], status: 'done', confirmed: true, content: '## 1.1 研究背景\n简短正文 [1]' }],
+  });
+  const words = result.checks.find((item) => item.key === 'word_count');
+  const structure = result.checks.find((item) => item.key === 'section_structure');
+  assert.equal(words.status, 'fail');
+  assert.equal(words.locations[0].targetWords, 1000);
+  assert.equal(structure.status, 'fail');
+  assert.equal(structure.locations[0].expected, '1.2 研究意义');
+});
+
+test('全文检查自动补足至10篇真实文献且至少3篇外文文献', async () => {
+  const selected = refs.slice(3, 6);
+  const found = Array.from({ length: 10 }, (_, index) => ({
+    title: index < 3 ? `International research paper ${index + 1}` : `补充中文文献 ${index + 1}`,
+    doi: `10.2000/auto-${index + 1}`,
+    source_db: 'OpenAlex',
+    language: index < 3 ? 'en' : 'zh',
+  }));
+  const supplement = await supplementVerifiedReferences({ title: '自动补充文献', field: '教育学', sources: { references: selected } }, {
+    searcher: async () => ({ results: found }),
+  });
+  assert.equal(supplement.complete, true);
+  assert.equal(supplement.total, 10);
+  assert.ok(supplement.references.every(hasReferenceProof));
+  assert.ok(supplement.references.filter(isForeignReference).length >= 3);
+
+  const p = store.createProject({ userId: uid, title: 'Auto references final check', field: '教育学' });
+  const chapters = outline.map((chapter, index) => ({ ...chapter, status: 'done', confirmed: true, content: `正文内容 [${index + 1}]` }));
+  db.prepare(`UPDATE projects SET workflow_mode='full', workflow_state='final_review', outline_json=?, chapters_json=?, sources_json=? WHERE id=? AND user_id=?`)
+    .run(JSON.stringify(outline), JSON.stringify(chapters), JSON.stringify({ references: selected }), p.id, uid);
+  const checked = await workflow.runFinalCheckWithAnalysis(p.id, uid, {
+    searcher: async () => ({ results: found }),
+    runner: async () => ({ content: '## 审校结论\n整体评价：通过', usedRealAI: true }),
+  });
+  assert.equal(checked.passed, true);
+  assert.equal(checked.referenceSupplement.added, 7);
+  assert.equal(store.getProject(p.id, uid).sources.references.length, 10);
+});
+
+test('自动补文献遇到外部数据源故障时保留已有真实文献并返回可重试状态', async () => {
+  const selected = refs.slice(0, 3);
+  const supplement = await supplementVerifiedReferences({ title: '数据源降级', sources: { references: selected } }, {
+    searcher: async () => { throw new Error('upstream unavailable'); },
+  });
+  assert.equal(supplement.complete, false);
+  assert.equal(supplement.references.length, 3);
+  assert.deepEqual(supplement.errors, ['upstream unavailable']);
+});
+
+test('一键纠错按目标字数扩写并补齐缺失小节，随后重新执行逻辑复核', async () => {
+  const p = store.createProject({ userId: uid, title: 'Expansion fixture', field: '管理学', writingRequirements: '全文不少于200字' });
+  const oneChapterOutline = [{ chapter: '第一章 分析', sections: [{ title: '1.1 问题背景' }, { title: '1.2 原因分析' }] }];
+  const original = `## 1.1 问题背景\n${'现有论述仍较简略，需要结合真实资料进一步展开。'.repeat(4)} [1]`;
+  const corrected = `## 1.1 问题背景\n${'研究背景应结合制度环境与既有研究进行分层说明。'.repeat(6)} [1]\n\n## 1.2 原因分析\n${'原因分析从主体行为、资源配置与实施条件三个层面展开，并说明各因素之间的作用关系。'.repeat(6)} [2]`;
+  const chapters = [{ id: 'expand-1', ...oneChapterOutline[0], status: 'done', confirmed: true, content: original }];
+  db.prepare(`UPDATE projects SET workflow_mode='full', workflow_state='final_review', writing_requirements=?, outline_json=?, chapters_json=?, sources_json=? WHERE id=? AND user_id=?`)
+    .run('全文不少于200字', JSON.stringify(oneChapterOutline), JSON.stringify(chapters), JSON.stringify({ references: refs }), p.id, uid);
+  const calls = [];
+  const runner = async (tool) => {
+    calls.push(tool);
+    if (tool === 'review') return { content: '## 审校结论\n整体评价：通过', usedRealAI: true };
+    return { content: corrected, usedRealAI: true };
+  };
+  const result = await workflow.autoFixFinalCheck(p.id, uid, { runner });
+  assert.equal(result.check.passed, true);
+  assert.ok(calls.includes('revise'));
+  assert.ok(calls.filter((tool) => tool === 'review').length >= 2);
+  assert.match(store.getProject(p.id, uid).chapters[0].content, /1\.2 原因分析/);
 });
 
 test('项目更新不能伪造工作流状态、章节索引或交付检查', () => {
@@ -116,7 +197,7 @@ test('完整流程：文献保存→大纲→一次付费→两章确认→导�
   const p = store.createProject({ userId:uid, title:'Test workflow project', field:'计算机' });
   workflow.createFullPaperWorkflow(p.id,uid);
   await workflow.confirmLiterature(p.id,uid,refs);
-  assert.equal(store.getProject(p.id,uid).sources.references.length,3);
+  assert.equal(store.getProject(p.id,uid).sources.references.length,10);
   assert.throws(() => workflow.saveOutlineValidated(p.id,uid,[null]), /大纲/);
   assert.throws(() => workflow.saveOutlineValidated(p.id,uid,{chapter:'invalid'}), /大纲/);
   workflow.saveOutlineValidated(p.id,uid,[...outline, {chapter:'参考文献', sections:[]}]);

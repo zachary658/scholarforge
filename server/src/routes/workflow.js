@@ -4,7 +4,7 @@ import { authRequired } from '../middleware.js';
 import {
   createFullPaperWorkflow, getWorkflowState, confirmLiterature,
   saveOutlineValidated, confirmOutlineValidated, generateCurrentChapter,
-  confirmChapter, backToChapter, runFinalCheck, autoFixFinalCheck, generateFinalDocument, buildExpertContext,
+  confirmChapter, backToChapter, runFinalCheckWithAnalysis, autoFixFinalCheck, generateFinalDocument, buildExpertContext,
   reopenResearch,
 } from '../services/workflow-service.js';
 import { getFeaturePrice } from '../config-store.js';
@@ -107,9 +107,9 @@ router.post('/:id/chapters/back', authRequired, (req, res) => {
 });
 
 // final_review：全文一致性检查
-router.post('/:id/final-check', authRequired, (req, res) => {
+router.post('/:id/final-check', authRequired, async (req, res) => {
   try {
-    const result = runFinalCheck(parseInt(req.params.id, 10), req.user.id);
+    const result = await runFinalCheckWithAnalysis(parseInt(req.params.id, 10), req.user.id);
     res.json({ ok: true, check: result });
   } catch (err) {
     res.status(400).json({ error: err.message });

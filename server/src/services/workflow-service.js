@@ -18,6 +18,8 @@ import { resolveWritingReferences } from './reference-verification.js';
 import { hasReferenceProof } from './reference-proof.js';
 import { runAI } from '../ai-service.js';
 import { getRoleModel } from './orchestrator.js';
+import { supplementVerifiedReferences } from './reference-policy.js';
+import { parseReviewVerdict } from './review-chain.js';
 
 export const WORKFLOW_STATES = [
   'setup', 'researching', 'outline_review', 'chapter_generating', 'chapter_review', 'final_review', 'completed',
@@ -278,6 +280,92 @@ export function runFinalCheck(projectId, userId) {
   return result;
 }
 
+const finalChecksInFlight = new Map();
+
+export async function runFinalCheckWithAnalysis(projectId, userId, { runner = runAI, searcher } = {}) {
+  const key = `${userId}:${projectId}`;
+  if (finalChecksInFlight.has(key)) return finalChecksInFlight.get(key);
+  const pending = analyzeFinalCheck(projectId, userId, { runner, searcher });
+  finalChecksInFlight.set(key, pending);
+  try { return await pending; } finally { finalChecksInFlight.delete(key); }
+}
+
+async function analyzeFinalCheck(projectId, userId, { runner, searcher }) {
+  let project = getProject(projectId, userId);
+  if (!project) throw new Error('工作区不存在');
+  if (project.workflow_mode !== 'full' || project.workflow_state !== 'final_review') throw new Error('请在全文一致性检查阶段运行检查');
+
+  const supplement = await supplementVerifiedReferences(project, { searcher });
+  if (supplement.added > 0 || supplement.references.length !== (project.sources?.references || []).length) {
+    saveProjectSources(projectId, userId, { ...(project.sources || {}), references: supplement.references }, { allowVerifiedAppend: true });
+    project = getProject(projectId, userId);
+  }
+
+  const result = runFinalCheck(projectId, userId);
+  const fullText = (project.chapters || []).map((chapter) => `# ${chapter.chapter || ''}\n\n${chapter.content || ''}`).join('\n\n');
+  const reviewerModel = getRoleModel({ field: project.field, task: 'final_logic_review', role: 'reviewer' });
+  let logicCheck;
+  if (!reviewerModel && runner === runAI) {
+    logicCheck = {
+      key: 'logic_coherence', status: 'fail', autoFixable: false,
+      detail: '尚未配置可用于全文逻辑复核的审校模型。',
+      locations: [{ scope: 'paper', excerpt: '无法完成跨章节论点衔接、前后矛盾和结论呼应检查。' }],
+      suggestion: '请在模型配置中启用“逻辑审校”角色后重新检查。',
+    };
+  } else {
+    try {
+      const review = await runner('review', {
+        content: fullText,
+        references: project.sources?.references || [],
+        context: '重点检查：章节之间是否自然衔接、概念与研究对象是否前后一致、方法能否支撑结论、结论是否回应研究问题。若存在实质问题，审校结论必须写“整体评价：需修改”，并列出章节位置；若无实质问题写“整体评价：通过”。',
+      }, null, reviewerModel);
+      const available = Boolean(review?.usedRealAI && review?.content);
+      const declaredPass = /整体评价[：:]\s*通过/.test(review?.content || '');
+      const passed = available && declaredPass && parseReviewVerdict(review.content) === 'pass';
+      const reportText = String(review?.content || '');
+      const mentionedChapters = passed ? [] : (project.chapters || []).flatMap((chapter, chapterIndex) => {
+        const title = String(chapter?.chapter || '').trim();
+        const shortTitle = title.replace(/^第?[一二三四五六七八九十百\d]+章\s*/, '');
+        return title && (reportText.includes(title) || (shortTitle.length >= 2 && reportText.includes(shortTitle)))
+          ? [{ scope: 'chapter', chapterIndex, chapterId: chapter.id || null, chapter: title, excerpt: reportText.replace(/\s+/g, ' ').slice(0, 600) }]
+          : [];
+      });
+      logicCheck = {
+        key: 'logic_coherence', status: passed ? 'pass' : 'fail', autoFixable: available && !passed,
+        detail: passed ? 'AI 全文逻辑复核通过。' : available ? 'AI 全文逻辑复核发现需要修改的问题。' : '审校模型未返回有效的全文逻辑复核结果。',
+        locations: passed ? [] : (mentionedChapters.length ? mentionedChapters : [{ scope: 'paper', excerpt: reportText.replace(/\s+/g, ' ').slice(0, 600) || '请检查模型配置后重试。' }]),
+        suggestion: available ? '可一键按审校报告补充或调整相关章节，然后自动复检。' : '请检查审校模型 API 配置后重新运行检查。',
+        report: available ? review.content : '',
+      };
+    } catch (error) {
+      logicCheck = {
+        key: 'logic_coherence', status: 'fail', autoFixable: false,
+        detail: '全文逻辑复核暂时失败。',
+        locations: [{ scope: 'paper', excerpt: error.message }],
+        suggestion: '请检查审校模型或网络连接后重试；系统不会在未复核时放行。',
+      };
+    }
+  }
+
+  result.checks = [...result.checks.filter((item) => item.key !== 'logic_coherence'), logicCheck];
+  result.passed = result.checks.every((item) => item.status !== 'fail');
+  result.summary = {
+    failed: result.checks.filter((item) => item.status === 'fail').length,
+    warnings: result.checks.filter((item) => item.status === 'warn').length,
+    autoFixable: result.checks.filter((item) => item.status === 'fail' && item.autoFixable).length,
+  };
+  result.referenceSupplement = {
+    added: supplement.added,
+    total: supplement.total,
+    foreign: supplement.foreign,
+    complete: supplement.complete,
+    errors: supplement.errors,
+  };
+  db.prepare('UPDATE projects SET final_check_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .run(JSON.stringify(result), now(), projectId, userId);
+  return result;
+}
+
 function stripChapterBibliography(content) {
   const pattern = /(?:^|\n)\s{0,3}#{0,6}\s*(?:(?:主要)?参考文献|references|bibliography)\s*[:：]?\s*(?:\n|$)[\s\S]*$/i;
   return String(content || '').replace(pattern, '').trimEnd();
@@ -298,17 +386,19 @@ function removeLaterDuplicateParagraphs(chapters) {
   });
 }
 
-function correctionLooksSafe(original, corrected) {
+function correctionLooksSafe(original, corrected, { allowExpansion = false } = {}) {
   const before = String(original || '').trim();
   const after = String(corrected || '').trim();
-  if (!before || !after || after.length < Math.max(120, before.length * 0.55) || after.length > before.length * 1.6) return false;
+  const maxRatio = allowExpansion ? 4 : 1.6;
+  if (!before || !after || after.length < Math.max(120, before.length * 0.55) || after.length > before.length * maxRatio) return false;
+  if (allowExpansion && after.length <= before.length) return false;
   const beforeHeadings = (before.match(/^#{1,6}\s+/gm) || []).length;
   const afterHeadings = (after.match(/^#{1,6}\s+/gm) || []).length;
   return beforeHeadings === 0 || afterHeadings >= Math.floor(beforeHeadings * 0.6);
 }
 
 function affectedChapterIndexes(checkResult, chapters) {
-  const semanticKeys = new Set(['citation_range', 'citation_present', 'unresolved_placeholders']);
+  const semanticKeys = new Set(['citation_range', 'citation_present', 'unresolved_placeholders', 'word_count', 'section_structure', 'logic_coherence']);
   const indexes = new Set();
   for (const item of checkResult.checks || []) {
     if (item.status !== 'fail' || !semanticKeys.has(item.key)) continue;
@@ -340,8 +430,11 @@ async function autoFixFinalCheckInternal(projectId, userId, runner) {
   if (!wf || wf.mode !== 'full' || wf.state !== 'final_review') throw new Error('请在全文一致性检查阶段使用一键纠错');
   if (isGenerating(projectId)) throw new Error('请等待当前生成任务完成');
 
-  const initialCheck = runFinalCheck(projectId, userId);
+  const cachedCheck = wf.finalCheck?.contentVersion === contentVersion(wf.project) ? wf.finalCheck : null;
+  const initialCheck = cachedCheck || await runFinalCheckWithAnalysis(projectId, userId, { runner });
   if (initialCheck.passed) return { check: initialCheck, workflow: getWorkflowState(projectId, userId), fixes: [], unresolved: [], nextAction: 'final_document' };
+
+  const refreshedWorkflow = getWorkflowState(projectId, userId);
 
   const sourceRow = db.prepare('SELECT chapters_json FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
   if (!sourceRow) throw new Error('工作区不存在');
@@ -351,7 +444,7 @@ async function autoFixFinalCheckInternal(projectId, userId, runner) {
   chapters = chapters.map((chapter) => ({ ...chapter }));
   const fixes = [];
   const unresolved = [];
-  const outline = wf.project.outline || [];
+  const outline = refreshedWorkflow.project.outline || [];
 
   const outlineCheck = initialCheck.checks.find((item) => item.key === 'outline_consistency' && item.status === 'fail');
   if (outlineCheck && chapters.length === outline.length) {
@@ -378,24 +471,30 @@ async function autoFixFinalCheckInternal(projectId, userId, runner) {
     const chapter = chapters[index];
     if (!chapter || !String(chapter.content || '').trim()) continue;
     const findings = (initialCheck.checks || [])
-      .filter((item) => item.status === 'fail' && ['citation_range', 'citation_present', 'unresolved_placeholders'].includes(item.key))
+      .filter((item) => item.status === 'fail' && ['citation_range', 'citation_present', 'unresolved_placeholders', 'word_count', 'section_structure', 'logic_coherence'].includes(item.key))
       .filter((item) => (item.locations || []).some((location) => location.scope === 'paper' || location.chapterIndex === index))
       .map((item) => `${item.detail} ${item.suggestion || ''}`)
       .join('\n');
-    const model = getRoleModel({ field: wf.project.field, task: 'final_autofix', chapter, role: 'writer' });
+    let wordLocation = (initialCheck.checks.find((item) => item.key === 'word_count')?.locations || [])
+      .find((location) => location.scope === 'paper' || location.chapterIndex === index);
+    if (wordLocation?.scope === 'paper' && wordLocation.targetWords) {
+      wordLocation = { ...wordLocation, targetWords: Math.ceil(wordLocation.targetWords / Math.max(1, chapters.length)) };
+    }
+    const allowExpansion = Boolean(wordLocation);
+    const model = getRoleModel({ field: refreshedWorkflow.project.field, task: 'final_autofix', chapter, role: 'writer' });
     try {
       const result = await runner('revise', {
-        topic: wf.project.title,
-        field: wf.project.field,
+        topic: refreshedWorkflow.project.title,
+        field: refreshedWorkflow.project.field,
         content: chapter.content,
         review: '只修复本章的一致性检查失败项，保持章节结构、论点和篇幅。',
         findings,
-        references: wf.project.sources?.references || [],
-        benchmarks: wf.project.sources?.benchmarks || [],
-        dataTables: wf.project.sources?.tables || [],
-        context: '引用只能使用真实参考文献列表中的数字编号 [1]、[2] 等；不得输出 [CITE:n]、待补充、TODO 或自建参考文献表；无证据支持的具体事实或数值应删除或改为审慎表述。只输出本章修订后的完整正文。',
+        references: refreshedWorkflow.project.sources?.references || [],
+        benchmarks: refreshedWorkflow.project.sources?.benchmarks || [],
+        dataTables: refreshedWorkflow.project.sources?.tables || [],
+        context: `引用只能使用真实参考文献列表中的数字编号 [1]、[2] 等；不得输出 [CITE:n]、待补充、TODO 或自建参考文献表；无证据支持的具体事实或数值应删除或改为审慎表述。${wordLocation?.targetWords ? `本章应扩充到约 ${wordLocation.targetWords} 字，必须增加有证据的分析而非重复凑字。` : ''}只输出本章修订后的完整正文。`,
       }, null, model);
-      if (!result?.usedRealAI || !correctionLooksSafe(chapter.content, result.content)) {
+      if (!result?.usedRealAI || !correctionLooksSafe(chapter.content, result.content, { allowExpansion })) {
         unresolved.push({ chapterIndex: index, chapter: chapter.chapter, detail: result?.usedRealAI ? '模型修订稿结构或篇幅异常，已保留原文。' : '尚未配置可用的大模型，语义问题无法自动改写。' });
         continue;
       }
@@ -421,7 +520,7 @@ async function autoFixFinalCheckInternal(projectId, userId, runner) {
     if (update.changes !== 1) throw new Error('纠错期间正文已被其他操作修改，请刷新后重试');
   }
 
-  const checkResult = runFinalCheck(projectId, userId);
+  const checkResult = await runFinalCheckWithAnalysis(projectId, userId, { runner });
   const manualFailures = (checkResult.checks || []).filter((item) => item.status === 'fail' && !item.autoFixable);
   unresolved.push(...manualFailures.map((item) => ({ key: item.key, detail: item.detail })));
   return {

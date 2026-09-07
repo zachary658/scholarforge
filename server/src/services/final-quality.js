@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isForeignReference } from './reference-policy.js';
 
 const AUTO_FIXABLE = new Set([
   'outline_consistency',
@@ -7,6 +8,11 @@ const AUTO_FIXABLE = new Set([
   'citation_present',
   'bibliography_owned',
   'unresolved_placeholders',
+  'word_count',
+  'section_structure',
+  'logic_coherence',
+  'references_present',
+  'foreign_references',
 ]);
 
 function normalizeText(value) {
@@ -37,6 +43,38 @@ function check(key, status, detail, locations = [], suggestion = '') {
     suggestion,
     autoFixable: status !== 'pass' && AUTO_FIXABLE.has(key),
   };
+}
+
+export function countAcademicWords(content) {
+  const text = String(content || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\[(?:\d[\d\s,，\-–—]*|CITE:[^\]]+)\]/g, ' ')
+    .replace(/[|*_`>#]/g, ' ');
+  const chineseCharacters = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  const latinWords = (text.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g) || []).length;
+  return chineseCharacters + latinWords;
+}
+
+export function resolveTargetWordCount(project) {
+  const requirements = String(project?.writing_requirements || '');
+  const matches = [...requirements.matchAll(/(?:不少于|不低于|至少|约|目标|总字数)?\s*(\d+(?:\.\d+)?)\s*(万|千)?\s*字/gi)];
+  if (matches.length) {
+    const values = matches.map((match) => {
+      const multiplier = match[2] === '万' ? 10000 : match[2] === '千' ? 1000 : 1;
+      return Math.round(Number(match[1]) * multiplier);
+    }).filter((value) => Number.isFinite(value) && value > 0);
+    if (values.length) return Math.max(...values);
+  }
+  const degree = String(project?.degree || '');
+  if (/博士/.test(degree)) return 50000;
+  if (/硕士/.test(degree)) return 20000;
+  if (/本科/.test(degree)) return 8000;
+  return 0;
+}
+
+function normalizeHeading(value) {
+  return String(value || '').replace(/^\s*(?:第?[一二三四五六七八九十百\d]+[章节篇、.．]?|\d+(?:\.\d+)*[、.．]?)\s*/, '').replace(/\s+/g, '').toLowerCase();
 }
 
 export function contentVersion(project) {
@@ -110,10 +148,67 @@ export function inspectPaper(project) {
 
   checks.push(check(
     'references_present',
-    references.length >= 3 ? 'pass' : 'fail',
-    references.length >= 3 ? `已绑定 ${references.length} 篇真实来源。` : `仅绑定 ${references.length} 篇来源，至少需要 3 篇。`,
-    references.length >= 3 ? [] : [{ scope: 'references', excerpt: `当前真实来源数：${references.length}` }],
-    '请返回真实文献检索步骤补充可核验来源。',
+    references.length >= 10 ? 'pass' : 'fail',
+    references.length >= 10 ? `已绑定 ${references.length} 篇真实来源。` : `仅绑定 ${references.length} 篇真实来源，交付要求不少于 10 篇。`,
+    references.length >= 10 ? [] : [{ scope: 'references', excerpt: `当前 ${references.length} 篇，还需 ${10 - references.length} 篇。` }],
+    '一键纠错会按论文主题从公开学术数据库自动检索并补足，不会由模型编造。',
+  ));
+
+  const foreignReferences = references.filter(isForeignReference);
+  checks.push(check(
+    'foreign_references',
+    foreignReferences.length >= 3 ? 'pass' : 'fail',
+    foreignReferences.length >= 3 ? `已包含 ${foreignReferences.length} 篇外文文献。` : `当前仅有 ${foreignReferences.length} 篇外文文献，交付要求至少 3 篇。`,
+    foreignReferences.length >= 3 ? [] : [{ scope: 'references', excerpt: `还需补充 ${3 - foreignReferences.length} 篇与主题相关的外文文献。` }],
+    '系统会优先从公开学术数据库补充可核验的外文文献。',
+  ));
+
+  const targetWords = resolveTargetWordCount(project);
+  const actualWords = countAcademicWords(allText);
+  const wordLocations = [];
+  if (targetWords > 0 && actualWords < targetWords) {
+    const expectedPerChapter = Math.ceil(targetWords / Math.max(1, chapters.length));
+    chapters.forEach((chapter, chapterIndex) => {
+      const count = countAcademicWords(chapter?.content);
+      if (count < expectedPerChapter * 0.75) {
+        wordLocations.push(chapterLocation(chapter, chapterIndex, {
+          excerpt: `当前约 ${count} 字，建议补充至约 ${expectedPerChapter} 字。`,
+          targetWords: expectedPerChapter,
+          actualWords: count,
+        }));
+      }
+    });
+  }
+  checks.push(check(
+    'word_count',
+    targetWords === 0 || actualWords >= targetWords ? 'pass' : 'fail',
+    targetWords === 0 ? `未设置明确字数要求，当前正文约 ${actualWords} 字。` : actualWords >= targetWords ? `正文约 ${actualWords} 字，达到 ${targetWords} 字要求。` : `正文约 ${actualWords} 字，距离 ${targetWords} 字要求还差约 ${targetWords - actualWords} 字。`,
+    wordLocations.length ? wordLocations : (targetWords > actualWords ? [{ scope: 'paper', excerpt: `当前约 ${actualWords} 字，目标 ${targetWords} 字。`, targetWords, actualWords }] : []),
+    targetWords > actualWords ? '可一键按现有大纲和真实文献补充论证，不会用重复段落机械凑字数。' : '',
+  ));
+
+  const missingSections = [];
+  chapters.forEach((chapter, chapterIndex) => {
+    const structuralLines = String(chapter?.content || '').split('\n')
+      .map((line) => line.replace(/^\s*#{1,6}\s*/, '').trim())
+      .filter((line) => line && line.length <= 160)
+      .map(normalizeHeading);
+    for (const section of outline[chapterIndex]?.sections || []) {
+      const title = normalizeHeading(section?.title || section);
+      if (title && !structuralLines.some((line) => line === title || line.startsWith(title))) {
+        missingSections.push(chapterLocation(chapter, chapterIndex, {
+          expected: section?.title || section,
+          excerpt: `正文中未识别到大纲小节“${section?.title || section}”。`,
+        }));
+      }
+    }
+  });
+  checks.push(check(
+    'section_structure',
+    missingSections.length === 0 ? 'pass' : 'fail',
+    missingSections.length === 0 ? '正文已覆盖已确认大纲中的全部小节。' : `正文缺少或未明确呈现 ${missingSections.length} 个已确认大纲小节。`,
+    missingSections,
+    '可一键按已确认大纲补齐缺失小节，并保持现有章节内容。',
   ));
 
   const paragraphs = [];

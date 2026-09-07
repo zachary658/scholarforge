@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSetting } from '../config-store.js';
 import { replaceDistilledEvidence } from './evidence-engine.js';
+import { hasReferenceProof } from './reference-proof.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(__dirname, '..', '..', 'uploads', 'docs');
@@ -498,13 +499,21 @@ export function confirmOutline(projectId, userId) {
 
 // 持久化蒸馏产物（检索→蒸馏：框架/文献/benchmark/表格数据）到工作区
 // 分章节生成与全文生成统一从 sources_json 消费，保证蒸馏结果贯通到正文
-export function saveProjectSources(projectId, userId, sources) {
+export function saveProjectSources(projectId, userId, sources, { allowVerifiedAppend = false } = {}) {
   if (!projectId || !userId) return false;
   const existing = getProject(projectId, userId);
-  if (existing?.workflow_mode === 'full' && existing.workflow_state !== 'researching') throw new Error('请先返回文献核验阶段再更新研究资料');
+  const identities = refs => (refs || []).map(r => String(r.doi || r.title || '').trim().toLowerCase());
+  const previousReferences = identities(existing?.sources?.references);
+  const nextReferences = identities(sources?.references);
+  const safeFinalAppend = allowVerifiedAppend
+    && existing?.workflow_mode === 'full'
+    && existing.workflow_state === 'final_review'
+    && nextReferences.length >= previousReferences.length
+    && previousReferences.every((identity, index) => identity === nextReferences[index])
+    && (sources?.references || []).every(hasReferenceProof);
+  if (existing?.workflow_mode === 'full' && existing.workflow_state !== 'researching' && !safeFinalAppend) throw new Error('请先返回文献核验阶段再更新研究资料');
   if (existing?.workflow_mode === 'full' && existing.chapters?.length) {
-    const identities = refs => JSON.stringify((refs || []).map(r => String(r.doi || r.title || '').trim().toLowerCase()));
-    if (identities(existing.sources?.references) !== identities(sources?.references)) throw new Error('已有正文引用编号绑定当前文献顺序，不能更换或重排文献；请新建项目以保留已有正文');
+    if (!safeFinalAppend && JSON.stringify(previousReferences) !== JSON.stringify(nextReferences)) throw new Error('已有正文引用编号绑定当前文献顺序，不能更换或重排文献；请新建项目以保留已有正文');
   }
   const r = db.prepare(
     'UPDATE projects SET sources_json = ?, updated_at = ? WHERE id = ? AND user_id = ?'
