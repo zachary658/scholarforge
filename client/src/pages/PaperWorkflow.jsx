@@ -332,7 +332,13 @@ export default function PaperWorkflow() {
       else startChapterPoll(projectId);
     } catch (err) {
       const nd = err?.data?.needOrder;
-      if (nd) setNeedPay({ itemType: err.data.itemType || 'writing_fulltext', amount: Number(err.data.amount || 0) });
+      if (nd) setNeedPay({
+        itemType: err.data.itemType || 'writing_fulltext',
+        itemName: err.data.itemName,
+        amount: Number(err.data.amount || 0),
+        pricing: err.data.pricing,
+        params: err.data.params || { project_id: Number(projectId) },
+      });
       else toast.error(err.message);
       setGenerating(false);
     }

@@ -2,7 +2,7 @@
 // 功能定价：固定价格（feature_prices.price，单位元）或人工报价（pricing_mode='quote'）
 // 同时保留 token 估算，用于成本监控（不直接扣费）
 import { encode } from 'gpt-tokenizer';
-import { getFeaturePrice, getAiPricingConfig, getDefaultModel } from '../config-store.js';
+import { getFeaturePrice, getAiPricingConfig, getDefaultModel, getSetting } from '../config-store.js';
 import { resolveMaxTokensOverride, effectiveMaxTokens, hasRealAIModel } from '../ai-service.js';
 
 // ========== 免费功能 ==========
@@ -19,6 +19,74 @@ export function getFeatureCashPrice(featureKey) {
   if (!fp || !fp.is_active || fp.is_unlimited) return 0;
   if (fp.pricing_mode === 'quote') return 0; // 报价模式无固定价，需走人工报价
   return Math.max(0, Number(fp.price) || 0);
+}
+
+// ========== 完整论文项目套餐 ==========
+// “利润率 500%”按利润/成本口径计算：售价至少为预计总成本的 6 倍。
+// 基础售价用于产品分层；动态保护价会随模型单价、目标字数和材料量上浮，
+// 即使管理员把加价率配置得更低，也不会突破 500% 的服务端硬下限。
+const FULL_PAPER_TIERS = {
+  undergraduate: { label: '本科', defaultWords: 8000, basePrice: 59, costReserve: 8 },
+  master: { label: '硕士', defaultWords: 20000, basePrice: 159, costReserve: 22 },
+  doctorate: { label: '博士', defaultWords: 50000, basePrice: 499, costReserve: 70 },
+  other: { label: '其他', defaultWords: 12000, basePrice: 99, costReserve: 14 },
+};
+
+export const FULL_PAPER_MIN_PROFIT_MARKUP = 5;
+
+export function normalizeDegreeTier(degree) {
+  const value = String(degree || '').trim();
+  if (/博士/.test(value)) return 'doctorate';
+  if (/硕士/.test(value)) return 'master';
+  if (/本科/.test(value)) return 'undergraduate';
+  return 'other';
+}
+
+function requestedWordCount(project, fallback) {
+  const text = String(project?.writing_requirements || '');
+  const values = [...text.matchAll(/(?:不少于|不低于|至少|约|目标|总字数)?\s*(\d+(?:\.\d+)?)\s*(万|千)?\s*字/gi)]
+    .map((match) => Math.round(Number(match[1]) * (match[2] === '万' ? 10000 : match[2] === '千' ? 1000 : 1)))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length ? Math.max(...values) : fallback;
+}
+
+function positiveSetting(key, fallback) {
+  const value = Number(getSetting(key, String(fallback)));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+export function getFullPaperPricing(project, { materialTokens = 0 } = {}) {
+  const tierKey = normalizeDegreeTier(project?.degree);
+  const tier = FULL_PAPER_TIERS[tierKey];
+  const targetWords = requestedWordCount(project, tier.defaultWords);
+  const basePrice = positiveSetting(`full_paper_price_${tierKey}`, tier.basePrice);
+  const operatingReserve = positiveSetting(`full_paper_cost_reserve_${tierKey}`, tier.costReserve);
+  const configuredMarkup = positiveSetting('full_paper_min_profit_markup', FULL_PAPER_MIN_PROFIT_MARKUP);
+  const profitMarkup = Math.max(FULL_PAPER_MIN_PROFIT_MARKUP, configuredMarkup);
+  const cfg = getAiPricingConfig();
+
+  // 多模型流程包含规划、主笔、复核和可能的一次修订。这里用偏保守的总 token
+  // 预算做售前成本保护，实际用量仍应在运营后台持续校准。
+  const estimatedInputTokens = targetWords * 10;
+  const estimatedOutputTokens = targetWords * 4;
+  const modelCost = (estimatedInputTokens / 1_000_000) * cfg.inputCostPerMillion
+    + (estimatedOutputTokens / 1_000_000) * cfg.outputCostPerMillion;
+  const materialCost = (Math.max(0, Number(materialTokens) || 0) / 1_000_000) * cfg.inputCostPerMillion;
+  const estimatedCost = operatingReserve + modelCost + materialCost;
+  const protectedMinimum = Math.ceil(estimatedCost * (1 + profitMarkup) * 100) / 100;
+  const price = Math.ceil(Math.max(basePrice, protectedMinimum) * 100) / 100;
+
+  return {
+    tierKey,
+    tierLabel: tier.label,
+    targetWords,
+    basePrice,
+    estimatedCost: Math.round(estimatedCost * 100) / 100,
+    protectedMinimum,
+    price,
+    profitMarkup,
+    estimatedProfitRate: estimatedCost > 0 ? Math.round(((price - estimatedCost) / estimatedCost) * 10000) / 100 : null,
+  };
 }
 
 // ========== token 估算与成本监控（非扣费） ==========

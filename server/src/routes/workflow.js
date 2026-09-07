@@ -8,6 +8,7 @@ import {
   reopenResearch,
 } from '../services/workflow-service.js';
 import { getFeaturePrice } from '../config-store.js';
+import { getFullPaperPricing } from '../services/billing.js';
 
 const router = Router();
 
@@ -78,8 +79,27 @@ router.post('/:id/chapters/current/generate', authRequired, async (req, res) => 
     res.json(r);
   } catch (err) {
     if (err.needOrder) {
-      const fp = getFeaturePrice(err.itemType || 'writing_fulltext');
-      return res.status(402).json({ error: err.message, needOrder: true, itemType: err.itemType, amount: fp ? fp.price : 0 });
+      const itemType = err.itemType || 'writing_fulltext';
+      const fp = getFeaturePrice(itemType);
+      const workflow = getWorkflowState(parseInt(req.params.id, 10), req.user.id);
+      const pricing = itemType === 'writing_fulltext' && workflow?.project
+        ? getFullPaperPricing(workflow.project)
+        : null;
+      const publicPricing = pricing ? {
+        tierKey: pricing.tierKey,
+        tierLabel: pricing.tierLabel,
+        targetWords: pricing.targetWords,
+        price: pricing.price,
+      } : null;
+      return res.status(402).json({
+        error: err.message,
+        needOrder: true,
+        itemType,
+        amount: pricing?.price ?? fp?.price ?? 0,
+        itemName: pricing ? `完整论文（${pricing.tierLabel}项目套餐）` : fp?.name,
+        pricing: publicPricing,
+        params: pricing ? { project_id: Number(req.params.id) } : undefined,
+      });
     }
     res.status(400).json({ error: err.message });
   }

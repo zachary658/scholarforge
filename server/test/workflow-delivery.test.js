@@ -11,12 +11,42 @@ const store = await import('../src/services/task-store.js');
 const workflow = await import('../src/services/workflow-service.js');
 const { inspectPaper, contentVersion } = await import('../src/services/final-quality.js');
 const { supplementVerifiedReferences, isForeignReference } = await import('../src/services/reference-policy.js');
+const { getFullPaperPricing } = await import('../src/services/billing.js');
 const { attestReference, hasReferenceProof } = await import('../src/services/reference-proof.js');
 const { createFeatureOrder, markOrderPaid } = await import('../src/services/payment.js');
 const { regenerateChapter } = await import('../src/services/chapter-service.js');
 const uid = db.prepare('INSERT INTO users (email,password_hash,name) VALUES (?,?,?)').run('workflow@example.test', 'unused', 'Workflow tester').lastInsertRowid;
 const refs = Array.from({ length: 10 }, (_, index) => index + 1).map(i => attestReference({ title: `Fixture reference ${i}`, doi: `10.1000/fixture-${i}`, source_db: 'CrossRef', year: 2024, language: i <= 3 ? 'en' : 'zh' }));
 const outline = [{ chapter: '第一章 绪论', sections: [] }, { chapter: '第二章 结论', sections: [] }];
+
+test('完整论文按学历分层定价且预计利润/成本不低于500%', () => {
+  const undergraduate = getFullPaperPricing({ degree: '本科' });
+  const master = getFullPaperPricing({ degree: '硕士' });
+  const doctorate = getFullPaperPricing({ degree: '博士' });
+  assert.equal(undergraduate.price, 59);
+  assert.equal(master.price, 159);
+  assert.equal(doctorate.price, 499);
+  for (const pricing of [undergraduate, master, doctorate]) {
+    assert.ok(pricing.estimatedProfitRate >= 500);
+    assert.ok(pricing.price >= pricing.estimatedCost * 6 - 0.01);
+  }
+  assert.ok(getFullPaperPricing({ degree: '本科', writing_requirements: '全文不少于100万字' }).price > 59, '超大字数项目必须触发动态成本保护价');
+});
+
+test('完整论文订单必须绑定用户自己的项目且金额由服务端学历定价决定', () => {
+  const p = store.createProject({ userId: uid, title: '本科定价项目', degree: '本科' });
+  workflow.createFullPaperWorkflow(p.id, uid);
+  assert.throws(() => createFeatureOrder({ userId: uid, itemType: 'writing_fulltext', paymentMethod: 'mock' }), /绑定有效的论文项目/);
+  const { order } = createFeatureOrder({
+    userId: uid,
+    itemType: 'writing_fulltext',
+    paymentMethod: 'mock',
+    params: { project_id: p.id, degree: '博士' },
+  });
+  assert.equal(order.amount, 59);
+  assert.equal(order.project_id, p.id);
+  assert.match(order.item_name, /本科项目套餐/);
+});
 
 test('签名核验不能被手填来源、篡改元数据或更换 DOI 绕过', () => {
   assert.equal(hasReferenceProof(refs[0]), true);
@@ -203,7 +233,7 @@ test('完整流程：文献保存→大纲→一次付费→两章确认→导�
   workflow.saveOutlineValidated(p.id,uid,[...outline, {chapter:'参考文献', sections:[]}]);
   assert.equal(store.getProject(p.id,uid).outline.length, 2);
   workflow.confirmOutlineValidated(p.id,uid);
-  const { order } = createFeatureOrder({ userId:uid, itemType:'writing_fulltext', paymentMethod:'mock' });
+  const { order } = createFeatureOrder({ userId:uid, itemType:'writing_fulltext', paymentMethod:'mock', params:{ project_id:p.id } });
   await markOrderPaid({ orderNo:order.order_no, transactionId:'workflow-mock', channel:'mock' });
   await workflow.generateCurrentChapter(uid,p.id,order.order_no);
   assert.equal(workflow.getWorkflowState(p.id,uid).state,'chapter_review');
@@ -224,7 +254,9 @@ test('完整流程：文献保存→大纲→一次付费→两章确认→导�
   assert.equal(revised.chapters[0].regenerate_count,1);
   assert.equal(revised.chapters[0].confirmed,false);
   assert.equal(revised.chapters[1].confirmed,false);
-  const {order:unbound} = createFeatureOrder({userId:uid,itemType:'writing_fulltext',paymentMethod:'mock'});
+  const otherProject = store.createProject({userId:uid,title:'Other priced project',degree:'本科'});
+  workflow.createFullPaperWorkflow(otherProject.id,uid);
+  const {order:unbound} = createFeatureOrder({userId:uid,itemType:'writing_fulltext',paymentMethod:'mock',params:{project_id:otherProject.id}});
   await markOrderPaid({orderNo:unbound.order_no,transactionId:'unbound-mock',channel:'mock'});
   await assert.rejects(regenerateChapter(uid,p.id,'ch_1',unbound.order_no), /已绑定/);
   await assert.rejects(workflow.generateFinalDocument(p.id,uid));
@@ -245,7 +277,7 @@ test('首章生成失败后仍保留已付费套餐，重试不需再次支付',
   await workflow.confirmLiterature(p.id,uid,refs);
   workflow.saveOutlineValidated(p.id,uid,outline);
   workflow.confirmOutlineValidated(p.id,uid);
-  const {order} = createFeatureOrder({userId:uid,itemType:'writing_fulltext',paymentMethod:'mock'});
+  const {order} = createFeatureOrder({userId:uid,itemType:'writing_fulltext',paymentMethod:'mock',params:{project_id:p.id}});
   await markOrderPaid({orderNo:order.order_no,transactionId:'first-failure-mock',channel:'mock'});
   process.env.NODE_ENV='production';
   try { await assert.rejects(workflow.generateCurrentChapter(uid,p.id,order.order_no), /未配置/); }

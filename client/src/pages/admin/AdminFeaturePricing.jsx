@@ -146,6 +146,7 @@ export default function AdminFeaturePricing() {
                   const free = !!f.is_unlimited;
                   const quote = f.pricing_mode === 'quote';
                   const active = f.is_active !== false;
+                  const tieredFullPaper = f.feature_key === 'writing_fulltext';
                   return (
                     <tr key={f.feature_key} className="border-b border-slate-100 text-sm last:border-0">
                       <td className="px-4 py-3">
@@ -154,7 +155,9 @@ export default function AdminFeaturePricing() {
                       </td>
                       <td className="px-4 py-3 text-slate-600">{CATEGORY_LABEL[f.category] || f.category}</td>
                       <td className="px-4 py-3">
-                        {free ? (
+                        {tieredFullPaper ? (
+                          <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs text-blue-700">学历分层套餐</span>
+                        ) : free ? (
                           <span className="rounded-md bg-green-50 px-2 py-0.5 text-xs text-green-600">免费不限次</span>
                         ) : quote ? (
                           <span className="rounded-md bg-purple-50 px-2 py-0.5 text-xs text-purple-600">人工报价</span>
@@ -163,7 +166,9 @@ export default function AdminFeaturePricing() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {free ? (
+                        {tieredFullPaper ? (
+                          <span className="text-xs text-slate-500">本科/硕士/博士价格请在“系统设置”中管理</span>
+                        ) : free ? (
                           <span className="text-xs text-slate-400">—</span>
                         ) : quote ? (
                           <span className="text-xs text-slate-400">由管理员报价</span>
@@ -196,7 +201,7 @@ export default function AdminFeaturePricing() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
-                          {!free && (
+                          {!free && !tieredFullPaper && (
                             <button
                               onClick={() => toggleMode(f)}
                               disabled={savingKey === f.feature_key}
@@ -205,14 +210,16 @@ export default function AdminFeaturePricing() {
                               {quote ? '改固定价' : '改报价'}
                             </button>
                           )}
-                          <button
-                            onClick={() => save(f)}
-                            disabled={savingKey === f.feature_key}
-                            className="btn-primary px-3 py-1.5 text-xs"
-                          >
-                            <Save className={`h-3.5 w-3.5 ${savingKey === f.feature_key ? 'animate-pulse' : ''}`} />
-                            {savingKey === f.feature_key ? '保存中…' : '保存'}
-                          </button>
+                          {!tieredFullPaper && (
+                            <button
+                              onClick={() => save(f)}
+                              disabled={savingKey === f.feature_key}
+                              className="btn-primary px-3 py-1.5 text-xs"
+                            >
+                              <Save className={`h-3.5 w-3.5 ${savingKey === f.feature_key ? 'animate-pulse' : ''}`} />
+                              {savingKey === f.feature_key ? '保存中…' : '保存'}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -6,7 +6,7 @@ import fs from 'fs';
 import logger from '../logger.js';
 import db from '../db.js';
 import { getPaymentConfig, getAvailableChannels, getCourse, getFeaturePrice, getDefaultModel } from '../config-store.js';
-import { getFeatureCashPrice, materialFee } from './billing.js';
+import { getFeatureCashPrice, getFullPaperPricing, materialFee } from './billing.js';
 import { computeCourseQuote } from './course-quote.js';
 import { now, datePrefix } from '../utils.js';
 import { assertTransition, StateTransitionError, ORDER_STATUS, transitionStatus, transitionOrderToPaid } from './order-state.js';
@@ -139,7 +139,8 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
 
   const order = getOrder(orderNo);
   const payParams = buildPaymentParams(order, useChannel);
-  return { order, payParams };
+  // 创建订单响应也不暴露内部成本与利润保护明细；完整记录只保留在服务端。
+  return { order: { ...order, metadata: undefined, transaction_id: undefined }, payParams };
 }
 
 // 创建固定价格功能订单（现金直付；支持参考材料：订单金额 = 功能价 + 材料解读 token 费）
@@ -155,7 +156,17 @@ export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMeth
     if (!dm || !dm.api_key) throw new Error('AI 模型未配置，付费功能暂不可用，请联系管理员');
   }
 
-  const unitPrice = getFeatureCashPrice(itemType);
+  let projectId = null;
+  let fullPaperProject = null;
+  if (itemType === 'writing_fulltext') {
+    projectId = Number(params?.project_id ?? params?.projectId);
+    if (!Number.isInteger(projectId) || projectId <= 0) throw new Error('完整论文套餐必须绑定有效的论文项目');
+    fullPaperProject = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+    if (!fullPaperProject) throw new Error('论文项目不存在或无权访问');
+    if (fullPaperProject.workflow_mode !== 'full') throw new Error('该项目尚未进入完整论文流程');
+  }
+
+  let unitPrice = fullPaperProject ? getFullPaperPricing(fullPaperProject).price : getFeatureCashPrice(itemType);
   if (unitPrice <= 0) throw new Error('该功能暂未定价，请联系管理员');
 
   // quantity 语义收紧：当前执行模型为「一个订单 = 一次服务」（完成后 service_status=completed）。
@@ -182,21 +193,39 @@ export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMeth
     }
   }
 
+  // 完整论文采用项目级分层价格；材料成本也进入统一的 6 倍成本保护，
+  // 不再在套餐价之外重复收取一笔独立材料费。
+  const fullPaperPricing = fullPaperProject ? getFullPaperPricing(fullPaperProject, { materialTokens }) : null;
+  if (fullPaperPricing) {
+    unitPrice = fullPaperPricing.price;
+    materialFeeAmount = 0;
+  }
+
   const amount = Math.round((unitPrice * qty + materialFeeAmount) * 100) / 100;
   const useChannel = resolveChannel(paymentMethod);
+  const itemName = fullPaperPricing ? `完整论文（${fullPaperPricing.tierLabel}项目套餐）` : feature.name;
+  const storedParams = fullPaperPricing
+    ? { ...(params || {}), project_id: projectId, degree_tier: fullPaperPricing.tierKey, target_words: fullPaperPricing.targetWords }
+    : params;
+  const metadata = {
+    material_ids: materialIds,
+    material_tokens: materialTokens,
+    material_fee: materialFeeAmount,
+    ...(fullPaperPricing ? { pricing: fullPaperPricing } : {}),
+  };
 
   const orderNo = genOrderNo();
   const expiresAt = now() + getPaymentConfig().orderExpireSeconds;
   db.prepare(
-    `INSERT INTO orders (order_no, user_id, type, target, target_name, amount, status, payment_method, payment_channel, item_type, item_name, quantity, params_json, expires_at, metadata)
-     VALUES (?, ?, 'feature', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(orderNo, userId, itemType, feature.name, amount, useChannel, useChannel, itemType, feature.name, qty,
-    params ? JSON.stringify(params) : null, expiresAt,
-    JSON.stringify({ material_ids: materialIds, material_tokens: materialTokens, material_fee: materialFeeAmount }));
+    `INSERT INTO orders (order_no, user_id, type, target, target_name, amount, status, payment_method, payment_channel, item_type, item_name, quantity, params_json, expires_at, metadata, project_id)
+     VALUES (?, ?, 'feature', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(orderNo, userId, itemType, itemName, amount, useChannel, useChannel, itemType, itemName, qty,
+    storedParams ? JSON.stringify(storedParams) : null, expiresAt, JSON.stringify(metadata), projectId);
 
   const order = getOrder(orderNo);
   const payParams = buildPaymentParams(order, useChannel);
-  return { order, payParams };
+  // 内部成本和利润保护明细只保留在服务端，结算响应不向客户暴露。
+  return { order: { ...order, metadata: undefined, transaction_id: undefined }, payParams };
 }
 
 // 创建人工报价订单

@@ -19,6 +19,13 @@ const PAYMENT_MODES = [
   { value: 'mixed', label: '混合（用户可选）' },
 ];
 
+const FULL_PAPER_ADMIN_TIERS = [
+  { key: 'undergraduate', label: '本科', priceFallback: 59, costFallback: 8 },
+  { key: 'master', label: '硕士', priceFallback: 159, costFallback: 22 },
+  { key: 'doctorate', label: '博士', priceFallback: 499, costFallback: 70 },
+  { key: 'other', label: '其他', priceFallback: 99, costFallback: 14 },
+];
+
 const defaultSettings = {
   site_name: '',
   site_description: '',
@@ -34,6 +41,15 @@ const defaultSettings = {
   ai_input_cost_per_million: 1,
   ai_output_cost_per_million: 16,
   ai_profit_margin: 0.8,
+  full_paper_price_undergraduate: 59,
+  full_paper_price_master: 159,
+  full_paper_price_doctorate: 499,
+  full_paper_price_other: 99,
+  full_paper_cost_reserve_undergraduate: 8,
+  full_paper_cost_reserve_master: 22,
+  full_paper_cost_reserve_doctorate: 70,
+  full_paper_cost_reserve_other: 14,
+  full_paper_min_profit_markup: 5,
   course_quote_base_word_count: 10000,
   course_quote_word_price: 500,
   course_quote_chart_price: 100,
@@ -100,6 +116,15 @@ export default function AdminSettings() {
       next.ai_input_cost_per_million = s.ai_input_cost_per_million ?? 1;
       next.ai_output_cost_per_million = s.ai_output_cost_per_million ?? 16;
       next.ai_profit_margin = s.ai_profit_margin ?? 0.8;
+      next.full_paper_price_undergraduate = s.full_paper_price_undergraduate ?? 59;
+      next.full_paper_price_master = s.full_paper_price_master ?? 159;
+      next.full_paper_price_doctorate = s.full_paper_price_doctorate ?? 499;
+      next.full_paper_price_other = s.full_paper_price_other ?? 99;
+      next.full_paper_cost_reserve_undergraduate = s.full_paper_cost_reserve_undergraduate ?? 8;
+      next.full_paper_cost_reserve_master = s.full_paper_cost_reserve_master ?? 22;
+      next.full_paper_cost_reserve_doctorate = s.full_paper_cost_reserve_doctorate ?? 70;
+      next.full_paper_cost_reserve_other = s.full_paper_cost_reserve_other ?? 14;
+      next.full_paper_min_profit_markup = s.full_paper_min_profit_markup ?? 5;
       // 课程定制报价
       next.course_quote_base_word_count = s.course_quote_base_word_count ?? 10000;
       next.course_quote_word_price = s.course_quote_word_price ?? 500;
@@ -174,6 +199,15 @@ export default function AdminSettings() {
         ai_input_cost_per_million: Number(settings.ai_input_cost_per_million) || 0,
         ai_output_cost_per_million: Number(settings.ai_output_cost_per_million) || 0,
         ai_profit_margin: Number(settings.ai_profit_margin) || 0,
+        full_paper_price_undergraduate: Number(settings.full_paper_price_undergraduate) || 0,
+        full_paper_price_master: Number(settings.full_paper_price_master) || 0,
+        full_paper_price_doctorate: Number(settings.full_paper_price_doctorate) || 0,
+        full_paper_price_other: Number(settings.full_paper_price_other) || 0,
+        full_paper_cost_reserve_undergraduate: Number(settings.full_paper_cost_reserve_undergraduate) || 0,
+        full_paper_cost_reserve_master: Number(settings.full_paper_cost_reserve_master) || 0,
+        full_paper_cost_reserve_doctorate: Number(settings.full_paper_cost_reserve_doctorate) || 0,
+        full_paper_cost_reserve_other: Number(settings.full_paper_cost_reserve_other) || 0,
+        full_paper_min_profit_markup: Math.max(5, Number(settings.full_paper_min_profit_markup) || 5),
         course_quote_base_word_count: Number(settings.course_quote_base_word_count) || 0,
         course_quote_word_price: Number(settings.course_quote_word_price) || 0,
         course_quote_chart_price: Number(settings.course_quote_chart_price) || 0,
@@ -473,6 +507,57 @@ export default function AdminSettings() {
                 onChange={(e) => update('ai_profit_margin', e.target.value)}
               />
               <p className="mt-1.5 text-xs text-slate-400">0.8 = 80% 利润率，售价 = 成本 × 5</p>
+            </div>
+
+            <div className="my-3 border-t border-slate-100" />
+            <div>
+              <div className="text-sm font-medium text-ink">完整论文分层项目套餐</div>
+              <p className="mt-1 text-xs text-slate-400">
+                一个项目只支付一次。最终售价取“套餐基础价”和“预计总成本 ×（1 + 加价率）”中的较高值；加价率服务端强制不低于 5，即利润/成本不低于 500%。
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              {FULL_PAPER_ADMIN_TIERS.map(({ key, label, priceFallback }) => (
+                <div key={key}>
+                  <label className="label">{label}基础价（元）</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    className="input"
+                    value={settings[`full_paper_price_${key}`] ?? priceFallback}
+                    onChange={(e) => update(`full_paper_price_${key}`, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              {FULL_PAPER_ADMIN_TIERS.map(({ key, label, costFallback }) => (
+                <div key={key}>
+                  <label className="label">{label}非模型成本预留（元）</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    className="input"
+                    value={settings[`full_paper_cost_reserve_${key}`] ?? costFallback}
+                    onChange={(e) => update(`full_paper_cost_reserve_${key}`, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+            <div>
+              <label className="label">最低利润/成本倍数</label>
+              <input
+                type="number"
+                step="0.1"
+                min="5"
+                max="100"
+                className="input max-w-[200px]"
+                value={settings.full_paper_min_profit_markup}
+                onChange={(e) => update('full_paper_min_profit_markup', e.target.value)}
+              />
+              <p className="mt-1.5 text-xs text-slate-400">5 = 纯利润为成本的 500%，对应售价至少为总成本的 6 倍。</p>
             </div>
           </div>
         </div>

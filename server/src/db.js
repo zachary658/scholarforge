@@ -536,6 +536,16 @@ const settingsDefaults = {
   ai_input_cost_per_million: '1',
   ai_output_cost_per_million: '16',
   ai_profit_margin: '0.8',
+  // 完整论文分层项目套餐。纯利润率按“利润/成本”计算，服务端硬下限为 500%。
+  full_paper_price_undergraduate: '59',
+  full_paper_price_master: '159',
+  full_paper_price_doctorate: '499',
+  full_paper_price_other: '99',
+  full_paper_cost_reserve_undergraduate: '8',
+  full_paper_cost_reserve_master: '22',
+  full_paper_cost_reserve_doctorate: '70',
+  full_paper_cost_reserve_other: '14',
+  full_paper_min_profit_markup: '5',
   // 课程定制报价规则（论文 1 对 1 指导）：基础价来自课程"起"价，需求项在其上累加
   course_quote_base_word_count: '10000',   // 基准字数（字），含在起价内
   course_quote_word_price: '500',          // 每超 1 万字加价（元）

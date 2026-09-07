@@ -73,6 +73,7 @@ export default function FeaturePay({ needOrder, onPaid, onClose }) {
         item_type: needOrder.itemType,
         quantity: 1,
         payment_method: channel,
+        params: needOrder.params || undefined,
         material_ids: needOrder.materialIds && needOrder.materialIds.length > 0 ? needOrder.materialIds : undefined,
       });
       setPayState(data);
@@ -108,8 +109,14 @@ export default function FeaturePay({ needOrder, onPaid, onClose }) {
         <div className="px-6 py-5">
           <div className="rounded-lg bg-slate-50 p-4">
             <div className="text-center">
+              {needOrder.itemName ? <div className="mb-1 text-sm font-medium text-ink">{needOrder.itemName}</div> : null}
               <div className="text-sm text-slate-500">需支付</div>
               <div className="mt-1 text-3xl font-bold text-accent">¥{amount.toFixed(2)}</div>
+              {needOrder.pricing?.targetWords ? (
+                <div className="mt-2 text-xs text-slate-500">
+                  目标约 {Number(needOrder.pricing.targetWords).toLocaleString()} 字 · 文献、大纲、逐章生成、审校与导出一次付费
+                </div>
+              ) : null}
             </div>
           </div>
 
