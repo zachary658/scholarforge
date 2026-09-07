@@ -1,44 +1,259 @@
 import { createHash } from 'node:crypto';
 
+const AUTO_FIXABLE = new Set([
+  'outline_consistency',
+  'duplicate_paragraphs',
+  'citation_range',
+  'citation_present',
+  'bibliography_owned',
+  'unresolved_placeholders',
+]);
+
+function normalizeText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function excerpt(value, max = 180) {
+  const text = normalizeText(value);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function chapterLocation(chapter, chapterIndex, extra = {}) {
+  return {
+    scope: 'chapter',
+    chapterIndex,
+    chapterId: chapter?.id || null,
+    chapter: chapter?.chapter || `第 ${chapterIndex + 1} 章`,
+    ...extra,
+  };
+}
+
+function check(key, status, detail, locations = [], suggestion = '') {
+  return {
+    key,
+    status,
+    detail,
+    locations,
+    suggestion,
+    autoFixable: status !== 'pass' && AUTO_FIXABLE.has(key),
+  };
+}
+
 export function contentVersion(project) {
-  return createHash('sha256').update(JSON.stringify([
-    project.title, project.field, project.degree, project.writing_requirements, project.outline,
-    project.sources, project.chapters,
-  ])).digest('hex');
+  const payload = JSON.stringify({
+    title: project?.title || '',
+    field: project?.field || '',
+    degree: project?.degree || '',
+    writingRequirements: project?.writing_requirements || '',
+    outline: project?.outline || [],
+    chapters: project?.chapters || [],
+    sources: project?.sources || {},
+  });
+  return createHash('sha256').update(payload).digest('hex');
 }
 
 export function inspectPaper(project) {
-  const chapters = project.chapters || [];
-  const outline = project.outline || [];
-  const refs = project.sources?.references || [];
+  const outline = Array.isArray(project?.outline) ? project.outline : [];
+  const chapters = Array.isArray(project?.chapters) ? project.chapters : [];
+  const references = Array.isArray(project?.sources?.references) ? project.sources.references : [];
+  const bodies = chapters.map((item) => String(item?.content || ''));
+  const allText = bodies.join('\n\n');
   const checks = [];
-  const add = (key, pass, detail) => checks.push({ key, status: pass ? 'pass' : 'fail', detail });
-  add('chapter_complete', outline.length > 0 && chapters.length === outline.length
-    && chapters.every(c => c.status === 'done' && String(c.content || '').trim()), '所有大纲章节须有完整正文');
-  add('chapter_confirmed', chapters.length > 0 && chapters.every(c => c.confirmed === true), '所有章节须经用户确认');
-  add('outline_consistency', chapters.length === outline.length && chapters.every((c, i) =>
-    c.chapter === (outline[i]?.chapter || outline[i]?.title)), '章名及顺序须与已确认大纲一致');
-  add('references_present', refs.length >= 3, '至少需要 3 篇已确认文献');
-  const bodies = chapters.map(c => String(c.content || '').trim());
-  const paragraphs = bodies.flatMap(b => b.split(/\n\s*\n/)).map(p => p.trim()).filter(p => p.length > 200);
-  add('duplicate_paragraphs', new Set(paragraphs).size === paragraphs.length, '长段落不得完全重复');
+
+  const incomplete = chapters
+    .map((chapter, index) => ({ chapter, index }))
+    .filter(({ chapter }) => chapter?.status !== 'done' || !String(chapter?.content || '').trim());
+  checks.push(check(
+    'chapter_complete',
+    chapters.length > 0 && incomplete.length === 0 ? 'pass' : 'fail',
+    chapters.length > 0 && incomplete.length === 0 ? '全部章节均已生成。' : `有 ${Math.max(incomplete.length, outline.length - chapters.length)} 个章节尚未生成正文。`,
+    incomplete.map(({ chapter, index }) => chapterLocation(chapter, index)),
+    '请返回章节生成步骤补齐缺失章节。',
+  ));
+
+  const unconfirmed = chapters
+    .map((chapter, index) => ({ chapter, index }))
+    .filter(({ chapter }) => !chapter?.confirmed && !chapter?.confirmed_at);
+  checks.push(check(
+    'chapter_confirmed',
+    chapters.length > 0 && unconfirmed.length === 0 ? 'pass' : 'fail',
+    chapters.length > 0 && unconfirmed.length === 0 ? '全部章节均已确认。' : `有 ${unconfirmed.length} 个章节尚未由用户确认。`,
+    unconfirmed.map(({ chapter, index }) => chapterLocation(chapter, index)),
+    '请逐章审阅并确认；系统不会代替用户确认。',
+  ));
+
+  const outlineMismatches = chapters
+    .map((chapter, index) => ({ chapter, index, expected: outline[index]?.chapter || '' }))
+    .filter(({ chapter, expected }) => expected && chapter?.chapter !== expected);
+  const outlineLocations = outlineMismatches.map(({ chapter, index, expected }) => chapterLocation(chapter, index, {
+    excerpt: `当前标题：${chapter?.chapter || '未命名'}`,
+    expected,
+  }));
+  if (chapters.length !== outline.length) {
+    outlineLocations.unshift({
+      scope: 'outline',
+      excerpt: `大纲 ${outline.length} 章，正文 ${chapters.length} 章`,
+    });
+  }
+  const outlineMatches = outline.length > 0
+    && chapters.length === outline.length
+    && outlineMismatches.length === 0;
+  const outlineCheck = check(
+    'outline_consistency',
+    outlineMatches ? 'pass' : 'fail',
+    outlineMatches ? '章节数量与标题均和已确认大纲一致。' : '正文的章节数量或标题与已确认大纲不一致。',
+    outlineLocations,
+    chapters.length === outline.length ? '可一键将正文标题对齐到已确认大纲。' : '请先补齐或删除多余章节，再重新检查。',
+  );
+  outlineCheck.autoFixable = !outlineMatches && chapters.length === outline.length;
+  checks.push(outlineCheck);
+
+  checks.push(check(
+    'references_present',
+    references.length >= 3 ? 'pass' : 'fail',
+    references.length >= 3 ? `已绑定 ${references.length} 篇真实来源。` : `仅绑定 ${references.length} 篇来源，至少需要 3 篇。`,
+    references.length >= 3 ? [] : [{ scope: 'references', excerpt: `当前真实来源数：${references.length}` }],
+    '请返回真实文献检索步骤补充可核验来源。',
+  ));
+
+  const paragraphs = [];
+  chapters.forEach((chapter, chapterIndex) => {
+    String(chapter?.content || '').split(/\n\s*\n/).forEach((paragraph, paragraphIndex) => {
+      const normalized = normalizeText(paragraph);
+      if (normalized.length > 200) {
+        paragraphs.push({ normalized, paragraph, paragraphIndex, chapter, chapterIndex });
+      }
+    });
+  });
+  const seen = new Map();
+  const duplicateLocations = [];
+  for (const item of paragraphs) {
+    const first = seen.get(item.normalized);
+    if (!first) {
+      seen.set(item.normalized, item);
+      continue;
+    }
+    duplicateLocations.push(chapterLocation(item.chapter, item.chapterIndex, {
+      paragraphIndex: item.paragraphIndex,
+      excerpt: excerpt(item.paragraph),
+      duplicateOf: {
+        chapterIndex: first.chapterIndex,
+        chapter: first.chapter?.chapter || `第 ${first.chapterIndex + 1} 章`,
+        paragraphIndex: first.paragraphIndex,
+      },
+    }));
+  }
+  checks.push(check(
+    'duplicate_paragraphs',
+    duplicateLocations.length === 0 ? 'pass' : 'fail',
+    duplicateLocations.length === 0 ? '未发现跨章节大段重复。' : `发现 ${duplicateLocations.length} 处跨章节大段重复。`,
+    duplicateLocations,
+    '可一键保留首次出现的段落并移除后续完全重复内容。',
+  ));
+
+  const citationPattern = /\[(\d[\d\s,，\-–—]*)\]/g;
+  const invalidCitations = [];
   const cited = new Set();
-  const invalid = [];
-  for (const body of bodies) {
-    for (const m of body.matchAll(/\[(\d[\d\s,，\-–]*)\]/g)) {
-      for (const part of m[1].split(/[,，]/)) {
-        const match = part.trim().match(/^(\d+)(?:\s*[-–]\s*(\d+))?$/);
-        const start = Number(match?.[1]);
-        const end = Number(match?.[2] || match?.[1]);
-        if (!match || start < 1 || end < start || end > refs.length) { invalid.push(m[0]); continue; }
-        for (let n = start; n <= end; n++) cited.add(n);
+  chapters.forEach((chapter, chapterIndex) => {
+    const body = String(chapter?.content || '');
+    for (const match of body.matchAll(citationPattern)) {
+      let validMarker = true;
+      for (const part of match[1].split(/[,，]/)) {
+        const range = part.trim().match(/^(\d+)(?:\s*[-–—]\s*(\d+))?$/);
+        const start = Number(range?.[1]);
+        const end = Number(range?.[2] || range?.[1]);
+        if (!range || start < 1 || end < start || end > references.length) {
+          validMarker = false;
+          continue;
+        }
+        for (let number = start; number <= end; number += 1) cited.add(number);
+      }
+      if (!validMarker) {
+        invalidCitations.push(chapterLocation(chapter, chapterIndex, {
+          marker: match[0],
+          excerpt: excerpt(body.slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)),
+        }));
       }
     }
-  }
-  add('citation_range', invalid.length === 0, invalid.length ? `无效引文：${[...new Set(invalid)].join('、')}` : '引文编号及范围有效');
-  add('citation_present', cited.size > 0, '正文须实际引用已确认文献');
-  add('bibliography_owned', !bodies.some(b => /^\s*#{0,6}\s*(?:(?:主要)?参考文献|references|bibliography)\s*$/im.test(b)), '参考文献列表由系统从核验记录统一编排，不接受模型自写列表');
-  add('unresolved_placeholders', !/\[(?:CITE|CHART|EVIDENCE):|本章内容待生成|示例数据[，,]?请替换|数据待补充|待填入/.test(bodies.join('\n')), '不得残留未解析引文、图表或正文占位符');
-  checks.push({ key: 'uncited_references', status: cited.size === refs.length ? 'pass' : 'warn', detail: `未引用文献 ${Math.max(0, refs.length - cited.size)} 篇` });
-  return { passed: checks.every(c => c.status !== 'fail'), checks, contentVersion: contentVersion(project), generatedAt: Math.floor(Date.now() / 1000) };
+  });
+  checks.push(check(
+    'citation_range',
+    invalidCitations.length === 0 ? 'pass' : 'fail',
+    invalidCitations.length === 0 ? '正文引用编号均在真实来源范围内。' : `发现 ${invalidCitations.length} 个超出来源范围的引用编号。`,
+    invalidCitations,
+    '可一键根据已有真实来源改写相关论述并修正引用编号。',
+  ));
+
+  checks.push(check(
+    'citation_present',
+    cited.size > 0 ? 'pass' : 'fail',
+    cited.size > 0 ? `正文已使用 ${cited.size} 个来源编号。` : '正文没有发现形如 [1] 的来源引用。',
+    cited.size > 0 ? [] : [{ scope: 'paper', excerpt: '全文未发现数字型引文标记。' }],
+    '可一键基于已绑定真实来源补充必要引用；不会创建不存在的文献。',
+  ));
+
+  const bibliographyPattern = /(?:^|\n)\s{0,3}#{0,6}\s*(?:(?:主要)?参考文献|references|bibliography)\s*[:：]?\s*(?:\n|$)/i;
+  const bibliographyLocations = chapters.flatMap((chapter, chapterIndex) => {
+    const body = String(chapter?.content || '');
+    const match = bibliographyPattern.exec(body);
+    return match ? [chapterLocation(chapter, chapterIndex, {
+      excerpt: excerpt(body.slice(match.index, match.index + 240)),
+    })] : [];
+  });
+  checks.push(check(
+    'bibliography_owned',
+    bibliographyLocations.length === 0 ? 'pass' : 'fail',
+    bibliographyLocations.length === 0 ? '章节中未发现模型自行编造的参考文献列表。' : `有 ${bibliographyLocations.length} 个章节包含自行生成的参考文献列表。`,
+    bibliographyLocations,
+    '可一键删除章节内的参考文献列表，最终文献表将仅由真实来源库生成。',
+  ));
+
+  const placeholderPattern = /(\[(?:CITE|CHART|EVIDENCE):[^\]]+\]|本章内容待生成|示例数据[，,]?请替换|（?数据待补充）?|待补充数据|待填入|TODO|TBD|待核实)/gi;
+  const placeholderLocations = [];
+  chapters.forEach((chapter, chapterIndex) => {
+    const body = String(chapter?.content || '');
+    for (const match of body.matchAll(placeholderPattern)) {
+      placeholderLocations.push(chapterLocation(chapter, chapterIndex, {
+        marker: match[0],
+        excerpt: excerpt(body.slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)),
+      }));
+    }
+  });
+  checks.push(check(
+    'unresolved_placeholders',
+    placeholderLocations.length === 0 ? 'pass' : 'fail',
+    placeholderLocations.length === 0 ? '未发现待补充占位符。' : `发现 ${placeholderLocations.length} 个尚未解决的占位符。`,
+    placeholderLocations,
+    '可一键删除无证据的断言，或用已有真实来源支持的内容改写。',
+  ));
+
+  const unusedReferences = references
+    .map((reference, index) => ({ reference, number: index + 1 }))
+    .filter(({ number }) => !cited.has(number));
+  checks.push(check(
+    'uncited_references',
+    unusedReferences.length === 0 ? 'pass' : 'warn',
+    unusedReferences.length === 0 ? '全部来源均在正文中被引用。' : `有 ${unusedReferences.length} 篇来源未在正文中引用。`,
+    unusedReferences.slice(0, 20).map(({ reference, number }) => ({
+      scope: 'reference',
+      referenceNumber: number,
+      excerpt: excerpt(reference?.title || reference?.doi || reference?.url || `来源 ${number}`),
+    })),
+    '建议删除无关来源，或在确有论据对应时补充引用。',
+  ));
+
+  const failed = checks.filter((item) => item.status === 'fail').length;
+  const warnings = checks.filter((item) => item.status === 'warn').length;
+  return {
+    passed: failed === 0,
+    checks,
+    summary: {
+      failed,
+      warnings,
+      autoFixable: checks.filter((item) => item.status === 'fail' && item.autoFixable).length,
+    },
+    checkedAt: new Date().toISOString(),
+    generatedAt: Math.floor(Date.now() / 1000),
+    contentVersion: contentVersion(project),
+  };
 }

@@ -4,7 +4,7 @@ import { authRequired } from '../middleware.js';
 import {
   createFullPaperWorkflow, getWorkflowState, confirmLiterature,
   saveOutlineValidated, confirmOutlineValidated, generateCurrentChapter,
-  confirmChapter, backToChapter, runFinalCheck, generateFinalDocument, buildExpertContext,
+  confirmChapter, backToChapter, runFinalCheck, autoFixFinalCheck, generateFinalDocument, buildExpertContext,
   reopenResearch,
 } from '../services/workflow-service.js';
 import { getFeaturePrice } from '../config-store.js';
@@ -111,6 +111,16 @@ router.post('/:id/final-check', authRequired, (req, res) => {
   try {
     const result = runFinalCheck(parseInt(req.params.id, 10), req.user.id);
     res.json({ ok: true, check: result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 一键纠错：先做安全的确定性修复，再用已配置模型处理引用/占位语义问题，并立即复检。
+router.post('/:id/final-check/auto-fix', authRequired, async (req, res) => {
+  try {
+    const result = await autoFixFinalCheck(parseInt(req.params.id, 10), req.user.id);
+    res.json({ ok: true, ...result });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

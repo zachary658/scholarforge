@@ -14,6 +14,31 @@ import {
 
 const DEGREES = ['本科', '硕士', '博士', '其他'];
 
+const CHECK_LABELS = {
+  chapter_complete: '章节完整性',
+  chapter_confirmed: '章节确认状态',
+  outline_consistency: '大纲一致性',
+  references_present: '真实文献数量',
+  duplicate_paragraphs: '重复段落',
+  citation_range: '引用编号范围',
+  citation_present: '正文引用',
+  bibliography_owned: '参考文献归属',
+  unresolved_placeholders: '未解决占位符',
+  uncited_references: '未引用文献',
+  reference_proof: '文献核验凭据',
+};
+
+function locationLabel(location) {
+  if (location.scope === 'chapter') {
+    const paragraph = Number.isInteger(location.paragraphIndex) ? ` · 第 ${location.paragraphIndex + 1} 段` : '';
+    return `${location.chapter || `第 ${(location.chapterIndex || 0) + 1} 章`}${paragraph}`;
+  }
+  if (location.scope === 'reference') return `参考文献 [${location.referenceNumber}]`;
+  if (location.scope === 'outline') return '论文大纲';
+  if (location.scope === 'references') return '真实文献库';
+  return '全文';
+}
+
 // 工作流步骤（与后端状态机一一对应）
 const WF_STEPS = [
   { key: 'setup', label: '创作目的与信息', desc: '确认论文题目、学科与学历' },
@@ -68,6 +93,8 @@ export default function PaperWorkflow() {
 
   const [finalCheck, setFinalCheck] = useState(null);
   const [finalDoc, setFinalDoc] = useState(null);
+  const [showCheckDetails, setShowCheckDetails] = useState(false);
+  const [fixingCheck, setFixingCheck] = useState(false);
 
   const pollRef = useRef(null);
   const pollInFlight = useRef(false);
@@ -351,8 +378,35 @@ export default function PaperWorkflow() {
 
   // ---------- 全文检查 / 输出 ----------
   const runCheck = async () => {
-    try { const d = await api.runFinalCheck(projectId); setFinalCheck(d.check); if (d.check.passed) toast.success('一致性检查通过'); else toast.error('存在需修复的问题，请查看下方明细'); }
+    try {
+      const d = await api.runFinalCheck(projectId);
+      setFinalCheck(d.check);
+      setShowCheckDetails(false);
+      if (d.check.passed) toast.success('一致性检查通过'); else toast.error('发现一致性问题，请点击“查看错误”定位并修复');
+    }
     catch (err) { toast.error(err.message); }
+  };
+  const autoFixCheck = async () => {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setFixingCheck(true);
+    try {
+      const d = await api.autoFixFinalCheck(projectId);
+      setFinalCheck(d.check);
+      if (d.workflow) {
+        setWf(d.workflow);
+        setProject(d.workflow.project);
+        setChapters(d.workflow.project?.chapters || []);
+      }
+      if (d.check?.passed) {
+        setShowCheckDetails(false);
+        toast.success(`已完成自动纠错${d.fixes?.length ? `（${d.fixes.length} 项）` : ''}，现在可进入下一步输出全文`);
+      } else {
+        setShowCheckDetails(true);
+        toast.warning(`已完成可自动处理的纠错，仍有 ${d.check?.summary?.failed || 0} 项需要处理`);
+      }
+    } catch (err) { toast.error(err.message); }
+    finally { actionLock.current = false; setFixingCheck(false); }
   };
   const exportFinal = async () => {
     if (actionLock.current) return;
@@ -677,27 +731,68 @@ export default function PaperWorkflow() {
           <div className="card p-5">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-ink">全文一致性检查</h3>
-              <button onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> 运行检查</button>
+              <button disabled={fixingCheck || actionBusy} onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> 重新检查</button>
             </div>
             {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验章节完整性、逐章确认、大纲一致性、重复段落、引文范围与遗留占位符。规则检查不替代人工学术审核。</p>}
             {finalCheck && (
-              <div className="mt-3 space-y-2">
-                {finalCheck.checks.map((c) => (
-                  <div key={c.key} className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${c.status === 'pass' ? 'border-green-100 bg-green-50/40' : c.status === 'warn' ? 'border-amber-100 bg-amber-50/40' : 'border-red-100 bg-red-50/40'}`}>
-                    {c.status === 'pass' ? <Check className="mt-0.5 h-4 w-4 text-green-500" /> : c.status === 'warn' ? <AlertCircle className="mt-0.5 h-4 w-4 text-amber-500" /> : <AlertCircle className="mt-0.5 h-4 w-4 text-red-500" />}
-                    <div>
-                      <div className="font-medium text-ink">{c.detail}</div>
+              <div className="mt-3">
+                <div className={`rounded-lg border p-4 ${finalCheck.passed ? 'border-green-200 bg-green-50/50' : 'border-red-200 bg-red-50/50'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-start gap-2">
+                      {finalCheck.passed ? <Check className="mt-0.5 h-5 w-5 text-green-500" /> : <AlertCircle className="mt-0.5 h-5 w-5 text-red-500" />}
+                      <div>
+                        <div className={`text-sm font-semibold ${finalCheck.passed ? 'text-green-700' : 'text-red-700'}`}>
+                          {finalCheck.passed ? '全部检查通过，可进入下一步' : `发现 ${finalCheck.summary?.failed ?? finalCheck.checks.filter((c) => c.status === 'fail').length} 项错误`}
+                        </div>
+                        {!finalCheck.passed && <p className="mt-0.5 text-xs text-slate-600">先查看具体位置，再由系统自动处理可纠错项。</p>}
+                      </div>
                     </div>
+                    {!finalCheck.passed && (
+                      <div className="flex gap-2">
+                        <button onClick={() => setShowCheckDetails((value) => !value)} className="btn-secondary text-sm">
+                          {showCheckDetails ? '收起错误' : '查看错误'}
+                        </button>
+                        <button disabled={fixingCheck || actionBusy} onClick={autoFixCheck} className="btn-primary text-sm">
+                          <Refresh className={`h-4 w-4 ${fixingCheck ? 'animate-spin' : ''}`} /> {fixingCheck ? '正在自动纠错并复检…' : '一键纠错'}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                ))}
-                <div className={`mt-1 text-sm font-medium ${finalCheck.passed ? 'text-green-600' : 'text-red-600'}`}>
-                  {finalCheck.passed ? '✓ 全部检查通过，可生成最终文档' : '✗ 存在失败项，建议先修复'}
                 </div>
+
+                {showCheckDetails && !finalCheck.passed && (
+                  <div className="mt-3 space-y-3" aria-label="一致性检查错误详情">
+                    {finalCheck.checks.filter((c) => c.status !== 'pass').map((c) => (
+                      <div key={c.key} className={`rounded-lg border p-4 text-sm ${c.status === 'warn' ? 'border-amber-200 bg-amber-50/40' : 'border-red-200 bg-white'}`}>
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className={`mt-0.5 h-4 w-4 flex-none ${c.status === 'warn' ? 'text-amber-500' : 'text-red-500'}`} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-ink">{CHECK_LABELS[c.key] || c.key}</div>
+                            <p className="mt-0.5 text-slate-700">{c.detail}</p>
+                            {c.suggestion && <p className="mt-1 text-xs text-blue-700">建议：{c.suggestion}</p>}
+                            {!!c.locations?.length && (
+                              <div className="mt-3 space-y-2">
+                                {c.locations.map((location, index) => (
+                                  <div key={`${c.key}-${index}`} className="rounded-md bg-slate-50 px-3 py-2">
+                                    <div className="text-xs font-medium text-slate-700">定位：{locationLabel(location)}{location.marker ? ` · 异常标记 ${location.marker}` : ''}</div>
+                                    {location.excerpt && <p className="mt-1 break-words text-xs leading-5 text-slate-500">上下文：{location.excerpt}</p>}
+                                    {location.expected && <p className="mt-1 text-xs text-slate-500">应为：{location.expected}</p>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {!c.autoFixable && c.status === 'fail' && <p className="mt-2 text-xs font-medium text-red-600">此项需要用户确认或重新核验，系统不会自动绕过。</p>}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <div className="mt-4 flex justify-end gap-3">
-              <button disabled={actionBusy} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
-              <button onClick={exportFinal} disabled={!finalCheck?.passed || generating || actionBusy} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '导出中…' : '生成最终文档（Word）'}</button>
+              <button disabled={actionBusy || fixingCheck} onClick={() => backToChapter(0)} className="btn-secondary text-sm">返回章节修订</button>
+              <button onClick={exportFinal} disabled={!finalCheck?.passed || generating || actionBusy || fixingCheck} className="btn-primary text-sm"><FileWord className="h-4 w-4" /> {actionBusy ? '导出中…' : '下一步：生成最终文档（Word）'}</button>
             </div>
             {finalDoc && <p className="mt-2 text-right text-xs text-green-600">已生成最终文档</p>}
           </div>

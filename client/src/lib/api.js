@@ -414,6 +414,7 @@ export const api = {
   reopenResearch: (id) => request(`/workflow/${id}/literature/reopen`, { method: 'POST' }),
   backToChapter: (id, index) => request(`/workflow/${id}/chapters/back`, { method: 'POST', body: { index } }),
   runFinalCheck: (id) => request(`/workflow/${id}/final-check`, { method: 'POST' }),
+  autoFixFinalCheck: (id) => request(`/workflow/${id}/final-check/auto-fix`, { method: 'POST' }),
   generateFinalDocument: (id, payload) => request(`/workflow/${id}/final-document`, { method: 'POST', body: payload || {} }),
   getExpertConsult: (id) => request(`/workflow/${id}/expert-consult`),
 

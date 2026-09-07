@@ -34,6 +34,77 @@ test('全文检查拒绝空文、未确认、缺章、越界范围和遗留占�
   assert.notEqual(contentVersion(p), contentVersion({ ...p, title:'Changed title' }));
 });
 
+test('全文检查返回可供前端展示的章节、段落、异常标记和修复建议', () => {
+  const p = {
+    title: 'Error location fixture',
+    outline,
+    sources: { references: refs },
+    chapters: outline.map((c, i) => ({ ...c, status: 'done', confirmed: true, content: i === 0 ? '研究结论 [99]（数据待补充）' : '结论内容 [1]' })),
+  };
+  const result = inspectPaper(p);
+  const citation = result.checks.find((item) => item.key === 'citation_range');
+  const placeholder = result.checks.find((item) => item.key === 'unresolved_placeholders');
+  assert.equal(result.passed, false);
+  assert.equal(citation.autoFixable, true);
+  assert.equal(citation.locations[0].chapterIndex, 0);
+  assert.equal(citation.locations[0].marker, '[99]');
+  assert.match(citation.locations[0].excerpt, /研究结论/);
+  assert.equal(placeholder.locations[0].chapter, '第一章 绪论');
+  assert.match(placeholder.suggestion, /一键/);
+});
+
+test('一键纠错可对齐标题、移除重复段落和章节内伪造文献表，并立即通过复检', async () => {
+  const p = store.createProject({ userId: uid, title: 'Final auto-fix fixture', field: '计算机' });
+  const repeated = `${'这是一段用于检测跨章节重复的学术论述。'.repeat(14)} [1]`;
+  const chapters = [
+    { id: 'fix-1', chapter: '错误标题一', status: 'done', confirmed: true, confirmed_at: new Date().toISOString(), content: `${repeated}\n\n第一章独有论述 [1]\n\n参考文献\n伪造记录` },
+    { id: 'fix-2', chapter: '错误标题二', status: 'done', confirmed: true, confirmed_at: new Date().toISOString(), content: `${repeated}\n\n第二章独有论述 [2]` },
+  ];
+  db.prepare(`UPDATE projects
+    SET workflow_mode = 'full', workflow_state = 'final_review', outline_json = ?, chapters_json = ?, sources_json = ?, outline_confirmed_at = ?
+    WHERE id = ? AND user_id = ?`)
+    .run(JSON.stringify(outline), JSON.stringify(chapters), JSON.stringify({ references: refs }), new Date().toISOString(), p.id, uid);
+
+  const before = workflow.runFinalCheck(p.id, uid);
+  assert.equal(before.passed, false);
+  const result = await workflow.autoFixFinalCheck(p.id, uid, { runner: async () => { throw new Error('本用例不应调用模型'); } });
+  assert.equal(result.check.passed, true);
+  assert.equal(result.nextAction, 'final_document');
+  assert.ok(result.fixes.some((item) => item.key === 'outline_consistency'));
+  assert.ok(result.fixes.some((item) => item.key === 'duplicate_paragraphs'));
+  assert.ok(result.fixes.some((item) => item.key === 'bibliography_owned'));
+  const saved = store.getProject(p.id, uid);
+  assert.deepEqual(saved.chapters.map((chapter) => chapter.chapter), outline.map((chapter) => chapter.chapter));
+  assert.equal(saved.chapters[1].content.includes(repeated), false);
+  assert.equal(saved.chapters[0].content.includes('伪造记录'), false);
+});
+
+test('一键纠错调用主笔模型修复引用越界与占位符，但只允许使用已核验文献', async () => {
+  const p = store.createProject({ userId: uid, title: 'Semantic auto-fix fixture', field: '计算机' });
+  const invalidBody = `${'这一论述用于构造足够长度的待修订正文，并保持原有学术结构。'.repeat(8)} [99]（数据待补充）`;
+  const correctedBody = `${'这一论述已根据真实来源进行审慎修订，并保持原有学术结构和篇幅。'.repeat(8)} [1]`;
+  const chapters = [
+    { id: 'semantic-1', ...outline[0], status: 'done', confirmed: true, confirmed_at: new Date().toISOString(), content: invalidBody },
+    { id: 'semantic-2', ...outline[1], status: 'done', confirmed: true, confirmed_at: new Date().toISOString(), content: '本章总结前述研究发现，并明确其适用边界 [2]。' },
+  ];
+  db.prepare(`UPDATE projects
+    SET workflow_mode = 'full', workflow_state = 'final_review', outline_json = ?, chapters_json = ?, sources_json = ?, outline_confirmed_at = ?
+    WHERE id = ? AND user_id = ?`)
+    .run(JSON.stringify(outline), JSON.stringify(chapters), JSON.stringify({ references: refs }), new Date().toISOString(), p.id, uid);
+  let received = null;
+  const runner = async (tool, params) => {
+    received = { tool, params };
+    return { content: correctedBody, usedRealAI: true, model: { name: 'fixture' } };
+  };
+
+  const result = await workflow.autoFixFinalCheck(p.id, uid, { runner });
+  assert.equal(result.check.passed, true);
+  assert.equal(received.tool, 'revise');
+  assert.equal(received.params.references.length, 3);
+  assert.match(received.params.context, /不得输出 \[CITE:n\]/);
+  assert.equal(store.getProject(p.id, uid).chapters[0].content, correctedBody);
+});
+
 test('项目更新不能伪造工作流状态、章节索引或交付检查', () => {
   const p = store.createProject({ userId:uid, title:'State ownership' });
   store.updateProject(p.id, uid, { workflow_state:'completed', current_chapter_index:10, final_check_json:'{"passed":true}' });

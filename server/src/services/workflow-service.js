@@ -16,6 +16,8 @@ import { transitionServiceToCompleted } from './order-state.js';
 import { inspectPaper, contentVersion } from './final-quality.js';
 import { resolveWritingReferences } from './reference-verification.js';
 import { hasReferenceProof } from './reference-proof.js';
+import { runAI } from '../ai-service.js';
+import { getRoleModel } from './orchestrator.js';
 
 export const WORKFLOW_STATES = [
   'setup', 'researching', 'outline_review', 'chapter_generating', 'chapter_review', 'final_review', 'completed',
@@ -258,11 +260,177 @@ export function runFinalCheck(projectId, userId) {
   const result = inspectPaper(p);
   if (!(p.sources?.references || []).every(hasReferenceProof)) {
     result.passed = false;
-    result.checks.push({ key: 'reference_proof', status: 'fail', detail: '文献记录发生变化或尚未经过服务端核验' });
+    result.checks.push({
+      key: 'reference_proof',
+      status: 'fail',
+      detail: '文献记录发生变化或尚未经过服务端核验。',
+      locations: [{ scope: 'references', excerpt: '至少一条文献缺少有效的服务端核验凭据。' }],
+      suggestion: '请返回真实文献检索步骤重新核验；自动纠错不会伪造核验结果。',
+      autoFixable: false,
+    });
+    result.summary = {
+      ...(result.summary || {}),
+      failed: (result.summary?.failed || 0) + 1,
+    };
   }
   db.prepare('UPDATE projects SET final_check_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(JSON.stringify(result), now(), projectId, userId);
   return result;
+}
+
+function stripChapterBibliography(content) {
+  const pattern = /(?:^|\n)\s{0,3}#{0,6}\s*(?:(?:主要)?参考文献|references|bibliography)\s*[:：]?\s*(?:\n|$)[\s\S]*$/i;
+  return String(content || '').replace(pattern, '').trimEnd();
+}
+
+function removeLaterDuplicateParagraphs(chapters) {
+  const seen = new Set();
+  return chapters.map((chapter) => {
+    const parts = String(chapter?.content || '').split(/\n\s*\n/);
+    const kept = parts.filter((paragraph) => {
+      const normalized = paragraph.replace(/\s+/g, ' ').trim();
+      if (normalized.length <= 200) return true;
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+    return { ...chapter, content: kept.join('\n\n') };
+  });
+}
+
+function correctionLooksSafe(original, corrected) {
+  const before = String(original || '').trim();
+  const after = String(corrected || '').trim();
+  if (!before || !after || after.length < Math.max(120, before.length * 0.55) || after.length > before.length * 1.6) return false;
+  const beforeHeadings = (before.match(/^#{1,6}\s+/gm) || []).length;
+  const afterHeadings = (after.match(/^#{1,6}\s+/gm) || []).length;
+  return beforeHeadings === 0 || afterHeadings >= Math.floor(beforeHeadings * 0.6);
+}
+
+function affectedChapterIndexes(checkResult, chapters) {
+  const semanticKeys = new Set(['citation_range', 'citation_present', 'unresolved_placeholders']);
+  const indexes = new Set();
+  for (const item of checkResult.checks || []) {
+    if (item.status !== 'fail' || !semanticKeys.has(item.key)) continue;
+    const locations = item.locations || [];
+    for (const location of locations) {
+      if (Number.isInteger(location.chapterIndex)) indexes.add(location.chapterIndex);
+      if (location.scope === 'paper') {
+        chapters.forEach((chapter, index) => {
+          if (String(chapter?.content || '').trim()) indexes.add(index);
+        });
+      }
+    }
+  }
+  return [...indexes].sort((a, b) => a - b);
+}
+
+const finalFixesInFlight = new Map();
+
+export async function autoFixFinalCheck(projectId, userId, { runner = runAI } = {}) {
+  const key = `${userId}:${projectId}`;
+  if (finalFixesInFlight.has(key)) return finalFixesInFlight.get(key);
+  const pending = autoFixFinalCheckInternal(projectId, userId, runner);
+  finalFixesInFlight.set(key, pending);
+  try { return await pending; } finally { finalFixesInFlight.delete(key); }
+}
+
+async function autoFixFinalCheckInternal(projectId, userId, runner) {
+  const wf = getWorkflowState(projectId, userId);
+  if (!wf || wf.mode !== 'full' || wf.state !== 'final_review') throw new Error('请在全文一致性检查阶段使用一键纠错');
+  if (isGenerating(projectId)) throw new Error('请等待当前生成任务完成');
+
+  const initialCheck = runFinalCheck(projectId, userId);
+  if (initialCheck.passed) return { check: initialCheck, workflow: getWorkflowState(projectId, userId), fixes: [], unresolved: [], nextAction: 'final_document' };
+
+  const sourceRow = db.prepare('SELECT chapters_json FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
+  if (!sourceRow) throw new Error('工作区不存在');
+  const originalJson = sourceRow.chapters_json || '[]';
+  let chapters;
+  try { chapters = JSON.parse(originalJson); } catch { chapters = []; }
+  chapters = chapters.map((chapter) => ({ ...chapter }));
+  const fixes = [];
+  const unresolved = [];
+  const outline = wf.project.outline || [];
+
+  const outlineCheck = initialCheck.checks.find((item) => item.key === 'outline_consistency' && item.status === 'fail');
+  if (outlineCheck && chapters.length === outline.length) {
+    let changed = 0;
+    chapters = chapters.map((chapter, index) => {
+      const expected = outline[index]?.chapter;
+      if (!expected || chapter.chapter === expected) return chapter;
+      changed += 1;
+      return { ...chapter, chapter: expected };
+    });
+    if (changed) fixes.push({ key: 'outline_consistency', detail: `已对齐 ${changed} 个章节标题。` });
+  }
+
+  const beforeBibliography = JSON.stringify(chapters);
+  chapters = chapters.map((chapter) => ({ ...chapter, content: stripChapterBibliography(chapter.content) }));
+  if (JSON.stringify(chapters) !== beforeBibliography) fixes.push({ key: 'bibliography_owned', detail: '已删除章节内自行生成的参考文献列表。' });
+
+  const beforeDuplicates = JSON.stringify(chapters);
+  chapters = removeLaterDuplicateParagraphs(chapters);
+  if (JSON.stringify(chapters) !== beforeDuplicates) fixes.push({ key: 'duplicate_paragraphs', detail: '已移除后续完全重复的大段文字。' });
+
+  const semanticIndexes = affectedChapterIndexes(initialCheck, chapters);
+  for (const index of semanticIndexes) {
+    const chapter = chapters[index];
+    if (!chapter || !String(chapter.content || '').trim()) continue;
+    const findings = (initialCheck.checks || [])
+      .filter((item) => item.status === 'fail' && ['citation_range', 'citation_present', 'unresolved_placeholders'].includes(item.key))
+      .filter((item) => (item.locations || []).some((location) => location.scope === 'paper' || location.chapterIndex === index))
+      .map((item) => `${item.detail} ${item.suggestion || ''}`)
+      .join('\n');
+    const model = getRoleModel({ field: wf.project.field, task: 'final_autofix', chapter, role: 'writer' });
+    try {
+      const result = await runner('revise', {
+        topic: wf.project.title,
+        field: wf.project.field,
+        content: chapter.content,
+        review: '只修复本章的一致性检查失败项，保持章节结构、论点和篇幅。',
+        findings,
+        references: wf.project.sources?.references || [],
+        benchmarks: wf.project.sources?.benchmarks || [],
+        dataTables: wf.project.sources?.tables || [],
+        context: '引用只能使用真实参考文献列表中的数字编号 [1]、[2] 等；不得输出 [CITE:n]、待补充、TODO 或自建参考文献表；无证据支持的具体事实或数值应删除或改为审慎表述。只输出本章修订后的完整正文。',
+      }, null, model);
+      if (!result?.usedRealAI || !correctionLooksSafe(chapter.content, result.content)) {
+        unresolved.push({ chapterIndex: index, chapter: chapter.chapter, detail: result?.usedRealAI ? '模型修订稿结构或篇幅异常，已保留原文。' : '尚未配置可用的大模型，语义问题无法自动改写。' });
+        continue;
+      }
+      chapters[index] = {
+        ...chapter,
+        content: stripChapterBibliography(result.content),
+        auto_corrected_at: now(),
+      };
+      fixes.push({ key: 'semantic_revision', chapterIndex: index, chapter: chapter.chapter, detail: `已修订“${chapter.chapter}”的引用或占位问题。` });
+    } catch (error) {
+      unresolved.push({ chapterIndex: index, chapter: chapter.chapter, detail: `自动修订失败：${error.message}` });
+    }
+  }
+
+  chapters = removeLaterDuplicateParagraphs(chapters).map((chapter) => ({
+    ...chapter,
+    content: stripChapterBibliography(chapter.content),
+  }));
+
+  if (JSON.stringify(chapters) !== originalJson) {
+    const update = db.prepare('UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ? AND user_id = ? AND chapters_json = ?')
+      .run(JSON.stringify(chapters), now(), projectId, userId, originalJson);
+    if (update.changes !== 1) throw new Error('纠错期间正文已被其他操作修改，请刷新后重试');
+  }
+
+  const checkResult = runFinalCheck(projectId, userId);
+  const manualFailures = (checkResult.checks || []).filter((item) => item.status === 'fail' && !item.autoFixable);
+  unresolved.push(...manualFailures.map((item) => ({ key: item.key, detail: item.detail })));
+  return {
+    check: checkResult,
+    workflow: getWorkflowState(projectId, userId),
+    fixes,
+    unresolved,
+    nextAction: checkResult.passed ? 'final_document' : 'review_errors',
+  };
 }
 
 // 生成最终文档（复用 chapters 合并 + docx 生成）
