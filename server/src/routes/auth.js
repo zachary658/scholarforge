@@ -67,6 +67,17 @@ const forgotLimiter = makeLimiter({
   message: '请求过于频繁，请稍后再试',
 });
 
+// 邮箱验证码发送速率限制：按用户维度 15 分钟最多 5 次，兜底防刷。
+// 此前复用 registerLimiter（按 IP、与注册共用 5 次/小时）：同一出口 IP 下只要注册几次，
+// 正常用户就再也发不出验证码，且注册本身会挤占配额。改为按用户独立计数后，
+// 注册不再影响验证码发送；60 秒的冷却由路由内 sent_at 判断负责。
+const emailVerificationLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyType: 'user',
+  message: '验证码发送过于频繁，请稍后再试',
+});
+
 // 修改密码速率限制：每个 IP 15 分钟最多 5 次，防当前密码被暴力破解（尤其管理员账号）
 const changePasswordLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
@@ -250,13 +261,13 @@ router.post('/register', registerLimiter, async (req, res) => {
   res.json({ token: accessToken, accessToken, user, email_verification_sent: emailSent });
 });
 
-router.post('/email-verification/send', authRequired, registerLimiter, async (req, res) => {
+router.post('/email-verification/send', authRequired, emailVerificationLimiter, async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   if (user.email_verified_at || user.is_admin || user.is_support) return res.json({ ok: true, already_verified: true });
   const recent = db.prepare('SELECT sent_at FROM email_verification_codes WHERE user_id=?').get(user.id);
   const timestamp = Math.floor(Date.now() / 1000);
-  if (recent && timestamp - recent.sent_at < 60) return res.status(429).json({ error: '验证码发送过于频繁，请稍后再试' });
+  if (recent && timestamp - recent.sent_at < 60) return res.status(429).json({ error: '验证码已发送，请 60 秒后再试' });
   const ok = await sendVerificationCode(user);
   res.status(ok ? 200 : 503).json(ok ? { ok: true } : { error: '验证邮件发送失败，请稍后重试' });
 });
