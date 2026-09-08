@@ -10,7 +10,8 @@ process.env.NODE_ENV = 'test';
 const db = (await import('../src/db.js')).default;
 const {
   ensureServiceProject, getServiceProject, normalizePromotionCode, resolvePromotion,
-  updateServiceProject, addSubmission,
+  updateServiceProject, addSubmission, deletePromotionCode, deletePromotionPartner,
+  promotionPartnerStats, setPromotionPartnerActive,
 } = await import('../src/services/service-project-service.js');
 const { createOrder, markOrderPaid } = await import('../src/services/payment.js');
 
@@ -26,6 +27,22 @@ test('推广码规范化、校验与不可变归因快照', () => {
   assert.equal(project.promotion_code_snapshot, 'CAMPUS01');
   assert.equal(project.promotion_partner_snapshot, '校园渠道');
   assert.equal(ensureServiceProject({ userId, serviceType:'graduation_project', sourceType:'graduation_project_order', sourceId:9001, promotionCode:'' }).id, project.id);
+});
+
+test('推广方可启停，删除会保护已有归因且允许清理无引用记录', () => {
+  setPromotionPartnerActive(partnerId, false);
+  assert.throws(() => resolvePromotion('CAMPUS01'), /停用/);
+  setPromotionPartnerActive(partnerId, true);
+  assert.equal(resolvePromotion('CAMPUS01').partner_id, partnerId);
+  assert.throws(() => deletePromotionCode(db.prepare("SELECT id FROM promotion_codes WHERE code='CAMPUS01'").get().id), /关联/);
+  assert.throws(() => deletePromotionPartner(partnerId), /推广码/);
+
+  const emptyPartner = Number(db.prepare("INSERT INTO promotion_partners (name) VALUES ('待清理渠道')").run().lastInsertRowid);
+  const emptyCode = Number(db.prepare("INSERT INTO promotion_codes (code,partner_id) VALUES ('UNUSED01',?)").run(emptyPartner).lastInsertRowid);
+  assert.ok(promotionPartnerStats().some((item) => item.id === emptyPartner && item.code_count === 1));
+  assert.equal(deletePromotionCode(emptyCode), true);
+  assert.equal(deletePromotionPartner(emptyPartner), true);
+  assert.equal(db.prepare('SELECT id FROM promotion_partners WHERE id=?').get(emptyPartner), undefined);
 });
 
 test('状态机、乐观锁、幂等更新和内部备注隔离', () => {

@@ -24,7 +24,7 @@ import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrde
 import { parseTemplate } from '../services/template-parser.js';
 import logger, { configureErrorAlert } from '../logger.js';
 import { getOperationalMetrics } from '../services/operational-metrics.js';
-import { listAdminAuditLogs } from '../services/admin-audit.js';
+import { listAdminAuditLogs, verifyAdminAuditChain } from '../services/admin-audit.js';
 import { deleteSecureSetting, getSecureSettingStatuses, hasSecureSetting, setSecureSetting } from '../services/secure-settings.js';
 import { getMailConfigStatus, sendMail } from '../services/mailer.js';
 
@@ -45,6 +45,11 @@ const router = Router();
 
 // 所有管理员路由都需要 admin 权限
 router.use(adminRequired);
+
+router.get('/operation-logs/verify', (_req, res) => {
+  const result = verifyAdminAuditChain();
+  res.status(result.ok ? 200 : 409).json(result);
+});
 
 router.get('/operation-logs', (req, res) => {
   res.json(listAdminAuditLogs(req.query));

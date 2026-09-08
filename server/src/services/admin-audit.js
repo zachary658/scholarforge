@@ -3,6 +3,8 @@ import db from '../db.js';
 import logger, { redact } from '../logger.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const HMAC_VERSION = 2;
+const HMAC_KEY_VERSION = 1;
 const TABLES = new Set([
   'feature_prices', 'courses', 'user_courses', 'orders', 'templates', 'users',
   'graduation_projects', 'graduation_project_orders', 'patent_orders',
@@ -62,24 +64,92 @@ function takeSnapshot(target, body) {
   return target.settings ? snapshotSettings(body) : snapshotTable(target.table, target.id, target.idColumn);
 }
 
-function appendAudit(entry) {
+function auditMaterial(entry, prevHash) {
+  return JSON.stringify({
+    actor_id: entry.actor_id,
+    actor_email: entry.actor_email,
+    actor_role: entry.actor_role,
+    action: entry.action,
+    target_type: entry.target_type,
+    target_id: entry.target_id,
+    request_id: entry.request_id,
+    ip_address: entry.ip_address,
+    user_agent: entry.user_agent,
+    success: entry.success,
+    status_code: entry.status_code,
+    before_json: entry.before_json,
+    after_json: entry.after_json,
+    request_json: entry.request_json,
+    error_message: entry.error_message,
+    created_at: entry.created_at,
+    prev_hash: prevHash,
+  });
+}
+
+function auditHmacKey() {
+  let source = process.env.AUDIT_HMAC_KEY || process.env.CONFIG_ENCRYPTION_KEY || process.env.JWT_SECRET;
+  if ((!source || source.length < 32) && process.env.NODE_ENV !== 'production') {
+    source = 'scholarforge-development-audit-key-not-for-production';
+  }
+  if (!source || source.length < 32) {
+    throw Object.assign(new Error('审计 HMAC 不可用：请配置至少 32 字符的 AUDIT_HMAC_KEY、CONFIG_ENCRYPTION_KEY 或 JWT_SECRET'), { statusCode: 503 });
+  }
+  return crypto.hkdfSync('sha256', Buffer.from(source), Buffer.from('scholarforge-admin-audit'), Buffer.from('hmac-sha256-v1'), 32);
+}
+
+function hashEntry(entry, prevHash, version = HMAC_VERSION) {
+  const material = auditMaterial(entry, prevHash);
+  return Number(version) === 1
+    ? crypto.createHash('sha256').update(material).digest('hex')
+    : crypto.createHmac('sha256', auditHmacKey()).update(material).digest('hex');
+}
+
+function hashesEqual(actual, expected) {
+  if (!/^[a-f0-9]{64}$/i.test(String(actual || '')) || !/^[a-f0-9]{64}$/i.test(String(expected || ''))) return false;
+  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+}
+
+export function appendAdminAudit(entry) {
   const insert = db.transaction(() => {
     const previous = db.prepare('SELECT entry_hash FROM admin_operation_logs ORDER BY id DESC LIMIT 1').get();
     const prevHash = previous?.entry_hash || '';
-    const material = JSON.stringify({ ...entry, prev_hash: prevHash });
-    const entryHash = crypto.createHash('sha256').update(material).digest('hex');
+    const entryHash = hashEntry(entry, prevHash, HMAC_VERSION);
     db.prepare(`INSERT INTO admin_operation_logs (
       actor_id, actor_email, actor_role, action, target_type, target_id, request_id,
       ip_address, user_agent, success, status_code, before_json, after_json,
-      request_json, error_message, prev_hash, entry_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      request_json, error_message, prev_hash, entry_hash, created_at, hash_version, key_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       entry.actor_id, entry.actor_email, entry.actor_role, entry.action, entry.target_type,
       entry.target_id, entry.request_id, entry.ip_address, entry.user_agent, entry.success,
       entry.status_code, entry.before_json, entry.after_json, entry.request_json,
-      entry.error_message, prevHash, entryHash, entry.created_at,
+      entry.error_message, prevHash, entryHash, entry.created_at, HMAC_VERSION, HMAC_KEY_VERSION,
     );
   });
   insert();
+}
+
+export function verifyAdminAuditChain() {
+  const rows = db.prepare('SELECT * FROM admin_operation_logs ORDER BY id').all();
+  let previousHash = '';
+  let legacyEntries = 0;
+  let checked = 0;
+  for (const row of rows) {
+    const version = Number(row.hash_version || 1);
+    if (row.prev_hash !== previousHash) {
+      return { ok: false, total: rows.length, checked, broken_id: row.id, reason: 'PREVIOUS_HASH_MISMATCH', legacy_entries: legacyEntries, head_hash: previousHash };
+    }
+    if (version !== 1 && version !== HMAC_VERSION) {
+      return { ok: false, total: rows.length, checked, broken_id: row.id, reason: 'UNSUPPORTED_HASH_VERSION', legacy_entries: legacyEntries, head_hash: previousHash };
+    }
+    if (version === 1) legacyEntries += 1;
+    const expected = hashEntry(row, row.prev_hash, version);
+    if (!hashesEqual(row.entry_hash, expected)) {
+      return { ok: false, total: rows.length, checked, broken_id: row.id, reason: 'ENTRY_HASH_MISMATCH', legacy_entries: legacyEntries, head_hash: previousHash };
+    }
+    previousHash = row.entry_hash;
+    checked += 1;
+  }
+  return { ok: true, total: rows.length, checked: rows.length, broken_id: null, reason: null, legacy_entries: legacyEntries, head_hash: previousHash, hash_version: HMAC_VERSION, key_version: HMAC_KEY_VERSION };
 }
 
 export function adminAuditMiddleware(req, res, next) {
@@ -94,7 +164,7 @@ export function adminAuditMiddleware(req, res, next) {
       const responseId = responseBody?.id || responseBody?.item?.id || responseBody?.data?.id;
       if (!target.id && responseId) target.id = responseId;
       const after = takeSnapshot(target, req.body);
-      appendAudit({
+      appendAdminAudit({
         actor_id: req.user?.id || null,
         actor_email: req.user?.email || '',
         actor_role: req.user?.is_admin ? 'admin' : 'support',

@@ -292,6 +292,9 @@ export const api = {
   adminCreatePromotionPartner: (payload) => request('/admin/promotion/partners', { method: 'POST', body: payload }),
   adminCreatePromotionCode: (payload) => request('/admin/promotion/codes', { method: 'POST', body: payload }),
   adminSetPromotionCode: (id, is_active) => request(`/admin/promotion/codes/${id}`, { method: 'PUT', body: { is_active } }),
+  adminSetPromotionPartner: (id, is_active) => request(`/admin/promotion/partners/${id}`, { method: 'PUT', body: { is_active } }),
+  adminDeletePromotionCode: (id, payload) => request(`/admin/promotion/codes/${id}`, { method: 'DELETE', body: payload }),
+  adminDeletePromotionPartner: (id, payload) => request(`/admin/promotion/partners/${id}`, { method: 'DELETE', body: payload }),
 
   // ===== 模板 =====
   listTemplates: () => request('/templates'),
@@ -389,6 +392,7 @@ export const api = {
   // ===== admin: 日志 =====
   adminListLogs: (params) => request(`/admin/logs?${new URLSearchParams(params).toString()}`),
   adminListOperationLogs: (params) => request(`/admin/operation-logs?${new URLSearchParams(params).toString()}`),
+  adminVerifyOperationLogs: () => request('/admin/operation-logs/verify'),
 
   // ===== admin: 财务 =====
   adminFinance: (params) => request(`/admin/finance?${new URLSearchParams(params).toString()}`),

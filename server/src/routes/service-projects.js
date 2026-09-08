@@ -5,11 +5,13 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { Router } from 'express';
 import db from '../db.js';
+import { verifyPassword } from '../auth.js';
 import { adminRequired, authRequired, supportRequired } from '../middleware.js';
 import { checkFileSignature, FILE_SIGNATURES } from '../utils.js';
 import {
   addSubmission, getServiceProject, listServiceProjects, normalizePromotionCode,
-  promotionStats, resolvePromotion, updateServiceProject,
+  deletePromotionCode, deletePromotionPartner, promotionPartnerStats, promotionStats,
+  resolvePromotion, setPromotionPartnerActive, updateServiceProject,
 } from '../services/service-project-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -163,7 +165,7 @@ export function createPromotionAdminRouter() {
   const admin = Router();
   admin.use(adminRequired);
   admin.get('/', (_req, res) => {
-    const partners = db.prepare('SELECT * FROM promotion_partners ORDER BY id DESC').all();
+    const partners = promotionPartnerStats();
     const codes = promotionStats();
     res.json({ partners, codes });
   });
@@ -177,17 +179,53 @@ export function createPromotionAdminRouter() {
     const code = normalizePromotionCode(req.body?.code);
     const partnerId = Number(req.body?.partner_id);
     if (!/^[A-Z0-9_-]{3,32}$/.test(code)) return res.status(400).json({ error: '推广码须为 3-32 位字母、数字、下划线或短横线' });
-    if (!db.prepare('SELECT id FROM promotion_partners WHERE id=?').get(partnerId)) return res.status(404).json({ error: '推广方不存在' });
+    const partner = db.prepare('SELECT id, is_active FROM promotion_partners WHERE id=?').get(partnerId);
+    if (!partner) return res.status(404).json({ error: '推广方不存在' });
+    if (!partner.is_active) return res.status(409).json({ error: '推广方已停用，不能新增推广码' });
     try {
       const info = db.prepare('INSERT INTO promotion_codes (code, partner_id, valid_from, valid_until) VALUES (?, ?, ?, ?)').run(code, partnerId, req.body?.valid_from || null, req.body?.valid_until || null);
       res.json({ ok: true, id: info.lastInsertRowid });
     } catch (err) { res.status(409).json({ error: '推广码已存在' }); }
   });
   admin.put('/codes/:id', (req, res) => {
+    if (typeof req.body?.is_active !== 'boolean') return res.status(400).json({ error: 'is_active 必须是布尔值' });
     const active = req.body?.is_active ? 1 : 0;
     const result = db.prepare('UPDATE promotion_codes SET is_active=?, updated_at=strftime(\'%s\',\'now\') WHERE id=?').run(active, req.params.id);
     if (!result.changes) return res.status(404).json({ error: '推广码不存在' });
     res.json({ ok: true });
+  });
+  admin.put('/partners/:id', (req, res) => {
+    try {
+      if (typeof req.body?.is_active !== 'boolean') return res.status(400).json({ error: 'is_active 必须是布尔值' });
+      setPromotionPartnerActive(req.params.id, req.body.is_active);
+      res.json({ ok: true });
+    } catch (err) { res.status(err.status || 400).json({ error: err.message }); }
+  });
+  const verifyDestructiveRequest = async (req, res, expected) => {
+    if (String(req.body?.confirmation || '') !== expected) {
+      res.status(400).json({ error: `请输入 ${expected} 进行确认` });
+      return false;
+    }
+    const adminUser = db.prepare('SELECT password_hash FROM users WHERE id=? AND is_admin=1').get(req.user.id);
+    if (!adminUser || !await verifyPassword(String(req.body?.admin_password || ''), adminUser.password_hash)) {
+      res.status(403).json({ error: '管理员密码错误' });
+      return false;
+    }
+    return true;
+  };
+  admin.delete('/codes/:id', async (req, res) => {
+    try {
+      if (!await verifyDestructiveRequest(req, res, `DELETE CODE ${req.params.id}`)) return;
+      deletePromotionCode(req.params.id); res.json({ ok: true });
+    }
+    catch (err) { res.status(err.status || 400).json({ error: err.message }); }
+  });
+  admin.delete('/partners/:id', async (req, res) => {
+    try {
+      if (!await verifyDestructiveRequest(req, res, `DELETE PARTNER ${req.params.id}`)) return;
+      deletePromotionPartner(req.params.id); res.json({ ok: true });
+    }
+    catch (err) { res.status(err.status || 400).json({ error: err.message }); }
   });
   return admin;
 }

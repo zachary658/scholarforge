@@ -38,7 +38,7 @@ import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
 import logger, { configureErrorAlert } from './logger.js';
 import db from './db.js';
 import { recoverInterruptedChapterJobs } from './services/chapter-service.js';
-import { adminAuditMiddleware } from './services/admin-audit.js';
+import { adminAuditMiddleware, verifyAdminAuditChain } from './services/admin-audit.js';
 import { startBackupScheduler } from './services/backup-scheduler.js';
 import { getSecureSetting, migrateLegacySecureSettings } from './services/secure-settings.js';
 import { isEmailConfigured } from './services/mailer.js';
@@ -49,6 +49,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const migratedSecrets = migrateLegacySecureSettings();
 if (migratedSecrets > 0) logger.info('secure-settings', `migrated ${migratedSecrets} legacy secrets into encrypted storage`);
 configureErrorAlert(getSecureSetting('alert_webhook_url', ''));
+const auditIntegrity = verifyAdminAuditChain();
+if (!auditIntegrity.ok) {
+  logger.error('admin-audit', 'operation log integrity verification failed', auditIntegrity);
+} else if (auditIntegrity.total > 0) {
+  logger.info('admin-audit', `verified ${auditIntegrity.total} operation log entries`, { legacyEntries: auditIntegrity.legacy_entries });
+}
 
 // 初始化管理员账号（异步：bcrypt hash 不阻塞事件循环）
 await ensureAdminAccount();
@@ -297,10 +303,7 @@ async function shutdown(signal) {
   clearInterval(intervalTasks);
   clearInterval(intervalDocs);
   clearInterval(intervalCleanup);
-  if (backupScheduler) {
-    clearTimeout(backupScheduler.initialTimer);
-    clearInterval(backupScheduler.interval);
-  }
+  backupScheduler?.stop();
   // 断开限流 Redis 连接（若配置了 REDIS_URL），避免连接句柄阻塞进程退出
   await closeRateLimitStore();
   server.close((err) => {

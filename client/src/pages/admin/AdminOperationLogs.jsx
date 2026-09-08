@@ -9,6 +9,7 @@ export default function AdminOperationLogs() {
   const [filters, setFilters] = useState({ actor: '', action: '', target: '', success: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [integrity, setIntegrity] = useState(null);
   const load = async (page = 1) => {
     setLoading(true); setError('');
     try { setData(await api.adminListOperationLogs({ ...filters, page, size: 20 })); }
@@ -16,12 +17,17 @@ export default function AdminOperationLogs() {
     finally { setLoading(false); }
   };
   useEffect(() => { load(1); }, []);
+  const verifyIntegrity = async () => {
+    try { setIntegrity(await api.adminVerifyOperationLogs()); }
+    catch (err) { setIntegrity({ ok: false, reason: err.message }); }
+  };
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
       <div className="flex items-end justify-between">
         <div><h1 className="text-xl font-bold text-ink">操作审计</h1><p className="mt-1 text-sm text-slate-500">后台与客服写操作共 {data.total} 条</p></div>
-        <button className="btn-ghost text-xs" onClick={() => load(data.page)}><Refresh className="h-4 w-4" />刷新</button>
+        <div className="flex gap-2"><button className="btn-secondary text-xs" onClick={verifyIntegrity}>校验 HMAC 链</button><button className="btn-ghost text-xs" onClick={() => load(data.page)}><Refresh className="h-4 w-4" />刷新</button></div>
       </div>
+      {integrity && <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${integrity.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>{integrity.ok ? `完整性校验通过：${integrity.checked} 条记录，旧版记录 ${integrity.legacy_entries} 条` : `完整性校验失败：${integrity.reason || '发现记录被篡改'}`}</div>}
       <form className="mt-4 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); load(1); }}>
         <input className="input w-44" placeholder="操作者邮箱或 ID" value={filters.actor} onChange={(e) => setFilters({ ...filters, actor: e.target.value })} />
         <input className="input w-44" placeholder="操作路径" value={filters.action} onChange={(e) => setFilters({ ...filters, action: e.target.value })} />

@@ -30,16 +30,32 @@ export async function runScheduledBackup({
   return { destination, removed };
 }
 
-export function startBackupScheduler() {
-  if (String(process.env.BACKUP_ENABLED || (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase() !== 'true') {
+export function startBackupScheduler({
+  enabled = process.env.BACKUP_ENABLED || (process.env.NODE_ENV === 'production' ? 'true' : 'false'),
+  intervalHours = process.env.BACKUP_INTERVAL_HOURS,
+  runBackup = runScheduledBackup,
+  setTimeoutFn = setTimeout,
+  setIntervalFn = setInterval,
+  clearTimeoutFn = clearTimeout,
+  clearIntervalFn = clearInterval,
+} = {}) {
+  if (String(enabled).toLowerCase() !== 'true') {
     return null;
   }
-  const hours = Math.min(168, Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS) || 24));
-  const run = () => runScheduledBackup().catch((err) => logger.error('backup', 'scheduled backup failed', { error: err.message }));
-  const initialTimer = setTimeout(run, 30000);
+  const hours = Math.min(168, Math.max(1, Number(intervalHours) || 24));
+  const run = async () => {
+    try { await runBackup(); return true; }
+    catch (err) { logger.error('backup', 'scheduled backup failed', { error: err.message }); return false; }
+  };
+  const initialTimer = setTimeoutFn(run, 30000);
   initialTimer.unref?.();
-  const interval = setInterval(run, hours * 3600000);
+  const interval = setIntervalFn(run, hours * 3600000);
   interval.unref?.();
   logger.info('backup', `automatic backup enabled (every ${hours}h)`);
-  return { initialTimer, interval };
+  return {
+    initialTimer,
+    interval,
+    runNow: run,
+    stop() { clearTimeoutFn(initialTimer); clearIntervalFn(interval); },
+  };
 }

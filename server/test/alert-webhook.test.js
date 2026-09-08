@@ -20,3 +20,22 @@ test('错误 webhook 脱敏发送并对同类告警去重', async (t) => {
   assert.doesNotMatch(JSON.stringify(received[0]), /owner@example\.com|secret-value/);
   assert.match(JSON.stringify(received[0]), /redacted|\*\*\*/);
 });
+
+test('错误 webhook 支持热更新地址并收敛非 2xx 响应', async (t) => {
+  let delivered = 0;
+  const good = http.createServer((_req, res) => { delivered += 1; res.writeHead(204); res.end(); });
+  const bad = http.createServer((_req, res) => { res.writeHead(503); res.end(); });
+  await Promise.all([
+    new Promise((resolve) => good.listen(0, '127.0.0.1', resolve)),
+    new Promise((resolve) => bad.listen(0, '127.0.0.1', resolve)),
+  ]);
+  t.after(() => { good.close(); bad.close(); });
+  process.env.ALERT_WEBHOOK_URL = '';
+  const { configureErrorAlert, deliverErrorAlert } = await import(`../src/logger.js?alert-hot-test=${Date.now()}`);
+  configureErrorAlert(`http://127.0.0.1:${bad.address().port}/alert`);
+  assert.equal(await deliverErrorAlert('backup', 'unique failure 100', {}), false);
+  configureErrorAlert(`http://127.0.0.1:${good.address().port}/alert`);
+  assert.equal(await deliverErrorAlert('backup', 'different failure 200', {}), true);
+  assert.equal(delivered, 1);
+  configureErrorAlert('');
+});

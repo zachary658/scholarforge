@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,14 +13,24 @@ process.env.JWT_SECRET = 'test-jwt-secret-that-is-longer-than-thirty-two-charact
 process.env.TOTP_ENCRYPTION_KEY = 'test-totp-key-that-is-longer-than-thirty-two-characters';
 
 const db = (await import('../src/db.js')).default;
-const { adminAuditMiddleware } = await import('../src/services/admin-audit.js');
+const { adminAuditMiddleware, verifyAdminAuditChain } = await import('../src/services/admin-audit.js');
 const { beginTotpEnrollment, confirmTotpEnrollment, totpCode, verifyStaffSecondFactor } = await import('../src/services/totp.js');
-const { runScheduledBackup } = await import('../src/services/backup-scheduler.js');
-const { getSecureSetting, migrateLegacySecureSettings, setSecureSetting } = await import('../src/services/secure-settings.js');
+const { runScheduledBackup, startBackupScheduler } = await import('../src/services/backup-scheduler.js');
+const { deleteSecureSetting, getSecureSetting, getSecureSettingStatuses, hasSecureSetting, migrateLegacySecureSettings, setSecureSetting } = await import('../src/services/secure-settings.js');
 const { getConfiguredModel, getModels, setSetting } = await import('../src/config-store.js');
 const { buildPasswordResetEmail, getMailConfigStatus } = await import('../src/services/mailer.js');
 
 test('后台写操作审计保存操作者、脱敏请求和前后快照', async () => {
+  const legacy = {
+    actor_id: null, actor_email: 'legacy@example.com', actor_role: 'admin', action: 'PUT /legacy',
+    target_type: 'settings', target_id: 'legacy', request_id: '', ip_address: '127.0.0.1',
+    user_agent: 'legacy-test', success: 1, status_code: 200, before_json: null, after_json: null,
+    request_json: '{}', error_message: '', created_at: 1,
+  };
+  const legacyHash = crypto.createHash('sha256').update(JSON.stringify({ ...legacy, prev_hash: '' })).digest('hex');
+  db.prepare(`INSERT INTO admin_operation_logs
+    (actor_id,actor_email,actor_role,action,target_type,target_id,request_id,ip_address,user_agent,success,status_code,before_json,after_json,request_json,error_message,prev_hash,entry_hash,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(...Object.values(legacy).slice(0, -1), '', legacyHash, legacy.created_at);
   const userId = db.prepare("INSERT INTO users (email,password_hash,name,is_admin) VALUES ('audit@example.com','x','审计员',1)").run().lastInsertRowid;
   const courseId = db.prepare("INSERT INTO courses (title,price) VALUES ('原课程',10)").run().lastInsertRowid;
   const req = {
@@ -47,6 +58,17 @@ test('后台写操作审计保存操作者、脱敏请求和前后快照', async
   assert.doesNotMatch(row.request_json, /must-not-leak/);
   assert.match(row.request_json, /redacted/);
   assert.match(row.entry_hash, /^[a-f0-9]{64}$/);
+  assert.equal(row.hash_version, 2);
+  assert.equal(row.key_version, 1);
+  assert.equal(verifyAdminAuditChain().ok, true);
+  assert.equal(verifyAdminAuditChain().legacy_entries, 1);
+  db.prepare('UPDATE admin_operation_logs SET action=? WHERE id=?').run('TAMPERED', row.id);
+  const tampered = verifyAdminAuditChain();
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.broken_id, row.id);
+  assert.equal(tampered.reason, 'ENTRY_HASH_MISMATCH');
+  db.prepare('UPDATE admin_operation_logs SET action=? WHERE id=?').run(row.action, row.id);
+  assert.equal(verifyAdminAuditChain().ok, true);
 });
 
 test('TOTP 启用后校验动态码，并支持一次性恢复码', () => {
@@ -73,6 +95,27 @@ test('自动备份生成可打开快照并清理过期快照', async () => {
   assert.equal(result.removed, 1);
 });
 
+test('备份调度支持启停、失败收敛与定时器清理', async () => {
+  assert.equal(startBackupScheduler({ enabled: false }), null);
+  const scheduled = [];
+  const cleared = [];
+  const timer = { unref() {} };
+  const scheduler = startBackupScheduler({
+    enabled: true,
+    intervalHours: 2,
+    runBackup: async () => { throw new Error('simulated backup failure'); },
+    setTimeoutFn: (fn, ms) => { scheduled.push(['timeout', fn, ms]); return timer; },
+    setIntervalFn: (fn, ms) => { scheduled.push(['interval', fn, ms]); return timer; },
+    clearTimeoutFn: (value) => cleared.push(['timeout', value]),
+    clearIntervalFn: (value) => cleared.push(['interval', value]),
+  });
+  assert.equal(scheduled[0][2], 30000);
+  assert.equal(scheduled[1][2], 2 * 3600000);
+  assert.equal(await scheduler.runNow(), false);
+  scheduler.stop();
+  assert.deepEqual(cleared, [['timeout', timer], ['interval', timer]]);
+});
+
 test('敏感配置只保存密文，模型运行时可读取但管理状态不泄露 Key', () => {
   const secret = 'sk-test-value-that-must-never-appear-in-database';
   setSecureSetting('llm_api_key_deepseek', secret, null);
@@ -84,6 +127,23 @@ test('敏感配置只保存密文，模型运行时可读取但管理状态不�
   const adminPayload = JSON.stringify(getModels());
   assert.doesNotMatch(adminPayload, /sk-test-value/);
   assert.match(adminPayload, /admin_vault/);
+});
+
+test('敏感配置保险箱检测密文篡改、递增版本并可安全删除', () => {
+  const key = 'llm_api_key_qwen';
+  setSecureSetting(key, 'first-secret-value', null);
+  setSecureSetting(key, 'second-secret-value', null);
+  assert.equal(getSecureSettingStatuses()[key].version, 2);
+  const original = db.prepare('SELECT encrypted_value FROM secure_settings WHERE key=?').get(key).encrypted_value;
+  const parts = original.split('.');
+  parts[3] = `${parts[3].startsWith('A') ? 'B' : 'A'}${parts[3].slice(1)}`;
+  const corrupted = parts.join('.');
+  db.prepare('UPDATE secure_settings SET encrypted_value=? WHERE key=?').run(corrupted, key);
+  assert.throws(() => getSecureSetting(key), /authenticate|损坏|Unsupported state/i);
+  db.prepare('UPDATE secure_settings SET encrypted_value=? WHERE key=?').run(original, key);
+  assert.equal(getSecureSetting(key), 'second-secret-value');
+  assert.equal(deleteSecureSetting(key), true);
+  assert.equal(hasSecureSetting(key), false);
 });
 
 test('历史 settings 明文密钥自动迁移并删除明文副本', () => {

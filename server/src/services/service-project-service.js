@@ -256,7 +256,7 @@ export function addSubmission(project, userId, kind, content, idempotencyKey = n
 
 export function promotionStats() {
   return db.prepare(
-    `SELECT pc.id, pc.code, pc.is_active, pp.name AS partner_name,
+    `SELECT pc.id, pc.code, pc.is_active, pp.name AS partner_name, pp.is_active AS partner_active,
             COUNT(sp.id) AS project_count,
             SUM(CASE WHEN sp.status IN ('paid','in_progress','waiting_customer','pending_acceptance','revision','completed') THEN 1 ELSE 0 END) AS paid_count,
             COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount ELSE 0 END), 0) AS paid_amount
@@ -264,4 +264,49 @@ export function promotionStats() {
      LEFT JOIN service_projects sp ON sp.promotion_code_id = pc.id LEFT JOIN orders o ON o.id = sp.order_id
      GROUP BY pc.id ORDER BY pc.id DESC`
   ).all();
+}
+
+export function promotionPartnerStats() {
+  return db.prepare(
+    `SELECT pp.id, pp.name, pp.contact, pp.note, pp.is_active, pp.created_at, pp.updated_at,
+            COUNT(DISTINCT pc.id) AS code_count,
+            COUNT(DISTINCT sp.id) AS project_count,
+            COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount ELSE 0 END), 0) AS paid_amount
+     FROM promotion_partners pp
+     LEFT JOIN promotion_codes pc ON pc.partner_id = pp.id
+     LEFT JOIN service_projects sp ON sp.promotion_code_id = pc.id
+     LEFT JOIN orders o ON o.id = sp.order_id
+     GROUP BY pp.id ORDER BY pp.id DESC`
+  ).all();
+}
+
+export function setPromotionPartnerActive(id, active) {
+  const result = db.prepare("UPDATE promotion_partners SET is_active=?, updated_at=strftime('%s','now') WHERE id=?")
+    .run(active ? 1 : 0, id);
+  if (!result.changes) throw Object.assign(new Error('推广方不存在'), { status: 404 });
+  return true;
+}
+
+export function deletePromotionCode(id) {
+  const remove = db.transaction(() => {
+    const code = db.prepare('SELECT id FROM promotion_codes WHERE id=?').get(id);
+    if (!code) throw Object.assign(new Error('推广码不存在'), { status: 404 });
+    const references = db.prepare('SELECT COUNT(*) AS count FROM service_projects WHERE promotion_code_id=?').get(id).count;
+    if (references > 0) throw Object.assign(new Error(`该推广码已关联 ${references} 个服务项目，只能停用，不能删除`), { status: 409 });
+    db.prepare('DELETE FROM promotion_codes WHERE id=?').run(id);
+  });
+  remove();
+  return true;
+}
+
+export function deletePromotionPartner(id) {
+  const remove = db.transaction(() => {
+    const partner = db.prepare('SELECT id FROM promotion_partners WHERE id=?').get(id);
+    if (!partner) throw Object.assign(new Error('推广方不存在'), { status: 404 });
+    const codes = db.prepare('SELECT COUNT(*) AS count FROM promotion_codes WHERE partner_id=?').get(id).count;
+    if (codes > 0) throw Object.assign(new Error(`该推广方仍有 ${codes} 个推广码；请先删除无业务引用的推广码，有业务引用时只能整体停用`), { status: 409 });
+    db.prepare('DELETE FROM promotion_partners WHERE id=?').run(id);
+  });
+  remove();
+  return true;
 }

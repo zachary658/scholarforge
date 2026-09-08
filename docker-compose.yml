@@ -19,6 +19,7 @@ services:
       # 必填（production）：JWT 密钥（>=32 字符）、管理员凭据
       JWT_SECRET: "${JWT_SECRET:-}"
       CONFIG_ENCRYPTION_KEY: "${CONFIG_ENCRYPTION_KEY:-}"
+      AUDIT_HMAC_KEY: "${AUDIT_HMAC_KEY:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@example.com}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-changeme123}"
       # 支付：production 必须设置为 alipay/wechat/mixed 并填写对应密钥（见 .env.example）

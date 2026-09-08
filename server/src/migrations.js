@@ -354,6 +354,14 @@ const MIGRATIONS = [
       );`);
     },
   },
+  {
+    version: '013_admin_audit_hmac',
+    name: '操作审计 HMAC 完整性版本',
+    up(db) {
+      addColumnIfMissing(db, 'admin_operation_logs', 'hash_version', 'INTEGER NOT NULL DEFAULT 1');
+      addColumnIfMissing(db, 'admin_operation_logs', 'key_version', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 export function runMigrations(db) {
