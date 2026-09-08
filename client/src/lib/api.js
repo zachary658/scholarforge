@@ -374,6 +374,10 @@ export const api = {
   adminGetSecureConfig: () => request('/admin/secure-config'),
   adminSaveSecureConfig: (key, payload) => request(`/admin/secure-config/${key}`, { method: 'PUT', body: payload }),
   adminDeleteSecureConfig: (key, payload) => request(`/admin/secure-config/${key}`, { method: 'DELETE', body: payload }),
+  adminGetEmailConfig: () => request('/admin/email-config'),
+  adminSaveEmailConfig: (payload) => request('/admin/email-config', { method: 'PUT', body: payload }),
+  adminDeleteSmtpConfig: (payload) => request('/admin/email-config/smtp', { method: 'DELETE', body: payload }),
+  adminTestEmailConfig: (payload) => request('/admin/email-config/test', { method: 'POST', body: payload }),
 
   // ===== admin: 用户 =====
   adminListUsers: (params) => request(`/admin/users?${new URLSearchParams(params).toString()}`),

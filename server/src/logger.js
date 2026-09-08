@@ -124,7 +124,7 @@ export async function deliverErrorAlert(module, message, data) {
 
 // 敏感字段脱敏：日志可能包含 token / 邮箱 / 手机号 / 密码 / API Key / Cookie 等，
 // 在输出或落盘前统一掩码，避免凭据泄露到日志文件（L-2 加固）。
-const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|cookie|phone|mobile|id[_-]?card|email|mail)/i;
+const SENSITIVE_KEY_RE = /(token|secret|password|passwd|authorization|api[_-]?key|cookie|phone|mobile|id[_-]?card|email|mail|smtp)/i;
 export function redact(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
@@ -134,6 +134,7 @@ export function redact(value, seen = new WeakSet()) {
     }
     // 邮箱和大陆手机号（包括嵌入在错误消息中的联系方式）
     return value
+      .replace(/\b([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/gi, '$1***@')
       .replace(/([\w.+-]{1,3})[\w.+-]*(@[\w.-]+\.\w+)/g, '$1***$2')
       .replace(/\b(1\d{2})\d{4}(\d{4})\b/g, '$1****$2');
   }

@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { Refresh } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import SecureConfigPanel from '../../components/SecureConfigPanel.jsx';
+import EmailConfigPanel from '../../components/EmailConfigPanel.jsx';
 
 const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key', 'aliyun_access_key_secret', 'yidun_secret_key'];
 
@@ -302,6 +303,7 @@ export default function AdminSettings() {
       )}
 
       <div className="mt-6 space-y-6">
+        <EmailConfigPanel />
         <SecureConfigPanel />
 
         <div className="card p-6">

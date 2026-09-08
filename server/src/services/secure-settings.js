@@ -6,7 +6,7 @@ export const SECURE_SETTING_KEYS = new Set([
   'wechat_api_v3_key', 'wechat_private_key', 'wechat_private_key_path',
   'wechat_platform_public_key', 'wechat_platform_public_key_path',
   'aliyun_access_key_secret', 'yidun_secret_key',
-  'alert_webhook_url', 'totp_encryption_key',
+  'alert_webhook_url', 'totp_encryption_key', 'smtp_url',
   'llm_api_key_deepseek', 'llm_api_key_qwen', 'llm_api_key_zhipu',
   'llm_api_key_kimi', 'llm_api_key_openai',
 ]);

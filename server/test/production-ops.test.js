@@ -16,7 +16,8 @@ const { adminAuditMiddleware } = await import('../src/services/admin-audit.js');
 const { beginTotpEnrollment, confirmTotpEnrollment, totpCode, verifyStaffSecondFactor } = await import('../src/services/totp.js');
 const { runScheduledBackup } = await import('../src/services/backup-scheduler.js');
 const { getSecureSetting, migrateLegacySecureSettings, setSecureSetting } = await import('../src/services/secure-settings.js');
-const { getConfiguredModel, getModels } = await import('../src/config-store.js');
+const { getConfiguredModel, getModels, setSetting } = await import('../src/config-store.js');
+const { buildPasswordResetEmail, getMailConfigStatus } = await import('../src/services/mailer.js');
 
 test('后台写操作审计保存操作者、脱敏请求和前后快照', async () => {
   const userId = db.prepare("INSERT INTO users (email,password_hash,name,is_admin) VALUES ('audit@example.com','x','审计员',1)").run().lastInsertRowid;
@@ -90,6 +91,32 @@ test('历史 settings 明文密钥自动迁移并删除明文副本', () => {
   assert.equal(migrateLegacySecureSettings(), 1);
   assert.equal(db.prepare("SELECT value FROM settings WHERE key='yidun_secret_key'").get(), undefined);
   assert.equal(getSecureSetting('yidun_secret_key'), 'legacy-secret-value');
+});
+
+test('后台邮件配置即时生效，SMTP 凭据只返回状态且保持密文', () => {
+  const smtp = 'smtps://mailer:encoded-password@smtp.example.com:465';
+  setSecureSetting('smtp_url', smtp, null);
+  setSetting('mail_from', 'ScholarForge <noreply@example.com>');
+  setSetting('frontend_url', 'https://scholarforge.example');
+  const stored = db.prepare("SELECT encrypted_value FROM secure_settings WHERE key='smtp_url'").get();
+  assert.doesNotMatch(stored.encrypted_value, /encoded-password|smtp\.example/);
+  const status = getMailConfigStatus();
+  assert.equal(status.configured, true);
+  assert.equal(status.smtp_source, 'admin_vault');
+  assert.equal('smtp_url' in status, false);
+  assert.match(buildPasswordResetEmail('user@qq.com', 'reset-token').text, /https:\/\/scholarforge\.example\/reset-password/);
+});
+
+test('邮件配置审计不会记录 SMTP 用户名或密码', async () => {
+  const admin = db.prepare("SELECT * FROM users WHERE email='audit@example.com'").get();
+  const req = { method: 'PUT', path: '/email-config', baseUrl: '/api/admin', params: {}, body: { smtp_url: 'smtps://mailer:top-secret@smtp.example.com:465', admin_password: 'password' }, headers: {}, ip: '127.0.0.1', user: { ...admin, is_admin: true } };
+  const res = new EventEmitter(); res.statusCode = 200; res.json = (value) => value;
+  await new Promise((resolve) => adminAuditMiddleware(req, res, () => { res.json({ ok: true }); res.emit('finish'); resolve(); }));
+  const row = db.prepare('SELECT request_json FROM admin_operation_logs ORDER BY id DESC LIMIT 1').get();
+  const request = JSON.parse(row.request_json);
+  assert.equal(request.smtp_url, '***redacted***');
+  assert.equal(request.admin_password, '***redacted***');
+  assert.doesNotMatch(row.request_json, /top-secret|smtp\.example|mailer/);
 });
 
 test('运行密钥审计不会记录通用 value 字段的明文', async () => {

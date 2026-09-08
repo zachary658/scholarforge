@@ -41,6 +41,7 @@ import { recoverInterruptedChapterJobs } from './services/chapter-service.js';
 import { adminAuditMiddleware } from './services/admin-audit.js';
 import { startBackupScheduler } from './services/backup-scheduler.js';
 import { getSecureSetting, migrateLegacySecureSettings } from './services/secure-settings.js';
+import { isEmailConfigured } from './services/mailer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -180,9 +181,10 @@ app.use(['/api/admin', '/api/support'], adminAuditMiddleware);
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/health/live', (_req, res) => res.json({ ok: true }));
 app.get('/api/health/ready', (_req, res) => {
-  const checks = { database: false, uploadsWritable: false, emailConfigured: process.env.NODE_ENV !== 'production' || Boolean(process.env.SMTP_URL) };
+  const checks = { database: false, uploadsWritable: false, emailConfigured: process.env.NODE_ENV !== 'production' };
   try { checks.database = db.prepare('SELECT 1 AS ok').get()?.ok === 1; } catch {}
   try { fs.accessSync(join(__dirname, '..', 'uploads'), fs.constants.W_OK); checks.uploadsWritable = true; } catch {}
+  try { checks.emailConfigured = checks.emailConfigured || isEmailConfigured(); } catch {}
   const ok = Object.values(checks).every(Boolean);
   res.status(ok ? 200 : 503).json({ ok, checks });
 });

@@ -8,13 +8,35 @@ import logger from '../logger.js';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { getSetting } from '../config-store.js';
+import { hasSecureSetting } from './secure-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mailLogDir = join(__dirname, '..', '..', 'uploads', 'mail_log');
 
-const SMTP_URL = process.env.SMTP_URL || '';
-const MAIL_FROM = process.env.MAIL_FROM || 'no-reply@scholarforge.com';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+function mailConfig() {
+  return {
+    smtpUrl: String(process.env.SMTP_URL || getSetting('smtp_url', '')).trim(),
+    mailFrom: String(process.env.MAIL_FROM || getSetting('mail_from', 'no-reply@scholarforge.com')).trim(),
+    frontendUrl: String(process.env.FRONTEND_URL || getSetting('frontend_url', 'http://localhost:5173')).trim().replace(/\/$/, ''),
+  };
+}
+
+export function getMailConfigStatus() {
+  const config = mailConfig();
+  return {
+    configured: Boolean(config.smtpUrl),
+    smtp_source: process.env.SMTP_URL ? 'environment' : hasSecureSetting('smtp_url') ? 'admin_vault' : 'none',
+    mail_from: config.mailFrom,
+    mail_from_source: process.env.MAIL_FROM ? 'environment' : 'admin_settings',
+    frontend_url: config.frontendUrl,
+    frontend_url_source: process.env.FRONTEND_URL ? 'environment' : 'admin_settings',
+  };
+}
+
+export function isEmailConfigured() {
+  return Boolean(mailConfig().smtpUrl);
+}
 
 // 确保 mail_log 目录存在（mock 模式用）
 try { fs.mkdirSync(mailLogDir, { recursive: true }); } catch {}
@@ -26,13 +48,14 @@ try { fs.mkdirSync(mailLogDir, { recursive: true }); } catch {}
 // html: HTML 内容（可选）
 // 安全：生产环境必须走 SMTP，禁止 mock 回退（防止密码重置 token 落入日志/磁盘文件）
 export async function sendMail({ to, subject, text, html }) {
+  const { smtpUrl, mailFrom } = mailConfig();
   // SMTP 模式：使用 nodemailer 真实发送
-  if (SMTP_URL) {
+  if (smtpUrl) {
     try {
       const nodemailer = (await import('nodemailer')).default;
-      const transporter = nodemailer.createTransport(SMTP_URL);
+      const transporter = nodemailer.createTransport(smtpUrl);
       const info = await transporter.sendMail({
-        from: MAIL_FROM,
+        from: mailFrom,
         to,
         subject,
         text,
@@ -58,7 +81,7 @@ export async function sendMail({ to, subject, text, html }) {
   // 收件人消毒：仅保留字母数字与 @.-，防路径分隔符/.. 逃逸 mail_log 目录
   const safeTo = String(to).replace(/[^\w@.-]/g, '_').slice(0, 100);
   const logFile = join(mailLogDir, `${ts}_${safeTo}.txt`);
-  const logContent = `To: ${to}\nFrom: ${MAIL_FROM}\nSubject: ${subject}\nDate: ${new Date().toISOString()}\n\n${text}\n`;
+  const logContent = `To: ${to}\nFrom: ${mailFrom}\nSubject: ${subject}\nDate: ${new Date().toISOString()}\n\n${text}\n`;
   try {
     fs.writeFileSync(logFile, logContent, 'utf8');
   } catch (err) {
@@ -70,7 +93,7 @@ export async function sendMail({ to, subject, text, html }) {
 
 // 构造密码重置邮件内容
 export function buildPasswordResetEmail(to, resetToken) {
-  const resetUrl = `${FRONTEND_URL}/reset-password?token=${resetToken}`;
+  const resetUrl = `${mailConfig().frontendUrl}/reset-password?token=${resetToken}`;
   const subject = '【ScholarForge】密码重置';
   const text = `您正在重置 ScholarForge 账号密码。\n\n请点击以下链接重置密码（30 分钟内有效，一次性使用）：\n${resetUrl}\n\n如非本人操作，请忽略此邮件，您的账号安全不受影响。`;
   const html = `<p>您正在重置 ScholarForge 账号密码。</p><p>请点击以下链接重置密码（30 分钟内有效，一次性使用）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件，您的账号安全不受影响。</p>`;

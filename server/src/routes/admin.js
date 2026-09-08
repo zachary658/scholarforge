@@ -26,6 +26,7 @@ import logger, { configureErrorAlert } from '../logger.js';
 import { getOperationalMetrics } from '../services/operational-metrics.js';
 import { listAdminAuditLogs } from '../services/admin-audit.js';
 import { deleteSecureSetting, getSecureSettingStatuses, hasSecureSetting, setSecureSetting } from '../services/secure-settings.js';
+import { getMailConfigStatus, sendMail } from '../services/mailer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(__dirname, '..', '..', 'uploads', 'templates');
@@ -587,6 +588,73 @@ router.delete('/secure-config/:key', async (req, res) => {
   const deleted = deleteSecureSetting(key);
   if (key === 'alert_webhook_url') configureErrorAlert('');
   res.json({ ok: true, deleted });
+});
+
+// ========== 邮件验证服务配置 ==========
+router.get('/email-config', (_req, res) => {
+  res.json(getMailConfigStatus());
+});
+
+router.put('/email-config', async (req, res) => {
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  const current = getMailConfigStatus();
+  const smtpUrl = String(req.body?.smtp_url || '').trim();
+  const mailFrom = String(req.body?.mail_from || '').trim();
+  const frontendUrl = String(req.body?.frontend_url || '').trim().replace(/\/$/, '');
+  if (!smtpUrl && !mailFrom && !frontendUrl) return res.status(400).json({ error: '没有需要保存的邮件配置' });
+
+  if (smtpUrl) {
+    if (process.env.SMTP_URL) return res.status(409).json({ error: 'SMTP_URL 已由服务器环境变量托管，后台不能覆盖' });
+    let parsed;
+    try { parsed = new URL(smtpUrl); } catch { return res.status(400).json({ error: 'SMTP 连接串格式不正确' }); }
+    if (!['smtp:', 'smtps:'].includes(parsed.protocol) || !parsed.hostname || smtpUrl.length > 2000) {
+      return res.status(400).json({ error: 'SMTP 连接串必须使用 smtp:// 或 smtps:// 协议' });
+    }
+  }
+  if (mailFrom) {
+    if (process.env.MAIL_FROM) return res.status(409).json({ error: 'MAIL_FROM 已由服务器环境变量托管，后台不能覆盖' });
+    if (/[\r\n]/.test(mailFrom) || mailFrom.length > 320 || !/^(?:[^<>\r\n]{1,100}\s*<)?[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>?$/.test(mailFrom)) {
+      return res.status(400).json({ error: '发件人格式不正确，请填写邮箱或“名称 <邮箱>”' });
+    }
+  }
+  if (frontendUrl) {
+    if (process.env.FRONTEND_URL) return res.status(409).json({ error: 'FRONTEND_URL 已由服务器环境变量托管，后台不能覆盖' });
+    let parsed;
+    try { parsed = new URL(frontendUrl); } catch { return res.status(400).json({ error: '前端地址格式不正确' }); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') || frontendUrl.length > 500) {
+      return res.status(400).json({ error: '生产环境前端地址必须是 HTTPS URL' });
+    }
+  }
+
+  db.transaction(() => {
+    if (smtpUrl) setSecureSetting('smtp_url', smtpUrl, req.user.id);
+    if (mailFrom) setSetting('mail_from', mailFrom);
+    if (frontendUrl) setSetting('frontend_url', frontendUrl);
+  })();
+  res.json({ ok: true, ...getMailConfigStatus(), previous_configured: current.configured });
+});
+
+router.delete('/email-config/smtp', async (req, res) => {
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  if (req.body?.confirmation !== 'DELETE SMTP') return res.status(400).json({ error: '请输入 DELETE SMTP 确认删除' });
+  if (process.env.SMTP_URL) return res.status(409).json({ error: 'SMTP_URL 由环境变量托管，后台不能删除' });
+  const deleted = deleteSecureSetting('smtp_url');
+  res.json({ ok: true, deleted });
+});
+
+router.post('/email-config/test', async (req, res) => {
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  const to = String(req.body?.to || '').trim().toLowerCase();
+  if (!/^[a-z0-9._%+-]+@(qq|163)\.com$/i.test(to)) return res.status(400).json({ error: '测试收件箱必须是有效的 QQ 邮箱或 163 邮箱' });
+  if (!getMailConfigStatus().configured) return res.status(400).json({ error: '请先保存 SMTP 配置' });
+  const result = await sendMail({
+    to,
+    subject: '【ScholarForge】邮件服务测试',
+    text: '如果您收到这封邮件，说明 ScholarForge 邮箱验证服务配置成功。',
+    html: '<p>如果您收到这封邮件，说明 ScholarForge 邮箱验证服务配置成功。</p>',
+  });
+  if (!result.ok) return res.status(502).json({ error: result.error || '测试邮件发送失败' });
+  res.json({ ok: true, message: '测试邮件已发送' });
 });
 
 // 允许的设置项白名单
