@@ -374,6 +374,28 @@ export function createProject({
   return getProject(info.lastInsertRowid, userId);
 }
 
+function attachLockedDeliverySpec(project) {
+  if (!project || project.workflow_mode !== 'full') return project;
+  const order = db.prepare(
+    `SELECT order_no, metadata, params_json
+     FROM orders
+     WHERE user_id = ? AND project_id = ? AND item_type = 'writing_fulltext'
+       AND status IN ('paid', 'completed')
+     ORDER BY CASE WHEN order_no = ? THEN 0 ELSE 1 END, paid_at DESC, id DESC
+     LIMIT 1`
+  ).get(project.user_id, project.id, project.workflow_order_no || '');
+  if (!order) return project;
+  let metadata = {};
+  let params = {};
+  try { metadata = JSON.parse(order.metadata || '{}'); } catch {}
+  try { params = JSON.parse(order.params_json || '{}'); } catch {}
+  const targetWords = Number(metadata?.pricing?.targetWords ?? params?.target_words);
+  if (Number.isFinite(targetWords) && targetWords > 0) project.delivery_target_words = Math.round(targetWords);
+  project.delivery_degree_tier = metadata?.pricing?.tierKey || params?.degree_tier || null;
+  project.delivery_order_no = order.order_no;
+  return project;
+}
+
 export function getProject(projectId, userId) {
   const p = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
   if (!p) return null;
@@ -386,7 +408,7 @@ export function getProject(projectId, userId) {
   const sys = computeSystemProgress(userId, projectId);
   p.system_progress = sys.percent;
   p.system_stage = sys.stage;
-  return p;
+  return attachLockedDeliverySpec(p);
 }
 
 export function listProjects(userId) {
@@ -407,6 +429,7 @@ export function listProjects(userId) {
     const sys = computeSystemProgress(userId, p.id);
     p.system_progress = sys.percent;
     p.system_stage = sys.stage;
+    attachLockedDeliverySpec(p);
   }
   return projects;
 }
@@ -414,6 +437,12 @@ export function listProjects(userId) {
 export function updateProject(projectId, userId, updates) {
   const existing = getProject(projectId, userId);
   if (existing?.workflow_mode === 'full' && ('outline' in updates || 'outline_json' in updates)) throw new Error('请在完整论文流程中修改并确认大纲');
+  const changesDeliverySpec = 'degree' in updates || 'writingRequirements' in updates || 'writing_requirements' in updates;
+  if (existing?.workflow_mode === 'full' && existing.delivery_order_no && changesDeliverySpec) {
+    const error = new Error('完整论文流程已锁定学历和字数要求，如需调整请联系客服');
+    error.statusCode = 400;
+    throw error;
+  }
   const allowed = ['title', 'field', 'description', 'writing_requirements', 'outline_json', 'status', 'degree', 'deadline', 'current_stage', 'completion_percent'];
   const sets = [];
   const params = [];

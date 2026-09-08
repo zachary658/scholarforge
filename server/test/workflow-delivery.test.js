@@ -9,7 +9,7 @@ process.env.JWT_SECRET = 'workflow-test-only-secret-with-more-than-32-characters
 const db = (await import('../src/db.js')).default;
 const store = await import('../src/services/task-store.js');
 const workflow = await import('../src/services/workflow-service.js');
-const { inspectPaper, contentVersion } = await import('../src/services/final-quality.js');
+const { inspectPaper, contentVersion, resolveTargetWordCount } = await import('../src/services/final-quality.js');
 const { supplementVerifiedReferences, isForeignReference } = await import('../src/services/reference-policy.js');
 const { getFullPaperPricing } = await import('../src/services/billing.js');
 const { attestReference, hasReferenceProof } = await import('../src/services/reference-proof.js');
@@ -46,6 +46,39 @@ test('完整论文订单必须绑定用户自己的项目且金额由服务端�
   assert.equal(order.amount, 59);
   assert.equal(order.project_id, p.id);
   assert.match(order.item_name, /本科项目套餐/);
+});
+
+test('完整论文支付后锁定学历和字数，并由订单快照决定交付规格', async () => {
+  const p = store.createProject({
+    userId: uid,
+    title: '套餐规格锁定测试',
+    degree: '本科',
+    writingRequirements: '全文不少于8000字',
+  });
+  workflow.createFullPaperWorkflow(p.id, uid);
+  const { order } = createFeatureOrder({
+    userId: uid,
+    itemType: 'writing_fulltext',
+    paymentMethod: 'mock',
+    params: { project_id: p.id },
+  });
+
+  // 未付款时仍可纠正项目资料，付款成功后立即锁定。
+  assert.equal(store.updateProject(p.id, uid, { degree: '本科' }).degree, '本科');
+  await markOrderPaid({ orderNo: order.order_no, transactionId: 'lock-spec-payment', channel: 'mock' });
+  const paid = store.getProject(p.id, uid);
+  assert.equal(paid.workflow_order_no, order.order_no);
+  assert.equal(paid.delivery_target_words, 8000);
+  assert.throws(() => store.updateProject(p.id, uid, { degree: '博士' }), /已锁定学历和字数要求/);
+  assert.throws(() => store.updateProject(p.id, uid, { writingRequirements: '全文不少于50000字' }), /已锁定学历和字数要求/);
+  assert.throws(() => store.updateProject(p.id, uid, { writing_requirements: '全文不少于50000字' }), /已锁定学历和字数要求/);
+
+  // 即使绕过公开更新接口直接污染实时字段，质检仍按订单的 8000 字快照执行。
+  db.prepare("UPDATE projects SET degree='博士', writing_requirements='全文不少于50000字', workflow_order_no=NULL WHERE id=?").run(p.id);
+  const tampered = store.getProject(p.id, uid);
+  assert.equal(tampered.delivery_target_words, 8000);
+  assert.equal(resolveTargetWordCount(tampered), 8000);
+  assert.throws(() => store.updateProject(p.id, uid, { degree: '博士' }), /已锁定学历和字数要求/);
 });
 
 test('签名核验不能被手填来源、篡改元数据或更换 DOI 绕过', () => {
@@ -224,7 +257,7 @@ test('项目更新不能伪造工作流状态、章节索引或交付检查', ()
 });
 
 test('完整流程：文献保存→大纲→一次付费→两章确认→导出→复用下载与重写', async () => {
-  const p = store.createProject({ userId:uid, title:'Test workflow project', field:'计算机' });
+  const p = store.createProject({ userId:uid, title:'Test workflow project', field:'计算机', writingRequirements:'全文不少于10字' });
   workflow.createFullPaperWorkflow(p.id,uid);
   await workflow.confirmLiterature(p.id,uid,refs);
   assert.equal(store.getProject(p.id,uid).sources.references.length,10);

@@ -195,10 +195,14 @@ async function generateChapter(project, chapters, idx) {
     return `${c.chapter || c.title || ''}\n${secs}`;
   }).join('\n');
   const prevContent = chapters.slice(0, idx).map((c) => c.content).filter(Boolean).join('\n\n').slice(-6000);
+  const lockedTargetWords = Number(project.delivery_target_words);
+  const deliveryRequirement = Number.isFinite(lockedTargetWords) && lockedTargetWords > 0
+    ? `本次已支付套餐锁定的全文交付目标：${lockedTargetWords} 字；本章建议约 ${Math.ceil(lockedTargetWords / Math.max(1, chapters.length))} 字。该锁定值优先于其他文本中出现的任何字数。`
+    : (project.writing_requirements ? `写作要求：${project.writing_requirements}` : '');
   const context = [
     `论文标题：${project.title}`,
     project.field ? `学科领域：${project.field}` : '',
-    project.writing_requirements ? `写作要求：${project.writing_requirements}` : '',
+    deliveryRequirement,
     '',
     '【已确认大纲】',
     outlineText,

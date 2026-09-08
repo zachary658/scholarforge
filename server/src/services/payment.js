@@ -24,6 +24,17 @@ function requireVerifiedEmailForPayment(userId) {
   }
 }
 
+function bindPaidFullPaperOrder(order) {
+  if (order.type !== 'feature' || order.item_type !== 'writing_fulltext') return;
+  if (!order.project_id) throw new Error('完整论文订单未绑定项目，支付已取消');
+  const bound = db.prepare(
+    `UPDATE projects SET workflow_order_no = ?, updated_at = ?
+     WHERE id = ? AND user_id = ?
+       AND (workflow_order_no IS NULL OR workflow_order_no = '' OR workflow_order_no = ?)`
+  ).run(order.order_no, now(), order.project_id, order.user_id, order.order_no);
+  if (bound.changes !== 1) throw new Error('该论文已绑定其他套餐订单，支付已取消');
+}
+
 // 生成订单号：SF + YYYYMMDD + 8位十六进制随机
 export function genOrderNo() {
   const rand = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -355,6 +366,8 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ?').get(orderNo);
   if (!order) throw new Error('订单不存在');
   if (order.status === 'paid') {
+    // 兼容修复上线前已支付但尚未开始首章生成的订单：幂等回调时补绑项目规格。
+    bindPaidFullPaperOrder(order);
     // 幂等：已支付则直接返回（记录额外交易号到 metadata，不重复发放）
     if (transactionId && transactionId !== order.transaction_id) {
       let meta = {};
@@ -387,6 +400,8 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
     transactionId,
     channel,
     effects: () => {
+      // 完整论文在支付事务内立即绑定订单，消除“付款后、首章生成前”修改规格的窗口。
+      bindPaidFullPaperOrder(order);
       // 课程订单 → 记录已购课程
       if (order.type === 'course') {
         const meta = JSON.parse(order.metadata || '{}');

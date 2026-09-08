@@ -625,7 +625,7 @@ export function buildExpertContext(projectId, userId) {
     field: p.field || '',
     degree: p.degree || '',
     writingRequirements: p.writing_requirements || '',
-    targetWords: (p.writing_requirements || '').match(/(\d{3,6})\s*(字|千字|万字)/)?.[0] || '',
+    targetWords: p.delivery_target_words || (p.writing_requirements || '').match(/(\d{3,6})\s*(字|千字|万字)/)?.[0] || '',
     completion: `${done}/${chapters.length}`,
   };
 }

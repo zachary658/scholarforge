@@ -57,6 +57,9 @@ export function countAcademicWords(content) {
 }
 
 export function resolveTargetWordCount(project) {
+  // 已支付完整论文必须以订单快照为准；项目实时字段只用于尚未支付的预检。
+  const lockedTarget = Number(project?.delivery_target_words);
+  if (Number.isFinite(lockedTarget) && lockedTarget > 0) return Math.round(lockedTarget);
   const requirements = String(project?.writing_requirements || '');
   const matches = [...requirements.matchAll(/(?:不少于|不低于|至少|约|目标|总字数)?\s*(\d+(?:\.\d+)?)\s*(万|千)?\s*字/gi)];
   if (matches.length) {
@@ -83,6 +86,7 @@ export function contentVersion(project) {
     field: project?.field || '',
     degree: project?.degree || '',
     writingRequirements: project?.writing_requirements || '',
+    deliveryTargetWords: project?.delivery_target_words || null,
     outline: project?.outline || [],
     chapters: project?.chapters || [],
     sources: project?.sources || {},
