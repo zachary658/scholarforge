@@ -92,6 +92,108 @@ const EVIDENCE_LIBRARY_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence_chunks(project_id, source_type, source_id);
 `;
 
+const SERVICE_PROJECTS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS promotion_partners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    contact TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS promotion_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    partner_id INTEGER NOT NULL REFERENCES promotion_partners(id) ON DELETE RESTRICT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    valid_from INTEGER,
+    valid_until INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS service_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_no TEXT UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service_type TEXT NOT NULL CHECK(service_type IN ('thesis_coaching','graduation_project')),
+    source_type TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'submitted',
+    progress INTEGER NOT NULL DEFAULT 5 CHECK(progress BETWEEN 0 AND 100),
+    stage TEXT NOT NULL DEFAULT '需求已提交',
+    next_action TEXT NOT NULL DEFAULT '等待平台评估需求',
+    eta_at INTEGER,
+    request_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    promotion_code_id INTEGER REFERENCES promotion_codes(id) ON DELETE SET NULL,
+    promotion_code_snapshot TEXT,
+    promotion_partner_snapshot TEXT,
+    promotion_locked_at INTEGER,
+    user_visible_note TEXT NOT NULL DEFAULT '',
+    internal_note TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(source_type, source_id)
+  );
+  CREATE TABLE IF NOT EXISTS service_project_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_project_id INTEGER NOT NULL REFERENCES service_projects(id) ON DELETE CASCADE,
+    from_status TEXT,
+    to_status TEXT NOT NULL,
+    progress INTEGER NOT NULL,
+    stage TEXT NOT NULL,
+    user_visible_note TEXT NOT NULL DEFAULT '',
+    internal_note TEXT NOT NULL DEFAULT '',
+    operator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    operator_role TEXT NOT NULL DEFAULT 'system',
+    idempotency_key TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(service_project_id, idempotency_key)
+  );
+  CREATE TABLE IF NOT EXISTS service_project_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_project_id INTEGER NOT NULL REFERENCES service_projects(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('supplement','revision_request','acceptance')),
+    content TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(service_project_id, idempotency_key)
+  );
+  CREATE TABLE IF NOT EXISTS service_project_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_project_id INTEGER NOT NULL REFERENCES service_projects(id) ON DELETE CASCADE,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    role TEXT NOT NULL DEFAULT 'supplement' CHECK(role IN ('supplement','deliverable')),
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    deleted_at INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL DEFAULT 'service_project',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    link TEXT,
+    event_key TEXT UNIQUE,
+    read_at INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_service_projects_user ON service_projects(user_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_service_projects_status ON service_projects(status, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_service_updates_project ON service_project_updates(service_project_id, id);
+  CREATE INDEX IF NOT EXISTS idx_service_attachments_project ON service_project_attachments(service_project_id, id);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_promotion_codes_partner ON promotion_codes(partner_id, is_active);
+`;
+
 // 守卫式加列：仅当列不存在时 ALTER，保证对旧库幂等
 function addColumnIfMissing(db, table, column, def) {
   const tableName = table.replaceAll('"', '');
@@ -150,6 +252,11 @@ const MIGRATIONS = [
       addColumnIfMissing(db, '"references"', 'abstract', "TEXT NOT NULL DEFAULT ''");
       db.exec(EVIDENCE_LIBRARY_SCHEMA);
     },
+  },
+  {
+    version: '007_service_projects_and_promotion',
+    name: '人工服务项目、推广归因与站内通知',
+    up(db) { db.exec(SERVICE_PROJECTS_SCHEMA); },
   },
 ];
 

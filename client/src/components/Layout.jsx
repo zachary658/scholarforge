@@ -8,6 +8,7 @@ import {
 } from './Icons.jsx';
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 import WorkModeGate from './WorkModeGate.jsx';
+import NotificationCenter from './NotificationCenter.jsx';
 
 // 导航字符串图标键 → 实际图标组件（与 navigation.js 的 icon 键一一对应）
 const NAV_ICONS = {
@@ -171,6 +172,7 @@ export default function Layout() {
           >
             <Lock className="h-[18px] w-[18px]" />
           </button>
+          <NotificationCenter />
           <button onClick={handleLogout} title="退出登录" className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink">
             <Logout className="h-[18px] w-[18px]" />
           </button>

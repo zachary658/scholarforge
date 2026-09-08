@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { toast } from '../components/Toast.jsx';
 import {
@@ -44,6 +45,7 @@ function fmtDate(ts) {
 }
 
 export default function GraduationProjects() {
+  const navigate = useNavigate();
   const [categories, setCategories] = useState([]);
   const [projects, setProjects] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
@@ -54,6 +56,7 @@ export default function GraduationProjects() {
   const [showModal, setShowModal] = useState(false);
   const [remark, setRemark] = useState('');
   const [contact, setContact] = useState('');
+  const [promotionCode, setPromotionCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const load = async () => {
@@ -94,6 +97,7 @@ export default function GraduationProjects() {
     setSelectedProject(project);
     setRemark('');
     setContact('');
+    setPromotionCode('');
     setShowModal(true);
   };
 
@@ -101,10 +105,11 @@ export default function GraduationProjects() {
     if (!selectedProject) return;
     setSubmitting(true);
     try {
-      await api.createGraduationOrder(selectedProject.id, { remark, contact });
-      toast.success('需求已提交，客服将尽快与您联系');
+      const result = await api.createGraduationOrder(selectedProject.id, { remark, contact }, promotionCode);
+      toast.success('需求已提交，可在服务工作区查看评估进度');
       setShowModal(false);
-      load();
+      if (result.service_project_id) navigate(`/app/service-projects/${result.service_project_id}`);
+      else load();
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -388,6 +393,13 @@ export default function GraduationProjects() {
                 placeholder="微信号 / 手机号（便于客服与您联系）"
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
+              />
+              <input
+                className="input mt-2 uppercase"
+                placeholder="推广码（选填，不影响报价）"
+                value={promotionCode}
+                maxLength={32}
+                onChange={(e) => setPromotionCode(e.target.value.toUpperCase())}
               />
             </div>
 

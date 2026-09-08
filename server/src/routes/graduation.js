@@ -4,6 +4,7 @@ import { authRequired } from '../middleware.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import db from '../db.js';
 import { createOrder } from '../services/payment.js';
+import { ensureServiceProject, resolvePromotion } from '../services/service-project-service.js';
 
 const router = Router();
 
@@ -34,13 +35,6 @@ router.get('/', (req, res) => {
   });
 });
 
-// 项目详情
-router.get('/:id', authRequired, (req, res) => {
-  const project = db.prepare('SELECT * FROM graduation_projects WHERE id = ? AND is_active = 1').get(req.params.id);
-  if (!project) return res.status(404).json({ error: '项目不存在或已下架' });
-  res.json({ project });
-});
-
 // 我的已购毕业作品订单
 router.get('/my/orders', authRequired, (req, res) => {
   const rows = db.prepare(
@@ -61,9 +55,16 @@ router.get('/my/orders', authRequired, (req, res) => {
   res.json({ orders });
 });
 
+// 参数路由必须位于 /my/orders 等静态路由之后，避免把 "my" 误识别成项目 ID。
+router.get('/:id', authRequired, (req, res) => {
+  const project = db.prepare('SELECT * FROM graduation_projects WHERE id = ? AND is_active = 1').get(req.params.id);
+  if (!project) return res.status(404).json({ error: '项目不存在或已下架' });
+  res.json({ project });
+});
+
 // 提交定制需求（生成待对接订单，客服后台可见后跟进报价）
 router.post('/orders', authRequired, (req, res) => {
-  const { project_id, requirements } = req.body || {};
+  const { project_id, requirements, promotion_code } = req.body || {};
   const projectId = Number(project_id);
   if (!projectId) return res.status(400).json({ error: '请选择要定制的项目' });
 
@@ -85,12 +86,28 @@ router.post('/orders', authRequired, (req, res) => {
     reqObj.remark = requirements.trim().slice(0, 2000);
   }
 
-  const info = db.prepare(
-    `INSERT INTO graduation_project_orders (user_id, project_id, requirements, status, contact_status)
-     VALUES (?, ?, ?, 'pending', 'pending')`
-  ).run(req.user.id, projectId, JSON.stringify(reqObj));
+  let promotion = null;
+  try { promotion = resolvePromotion(promotion_code); } catch (err) { return res.status(err.status || 400).json({ error: err.message }); }
 
-  res.json({ ok: true, id: info.lastInsertRowid });
+  const info = db.transaction(() => {
+    const inserted = db.prepare(
+      `INSERT INTO graduation_project_orders (user_id, project_id, requirements, status, contact_status)
+       VALUES (?, ?, ?, 'pending', 'pending')`
+    ).run(req.user.id, projectId, JSON.stringify(reqObj));
+    ensureServiceProject({
+      userId: req.user.id,
+      serviceType: 'graduation_project',
+      sourceType: 'graduation_project_order',
+      sourceId: Number(inserted.lastInsertRowid),
+      requestSnapshot: { project_id: projectId, project_title: project.title, category: project.category, ...reqObj },
+      promotionCode: promotion?.code || '',
+      status: 'evaluating',
+    });
+    return inserted;
+  })();
+
+  const serviceProject = db.prepare("SELECT id FROM service_projects WHERE source_type='graduation_project_order' AND source_id=?").get(Number(info.lastInsertRowid));
+  res.json({ ok: true, id: info.lastInsertRowid, service_project_id: serviceProject?.id || null });
 });
 
 // 用户对已报价的毕业作品订单发起支付（生成可支付 orders 记录并返回支付参数）

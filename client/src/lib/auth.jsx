@@ -9,7 +9,7 @@ function readWorkMode(user) {
   try {
     const saved = JSON.parse(sessionStorage.getItem(WORK_MODE_KEY) || 'null');
     const userKey = String(user.id || user.email || '');
-    return saved?.userKey === userKey && ['full', 'other'].includes(saved?.mode) ? saved.mode : null;
+    return saved?.userKey === userKey && ['full', 'other', 'coaching', 'graduation'].includes(saved?.mode) ? saved.mode : null;
   } catch {
     return null;
   }
@@ -85,7 +85,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const chooseWorkMode = useCallback((mode) => {
-    if (!user || !['full', 'other'].includes(mode)) return;
+    if (!user || !['full', 'other', 'coaching', 'graduation'].includes(mode)) return;
     const choice = { userKey: String(user.id || user.email || ''), mode };
     try { sessionStorage.setItem(WORK_MODE_KEY, JSON.stringify(choice)); } catch {}
     setWorkMode(mode);

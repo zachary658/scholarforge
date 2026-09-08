@@ -12,6 +12,7 @@ import { now, datePrefix } from '../utils.js';
 import { assertTransition, StateTransitionError, ORDER_STATUS, transitionStatus, transitionOrderToPaid } from './order-state.js';
 import { AlipaySdk } from 'alipay-sdk';
 import { Wechatpay, Aes, Rsa } from 'wechatpay-axios-plugin';
+import { activatePaidServiceProject, ensureServiceProject, linkServiceOrder, resolvePromotion } from './service-project-service.js';
 
 // 生成订单号：SF + YYYYMMDD + 8位十六进制随机
 export function genOrderNo() {
@@ -79,6 +80,7 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     if (!course || !course.is_active) throw new Error('课程不存在或已下架');
     if (courseRequirements) {
       const quote = computeCourseQuote(course, courseRequirements);
+      resolvePromotion(quote.requirements?.promotion_code || '');
       amount = quote.amount;
       metadata = { course_id: course.id, validity_days: course.validity_days, degree: course.degree, requirements: quote.requirements, breakdown: quote.breakdown };
     } else {
@@ -138,6 +140,21 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
   ).run(orderNo, userId, type, String(target), targetName, amount, useChannel, useChannel, JSON.stringify(metadata), expiresAt);
 
   const order = getOrder(orderNo);
+  if (type === 'course') {
+    const requirements = metadata.requirements || {};
+    ensureServiceProject({
+      userId,
+      serviceType: 'thesis_coaching',
+      sourceType: 'order',
+      sourceId: order.id,
+      orderId: order.id,
+      requestSnapshot: { course_id: metadata.course_id, course_title: targetName, ...requirements },
+      promotionCode: requirements.promotion_code || '',
+      status: 'awaiting_payment',
+    });
+  } else if (type === 'graduation') {
+    linkServiceOrder({ sourceType: 'graduation_project_order', sourceId: metadata.gp_order_id, orderId: order.id });
+  }
   const payParams = buildPaymentParams(order, useChannel);
   // 创建订单响应也不暴露内部成本与利润保护明细；完整记录只保留在服务端。
   return { order: { ...order, metadata: undefined, transaction_id: undefined }, payParams };
@@ -363,6 +380,7 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
         if (meta.course_id) {
           grantCourse(order.user_id, meta.course_id, meta.validity_days, order.id, meta.requirements ? JSON.stringify(meta.requirements) : null);
         }
+        activatePaidServiceProject({ sourceType: 'order', sourceId: order.id, orderId: order.id });
       }
       // 毕业作品订单 → 标记已支付并关联支付订单
       if (order.type === 'graduation') {
@@ -377,6 +395,7 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
             throw new Error('报价已变更，请重新发起支付');
           }
           db.prepare('UPDATE graduation_project_orders SET status = ?, order_id = ? WHERE id = ?').run('paid', order.id, meta.gp_order_id);
+          activatePaidServiceProject({ sourceType: 'graduation_project_order', sourceId: meta.gp_order_id, orderId: order.id });
         }
       }
       // 专利申请 / 期刊发表订单 → 标记已支付并关联支付订单

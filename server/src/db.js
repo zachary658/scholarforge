@@ -428,6 +428,52 @@ db.exec(`
 // 客服报价进入 pending，管理员审批通过后 approved 才生效（用户方可支付）
 addColumnIfMissing('graduation_project_orders', 'quote_status', "TEXT NOT NULL DEFAULT 'none'");
 
+// 已有人工服务订单回填到统一服务工作区。INSERT OR IGNORE + 唯一来源键保证每次启动均幂等。
+// 历史订单没有推广码，归因字段保持 NULL；原始需求快照按当时已保存的数据生成。
+const backfillServiceProjects = db.transaction(() => {
+  const courses = db.prepare(
+    `SELECT uc.user_id, uc.order_id, uc.requirements, c.title
+     FROM user_courses uc JOIN courses c ON c.id=uc.course_id WHERE uc.order_id IS NOT NULL`
+  ).all();
+  for (const row of courses) {
+    const info = db.prepare(
+      `INSERT OR IGNORE INTO service_projects
+       (user_id, service_type, source_type, source_id, order_id, status, progress, stage, next_action, request_snapshot_json, promotion_locked_at)
+       VALUES (?, 'thesis_coaching', 'order', ?, ?, 'paid', 25, '已付款', '等待服务正式开始', ?, strftime('%s','now'))`
+    ).run(row.user_id, row.order_id, row.order_id, row.requirements || JSON.stringify({ course_title: row.title }));
+    if (info.changes) {
+      const id = Number(info.lastInsertRowid);
+      db.prepare('UPDATE service_projects SET project_no=? WHERE id=?').run(`TGLEGACY${String(id).padStart(6, '0')}`, id);
+      db.prepare("INSERT INTO service_project_updates (service_project_id,to_status,progress,stage,user_visible_note,operator_role,idempotency_key) VALUES (?,'paid',25,'已付款','历史订单已迁移到服务工作区','system','backfill')").run(id);
+    }
+  }
+  const graduation = db.prepare(
+    `SELECT gpo.id, gpo.user_id, gpo.order_id, gpo.requirements, gpo.status, gp.title, gp.category
+     FROM graduation_project_orders gpo JOIN graduation_projects gp ON gp.id=gpo.project_id`
+  ).all();
+  for (const row of graduation) {
+    const paid = row.status === 'paid' || row.status === 'completed';
+    const status = row.status === 'completed' ? 'completed' : (paid ? 'paid' : 'evaluating');
+    const progress = status === 'completed' ? 100 : (paid ? 25 : 10);
+    const stage = status === 'completed' ? '已完成' : (paid ? '已付款' : '需求评估中');
+    const next = status === 'completed' ? '服务已完成，可随时下载成果' : (paid ? '等待服务正式开始' : '等待平台给出方案或报价');
+    let snapshot = {};
+    try { snapshot = JSON.parse(row.requirements || '{}'); } catch {}
+    snapshot.project_title = row.title; snapshot.category = row.category;
+    const info = db.prepare(
+      `INSERT OR IGNORE INTO service_projects
+       (user_id, service_type, source_type, source_id, order_id, status, progress, stage, next_action, request_snapshot_json, promotion_locked_at)
+       VALUES (?, 'graduation_project', 'graduation_project_order', ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.user_id, row.id, row.order_id, status, progress, stage, next, JSON.stringify(snapshot), paid ? Math.floor(Date.now()/1000) : null);
+    if (info.changes) {
+      const id = Number(info.lastInsertRowid);
+      db.prepare('UPDATE service_projects SET project_no=? WHERE id=?').run(`GPLEGACY${String(id).padStart(6, '0')}`, id);
+      db.prepare('INSERT INTO service_project_updates (service_project_id,to_status,progress,stage,user_visible_note,operator_role,idempotency_key) VALUES (?,?,?,?,?,\'system\',\'backfill\')').run(id,status,progress,stage,'历史订单已迁移到服务工作区');
+    }
+  }
+});
+backfillServiceProjects();
+
 // ===== 专利申请与期刊论文发表服务模块 =====
 // 服务型订单：用户提交需求 → 客服对接报价 → 管理员审批 → 用户支付 → 人工服务
 db.exec(`

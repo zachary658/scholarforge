@@ -62,6 +62,7 @@ const emptyForm = {
   urgent: false,
   note: '',
   contact: '',
+  promotion_code: '',
 };
 
 function fmt(v) {
@@ -138,6 +139,7 @@ export default function CourseQuote() {
     urgent: !!form.urgent,
     note: form.note,
     contact: form.contact,
+    promotion_code: form.promotion_code,
   }), [form]);
 
   // 实时报价：防抖调用后端权威计算
@@ -280,6 +282,9 @@ export default function CourseQuote() {
             <button onClick={() => navigate('/app/orders')} className="btn-primary">
               <Receipt className="h-4 w-4" /> 查看订单
             </button>
+            <button onClick={() => navigate('/app/service-projects')} className="btn-primary">
+              <BookOpen className="h-4 w-4" /> 查看服务进度
+            </button>
           </div>
         </div>
       </div>
@@ -419,6 +424,17 @@ export default function CourseQuote() {
                 onChange={(e) => set({ contact: e.target.value })}
                 placeholder="微信号 / 手机号，便于客服与您对接"
               />
+            </div>
+            <div>
+              <label className="label">推广码（选填）</label>
+              <input
+                className="input uppercase"
+                value={form.promotion_code}
+                onChange={(e) => set({ promotion_code: e.target.value.toUpperCase() })}
+                placeholder="如有推广码请填写，不影响服务价格"
+                maxLength={32}
+              />
+              <p className="mt-1.5 text-xs text-slate-400">推广码仅用于渠道归因，付款后不可更改。</p>
             </div>
           </div>
         </div>

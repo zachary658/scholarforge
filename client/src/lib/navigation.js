@@ -50,6 +50,7 @@ export const navGroups = [
       { to: '/app/tasks', label: '我的任务' },
       { to: '/app/docs', label: '我的文档' },
       { to: '/app/orders', label: '我的订单' },
+      { to: '/app/service-projects', label: '服务进度与交付' },
     ],
   },
 ];

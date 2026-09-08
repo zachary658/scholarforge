@@ -11,6 +11,7 @@ const nav = [
   { to: '/support/graduation', label: '毕业作品', icon: Cpu, end: false },
   { to: '/support/patent', label: '专利申请', icon: Shield, end: false },
   { to: '/support/publication', label: '期刊发表', icon: Book, end: false },
+  { to: '/support/service-projects', label: '服务履约', icon: ArrowRight, end: false },
 ];
 
 export default function SupportLayout() {

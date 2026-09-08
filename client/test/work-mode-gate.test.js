@@ -11,7 +11,11 @@ test('普通用户工作区挂载不可跳过的使用方式门禁', () => {
 
   assert.match(layout, /<WorkModeGate\s*\/>/);
   assert.match(gate, /dismissible=\{false\}/);
-  assert.match(gate, /mode === 'full' \? '\/app\/paper-workflow' : '\/app'/);
+  assert.match(gate, /full: '\/app\/paper-workflow'/);
+  assert.match(gate, /coaching: '\/app\/courses'/);
+  assert.match(gate, /graduation: '\/app\/graduation'/);
+  assert.match(gate, /choose\('coaching'\)/);
+  assert.match(gate, /choose\('graduation'\)/);
   assert.match(modal, /dismissible && onClose/);
 });
 

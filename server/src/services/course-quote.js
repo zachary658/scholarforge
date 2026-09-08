@@ -35,6 +35,7 @@ export function normalizeCourseRequirements(input = {}) {
     urgent: !!input.urgent,
     note: String(input.note || '').trim().slice(0, 2000),
     contact: String(input.contact || '').trim().slice(0, 200),
+    promotion_code: String(input.promotion_code || '').trim().toUpperCase().replace(/\s+/g, '').slice(0, 32),
   };
 }
 

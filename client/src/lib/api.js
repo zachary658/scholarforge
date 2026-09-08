@@ -138,6 +138,23 @@ async function upload(path, file, fields = {}, _retried = false) {
   return data;
 }
 
+async function download(path, filename, _retried = false) {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401 && !_retried && await doRefresh()) return download(path, filename, true);
+  if (!res.ok) {
+    let data = {}; try { data = await res.json(); } catch {}
+    throw new Error(data.error || `下载失败 (${res.status})`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url; link.download = filename || 'download'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const api = {
   // ===== auth =====
   register: async (payload) => {
@@ -251,6 +268,25 @@ export const api = {
   myCourses: () => request('/courses/my'),
   courseQuote: (payload) => request('/courses/quote', { method: 'POST', body: payload }),
 
+  // ===== 人工服务项目、进度与交付 =====
+  listServiceProjects: () => request('/service-projects'),
+  serviceProjectDetail: (id) => request(`/service-projects/${id}`),
+  submitServiceProjectAction: (id, payload) => request(`/service-projects/${id}/submissions`, { method: 'POST', body: payload }),
+  uploadServiceAttachment: (id, file) => upload(`/service-projects/${id}/attachments`, file),
+  downloadServiceAttachment: (id, attachmentId, filename) => download(`/service-projects/${id}/attachments/${attachmentId}`, filename),
+  validatePromotionCode: (code) => request(`/service-projects/promotion/validate/${encodeURIComponent(code)}`),
+  listNotifications: () => request('/notifications'),
+  readNotification: (id) => request(`/notifications/${id}/read`, { method: 'PUT' }),
+
+  staffListServiceProjects: (scope, params = {}) => request(`/${scope}/service-projects?${new URLSearchParams(params).toString()}`),
+  staffServiceProjectDetail: (scope, id) => request(`/${scope}/service-projects/${id}`),
+  staffUpdateServiceProject: (scope, id, payload) => request(`/${scope}/service-projects/${id}`, { method: 'PUT', body: payload }),
+  staffUploadDeliverable: (scope, id, file) => upload(`/${scope}/service-projects/${id}/attachments`, file),
+  adminPromotion: () => request('/admin/promotion'),
+  adminCreatePromotionPartner: (payload) => request('/admin/promotion/partners', { method: 'POST', body: payload }),
+  adminCreatePromotionCode: (payload) => request('/admin/promotion/codes', { method: 'POST', body: payload }),
+  adminSetPromotionCode: (id, is_active) => request(`/admin/promotion/codes/${id}`, { method: 'PUT', body: { is_active } }),
+
   // ===== 模板 =====
   listTemplates: () => request('/templates'),
   uploadTemplate: (file, name) => upload('/templates/upload', file, name ? { name } : {}),
@@ -346,7 +382,7 @@ export const api = {
   listGraduationProjectsPublic: () => request('/graduation', { auth: false }),
   getGraduationProject: (id) => request(`/graduation/${id}`),
   myGraduationOrders: () => request('/graduation/my/orders'),
-  createGraduationOrder: (projectId, requirements) => request('/graduation/orders', { method: 'POST', body: { project_id: projectId, requirements } }),
+  createGraduationOrder: (projectId, requirements, promotionCode = '') => request('/graduation/orders', { method: 'POST', body: { project_id: projectId, requirements, promotion_code: promotionCode } }),
   payGraduationOrder: (id) => request(`/graduation/orders/${id}/pay`, { method: 'POST' }),
 
   // ===== admin: 毕业作品管理 =====

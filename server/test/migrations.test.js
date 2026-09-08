@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -57,4 +57,14 @@ test('005_project_resources：核心成果表具备项目归属', () => {
     assert.ok(columnsOf(table).includes('project_id'), `${table} 缺少列 project_id`);
   }
   assert.ok(columnsOf('"references"').includes('project_id'), 'references 缺少列 project_id');
+});
+
+test('007_service_projects_and_promotion：人工服务履约与推广归因表已创建', () => {
+  for (const table of ['promotion_partners', 'promotion_codes', 'service_projects', 'service_project_updates', 'service_project_submissions', 'service_project_attachments', 'notifications']) {
+    const found = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    assert.ok(found, `缺少表 ${table}`);
+  }
+  for (const column of ['project_no', 'service_type', 'request_snapshot_json', 'promotion_code_snapshot', 'promotion_locked_at', 'version']) {
+    assert.ok(columnsOf('service_projects').includes(column), `service_projects 缺少列 ${column}`);
+  }
 });
