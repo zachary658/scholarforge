@@ -13,17 +13,19 @@ import {
   getFeaturePrices,
   getCourses,
   getCourse,
+  getConfiguredModel,
   getPaymentConfig,
   invalidatePaymentCache,
   invalidateSiteCache,
 } from '../config-store.js';
-import { hashPassword, revokeAllRefreshTokens, incrementTokenVersion } from '../auth.js';
-import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
+import { hashPassword, verifyPassword, revokeAllRefreshTokens, incrementTokenVersion } from '../auth.js';
+import { getModelPreset } from '../model-catalog.js';
 import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
 import { parseTemplate } from '../services/template-parser.js';
-import logger from '../logger.js';
+import logger, { configureErrorAlert } from '../logger.js';
 import { getOperationalMetrics } from '../services/operational-metrics.js';
 import { listAdminAuditLogs } from '../services/admin-audit.js';
+import { deleteSecureSetting, getSecureSettingStatuses, hasSecureSetting, setSecureSetting } from '../services/secure-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(__dirname, '..', '..', 'uploads', 'templates');
@@ -46,6 +48,11 @@ router.use(adminRequired);
 router.get('/operation-logs', (req, res) => {
   res.json(listAdminAuditLogs(req.query));
 });
+
+async function verifyAdminPassword(req) {
+  const user = db.prepare('SELECT password_hash FROM users WHERE id = ? AND is_admin = 1').get(req.user.id);
+  return Boolean(user && await verifyPassword(req.body?.admin_password || '', user.password_hash));
+}
 
 // 模板上传配置
 const upload = multer({
@@ -415,11 +422,7 @@ router.delete('/templates/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ========== AI 模型管理（预设目录 + 环境变量 Key） ==========
-// 安全设计：API Key 一律通过环境变量注入（LLM_API_KEY_<KEY 大写>，见 model-catalog.js），
-// 不存储在数据库、不返回给前端。管理后台只做「选择默认模型」与「测试连接」，
-// 不提供 Key 的录入/编辑/存储，从源头杜绝 Key 因拖库/配置失误泄露或被前端截获。
-// 新增模型：在 model-catalog.js 追加预设 + 配置对应环境变量即可，无需改动本接口。
+// ========== AI 模型管理（环境变量优先 + 管理员加密保险箱） ==========
 
 router.get('/models', async (_req, res) => {
   // getModels() 已脱敏：仅返回是否已配置（api_key_configured / api_key_masked），不含 Key 明文
@@ -454,27 +457,59 @@ router.put('/models/default', (req, res) => {
   res.json({ ok: true, default_key: key });
 });
 
+router.put('/models/:key/config', async (req, res) => {
+  const preset = getModelPreset(req.params.key);
+  if (!preset) return res.status(404).json({ error: '模型不存在' });
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  const apiKey = String(req.body?.api_key || '').trim();
+  const baseUrl = String(req.body?.base_url || '').trim().replace(/\/$/, '');
+  const modelName = String(req.body?.model_name || '').trim();
+  if (!apiKey && !baseUrl && !modelName) return res.status(400).json({ error: '没有需要保存的配置' });
+  if (apiKey && process.env[preset.env_key]) return res.status(409).json({ error: `${preset.env_key} 已由服务器环境变量托管，后台不能覆盖` });
+  if (apiKey && apiKey.length < 8) return res.status(400).json({ error: 'API Key 长度异常' });
+  if (baseUrl) {
+    try { await assertSafeAiResolvedUrl(baseUrl); } catch (err) { return res.status(400).json({ error: err.message }); }
+  }
+  if (modelName.length > 200 || baseUrl.length > 500) return res.status(400).json({ error: '模型配置过长' });
+  db.transaction(() => {
+    if (apiKey) setSecureSetting(`llm_api_key_${preset.key}`, apiKey, req.user.id);
+    if (baseUrl) setSetting(`llm_base_url_${preset.key}`, baseUrl);
+    if (modelName) setSetting(`llm_model_${preset.key}`, modelName);
+  })();
+  invalidateSiteCache();
+  res.json({ ok: true, model: getModels().find((item) => item.key === preset.key) });
+});
+
+router.delete('/models/:key/key', async (req, res) => {
+  const preset = getModelPreset(req.params.key);
+  if (!preset) return res.status(404).json({ error: '模型不存在' });
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  if (req.body?.confirmation !== `DELETE ${preset.key}`) return res.status(400).json({ error: `请输入 DELETE ${preset.key} 确认删除` });
+  if (process.env[preset.env_key]) return res.status(409).json({ error: '该 Key 由服务器环境变量托管，不能从后台删除' });
+  const deleted = deleteSecureSetting(`llm_api_key_${preset.key}`);
+  invalidateSiteCache();
+  res.json({ ok: true, deleted });
+});
+
 // 测试模型连通性（Key 从环境变量读取，测试过程不返回任何 Key 信息）
 router.post('/models/:key/test', async (req, res) => {
   const preset = getModelPreset(req.params.key);
   if (!preset) return res.status(404).json({ error: '模型不存在' });
-  const apiKey = getModelKeyFromEnv(preset);
-  if (!apiKey) {
-    return res.json({ ok: false, message: `未配置 ${preset.env_key} 环境变量` });
-  }
+  const configured = getConfiguredModel(preset.key);
+  if (!configured) return res.json({ ok: false, message: '尚未配置 API Key' });
   // SSRF 防护：校验 base_url 仅允许 http/https 且非云元数据/回环/链路本地（含 DNS 解析后二次校验）
   try {
-    await assertSafeAiResolvedUrl(preset.base_url);
+    await assertSafeAiResolvedUrl(configured.base_url);
   } catch (err) {
     return res.json({ ok: false, message: err.message });
   }
   try {
-    const url = preset.base_url.replace(/\/$/, '') + '/chat/completions';
+    const url = configured.base_url.replace(/\/$/, '') + '/chat/completions';
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configured.api_key}` },
       body: JSON.stringify({
-        model: preset.model_name,
+        model: configured.model_name,
         messages: [{ role: 'user', content: '请回复"连接成功"四个字。' }],
         max_tokens: 20,
       }),
@@ -497,6 +532,63 @@ router.post('/models/:key/test', async (req, res) => {
 });
 
 // ========== 系统设置 ==========
+const RUNTIME_SECRET_KEYS = new Set(['alert_webhook_url', 'totp_encryption_key']);
+
+router.get('/secure-config', (_req, res) => {
+  const statuses = getSecureSettingStatuses();
+  res.json({
+    items: [...RUNTIME_SECRET_KEYS].map((key) => ({
+      key,
+      configured: key === 'alert_webhook_url'
+        ? Boolean(process.env.ALERT_WEBHOOK_URL || statuses[key]?.configured)
+        : Boolean(process.env.TOTP_ENCRYPTION_KEY || statuses[key]?.configured),
+      source: (key === 'alert_webhook_url' ? process.env.ALERT_WEBHOOK_URL : process.env.TOTP_ENCRYPTION_KEY) ? 'environment' : statuses[key]?.configured ? 'admin_vault' : 'none',
+      version: statuses[key]?.version || 0,
+      updated_at: statuses[key]?.updated_at || null,
+    })),
+  });
+});
+
+router.put('/secure-config/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!RUNTIME_SECRET_KEYS.has(key)) return res.status(404).json({ error: '未知的运行密钥' });
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  const value = String(req.body?.value || '').trim();
+  if (!value) return res.status(400).json({ error: '配置值不能为空；留空不会覆盖原配置' });
+  const envName = key === 'alert_webhook_url' ? 'ALERT_WEBHOOK_URL' : 'TOTP_ENCRYPTION_KEY';
+  if (process.env[envName]) return res.status(409).json({ error: `${envName} 已由服务器环境变量托管，后台不能覆盖` });
+  if (key === 'totp_encryption_key') {
+    if (value.length < 32) return res.status(400).json({ error: 'TOTP 加密密钥至少需要 32 个字符' });
+    const enabledUsers = db.prepare('SELECT COUNT(*) AS count FROM users WHERE totp_enabled_at IS NOT NULL').get().count;
+    if (enabledUsers > 0 && hasSecureSetting(key)) return res.status(409).json({ error: '已有账号启用双因素认证，禁止轮换此密钥；请先逐一关闭 2FA' });
+  } else {
+    let parsed;
+    try { parsed = new URL(value); } catch { return res.status(400).json({ error: 'Webhook URL 格式不正确' }); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:')) {
+      return res.status(400).json({ error: '生产环境 Webhook 必须使用 HTTPS' });
+    }
+  }
+  setSecureSetting(key, value, req.user.id);
+  if (key === 'alert_webhook_url') configureErrorAlert(value);
+  res.json({ ok: true, configured: true, source: 'admin_vault' });
+});
+
+router.delete('/secure-config/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!RUNTIME_SECRET_KEYS.has(key)) return res.status(404).json({ error: '未知的运行密钥' });
+  if (!(await verifyAdminPassword(req))) return res.status(403).json({ error: '管理员密码不正确' });
+  if (req.body?.confirmation !== `DELETE ${key}`) return res.status(400).json({ error: `请输入 DELETE ${key} 确认删除` });
+  const envName = key === 'alert_webhook_url' ? 'ALERT_WEBHOOK_URL' : 'TOTP_ENCRYPTION_KEY';
+  if (process.env[envName]) return res.status(409).json({ error: `${envName} 由环境变量托管，后台不能删除` });
+  if (key === 'totp_encryption_key') {
+    const enabledUsers = db.prepare('SELECT COUNT(*) AS count FROM users WHERE totp_enabled_at IS NOT NULL').get().count;
+    if (enabledUsers > 0) return res.status(409).json({ error: '仍有账号启用双因素认证，禁止删除 TOTP 密钥' });
+  }
+  const deleted = deleteSecureSetting(key);
+  if (key === 'alert_webhook_url') configureErrorAlert('');
+  res.json({ ok: true, deleted });
+});
+
 // 允许的设置项白名单
 const SETTINGS_WHITELIST = new Set([
   'site_name', 'site_description', 'announcement', 'registration_open', 'footer_text',
@@ -585,7 +677,7 @@ function validateSettingValue(key, value) {
   return null;
 }
 
-router.put('/settings', (req, res) => {
+router.put('/settings', async (req, res) => {
   const obj = req.body || {};
   // 先统一校验所有值，任意一项非法即拒绝（不部分写入，保证配置一致性）
   const errors = [];
@@ -605,8 +697,12 @@ router.put('/settings', (req, res) => {
   if (errors.length > 0) {
     return res.status(400).json({ error: '设置校验失败：' + errors.join('；') });
   }
+  const includesSensitive = Object.keys(accepted).some((key) => SENSITIVE_KEYS.has(key));
+  if (includesSensitive && !(await verifyAdminPassword(req))) {
+    return res.status(403).json({ error: '修改支付或内容审核密钥前必须输入正确的管理员密码' });
+  }
   for (const [k, v] of Object.entries(accepted)) {
-    setSetting(k, v);
+    setSetting(k, v, req.user.id);
   }
   // 支付配置变更时使缓存失效
   const hasPaymentChange = Object.keys(accepted).some((k) => k.startsWith('payment_') || k.startsWith('alipay_') || k.startsWith('wechat_') || k.startsWith('order_') || k.startsWith('doc_'));

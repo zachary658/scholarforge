@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp', '012_secure_settings'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -87,4 +87,10 @@ test('010/011：操作审计与后台双因素认证结构已创建', () => {
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='totp_recovery_codes'").get());
   assert.ok(columnsOf('users').includes('totp_secret_enc'));
   assert.ok(columnsOf('users').includes('totp_enabled_at'));
+});
+
+test('012：敏感配置保险箱已创建', () => {
+  const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='secure_settings'").get();
+  assert.ok(table);
+  assert.ok(columnsOf('secure_settings').includes('encrypted_value'));
 });

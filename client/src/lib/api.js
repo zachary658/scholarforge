@@ -363,12 +363,17 @@ export const api = {
   adminSaveModelRoles: (payload) => request('/admin/models/roles', { method:'PUT', body:payload }),
   adminSetDefaultModel: (key) => request('/admin/models/default', { method: 'PUT', body: { key } }),
   adminTestModel: (key) => request(`/admin/models/${key}/test`, { method: 'POST' }),
+  adminSaveModelConfig: (key, payload) => request(`/admin/models/${key}/config`, { method: 'PUT', body: payload }),
+  adminDeleteModelKey: (key, payload) => request(`/admin/models/${key}/key`, { method: 'DELETE', body: payload }),
 
   // ===== admin: 系统设置 =====
   adminGetSettings: () => request('/admin/settings'),
   adminUpdateSettings: (payload) => request('/admin/settings', { method: 'PUT', body: payload }),
   adminUploadWechatQrcode: (file) => upload('/admin/settings/wechat-qrcode', file),
   adminDeleteWechatQrcode: () => request('/admin/settings/wechat-qrcode', { method: 'DELETE' }),
+  adminGetSecureConfig: () => request('/admin/secure-config'),
+  adminSaveSecureConfig: (key, payload) => request(`/admin/secure-config/${key}`, { method: 'PUT', body: payload }),
+  adminDeleteSecureConfig: (key, payload) => request(`/admin/secure-config/${key}`, { method: 'DELETE', body: payload }),
 
   // ===== admin: 用户 =====
   adminListUsers: (params) => request(`/admin/users?${new URLSearchParams(params).toString()}`),

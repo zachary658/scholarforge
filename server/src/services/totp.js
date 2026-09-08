@@ -1,11 +1,12 @@
 import crypto from 'crypto';
 import db from '../db.js';
+import { getSecureSetting } from './secure-settings.js';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const STEP_SECONDS = 30;
 
 function encryptionKey() {
-  const configured = process.env.TOTP_ENCRYPTION_KEY;
+  const configured = process.env.TOTP_ENCRYPTION_KEY || getSecureSetting('totp_encryption_key', '');
   if (process.env.NODE_ENV === 'production' && !configured) {
     throw Object.assign(new Error('请先配置独立的 TOTP_ENCRYPTION_KEY'), { statusCode: 503 });
   }

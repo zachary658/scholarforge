@@ -341,6 +341,19 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_totp_recovery_user ON totp_recovery_codes(user_id, used_at);`);
     },
   },
+  {
+    version: '012_secure_settings',
+    name: '敏感配置加密存储',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS secure_settings (
+        key TEXT PRIMARY KEY,
+        encrypted_value TEXT NOT NULL,
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      );`);
+    },
+  },
 ];
 
 export function runMigrations(db) {

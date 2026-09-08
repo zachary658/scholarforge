@@ -1,8 +1,10 @@
 import db from './db.js';
 import { MODEL_CATALOG, getModelPreset, getModelKeyFromEnv, getModelRuntimeConfig } from './model-catalog.js';
+import { SECURE_SETTING_KEYS, getSecureSetting, hasSecureSetting, setSecureSetting } from './services/secure-settings.js';
 
 // 读取单个设置
 export function getSetting(key, fallback = '') {
+  if (SECURE_SETTING_KEYS.has(key) && hasSecureSetting(key)) return getSecureSetting(key, fallback);
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : fallback;
 }
@@ -12,16 +14,38 @@ export function getAllSettings() {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const obj = {};
   for (const r of rows) obj[r.key] = r.value;
+  for (const key of SECURE_SETTING_KEYS) obj[key] = hasSecureSetting(key) ? '已配置' : '';
   return obj;
 }
 
 // 写入设置
-export function setSetting(key, value) {
+export function setSetting(key, value, updatedBy = null) {
+  if (SECURE_SETTING_KEYS.has(key)) {
+    setSecureSetting(key, value, updatedBy);
+    db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    invalidateSiteCache();
+    return;
+  }
   db.prepare(
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
   ).run(key, String(value));
   invalidateSiteCache();
+}
+
+function getModelApiKey(preset) {
+  if (!preset) return '';
+  return getModelKeyFromEnv(preset) || getSetting(`llm_api_key_${preset.key}`, '');
+}
+
+function getStoredModelRuntimeConfig(preset) {
+  const runtime = getModelRuntimeConfig(preset);
+  const suffix = preset.key.toUpperCase();
+  return {
+    // 部署环境变量始终拥有最高优先级，避免后台误覆盖运维侧锁定的网关与模型。
+    base_url: (process.env[`LLM_BASE_URL_${suffix}`] || getSetting(`llm_base_url_${preset.key}`, runtime.base_url)).trim().replace(/\/$/, ''),
+    model_name: (process.env[`LLM_MODEL_${suffix}`] || getSetting(`llm_model_${preset.key}`, runtime.model_name)).trim(),
+  };
 }
 
 // 注册风控配置（防批量注册白嫖）
@@ -209,9 +233,9 @@ export function getDefaultModel() {
   const defaultKey = getSetting('ai_default_model', '');
   const preset = defaultKey ? getModelPreset(defaultKey) : null;
   if (!preset) return null;
-  const apiKey = getModelKeyFromEnv(preset);
+  const apiKey = getModelApiKey(preset);
   if (!apiKey) return null;
-  const runtime = getModelRuntimeConfig(preset);
+  const runtime = getStoredModelRuntimeConfig(preset);
   return {
     id: null,
     key: preset.key,
@@ -228,12 +252,12 @@ export function getDefaultModel() {
   };
 }
 
-// 按预设 key 返回已配置模型；API Key 只从环境变量读取，不落库。
+// 按预设 key 返回已配置模型；环境变量优先，其次读取管理员加密保险箱。
 export function getConfiguredModel(key) {
   const preset = getModelPreset(key);
-  const apiKey = getModelKeyFromEnv(preset);
+  const apiKey = getModelApiKey(preset);
   if (!preset || !apiKey) return null;
-  const runtime = getModelRuntimeConfig(preset);
+  const runtime = getStoredModelRuntimeConfig(preset);
   return { id: null, key: preset.key, name: preset.name, provider: preset.provider, base_url: runtime.base_url, api_key: apiKey, model_name: runtime.model_name, temperature: preset.temperature, max_tokens: preset.max_tokens, strengths: preset.strengths || [] };
 }
 
@@ -245,8 +269,10 @@ export function getConfiguredModels() {
 export function getModels() {
   const defaultKey = getSetting('ai_default_model', '');
   return MODEL_CATALOG.map((m) => {
-    const keyConfigured = !!getModelKeyFromEnv(m);
-    const runtime = getModelRuntimeConfig(m);
+    const envConfigured = !!getModelKeyFromEnv(m);
+    const storedConfigured = hasSecureSetting(`llm_api_key_${m.key}`);
+    const keyConfigured = envConfigured || storedConfigured;
+    const runtime = getStoredModelRuntimeConfig(m);
     return {
       id: m.key,
       key: m.key,
@@ -259,7 +285,8 @@ export function getModels() {
       strengths: m.strengths || [],
       env_key: m.env_key,
       api_key_configured: keyConfigured,
-      api_key_masked: keyConfigured ? `已通过 ${m.env_key} 环境变量配置` : `未配置（需设置 ${m.env_key}）`,
+      api_key_source: envConfigured ? 'environment' : storedConfigured ? 'admin_vault' : 'none',
+      api_key_masked: envConfigured ? `已通过 ${m.env_key} 环境变量配置（后台不可覆盖）` : storedConfigured ? '已加密保存在管理员密钥保险箱' : '未配置',
       is_default: defaultKey === m.key ? 1 : 0,
       is_active: 1,
     };

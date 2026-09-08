@@ -50,11 +50,15 @@ function writeToFile(line) {
 
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 const currentLevel = process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
-const alertWebhookUrl = String(process.env.ALERT_WEBHOOK_URL || '').trim();
+let alertWebhookUrl = String(process.env.ALERT_WEBHOOK_URL || '').trim();
 const alertTimeoutMs = Math.min(10000, Math.max(1000, Number(process.env.ALERT_WEBHOOK_TIMEOUT_MS) || 4000));
 const alertCooldownMs = Math.min(3600000, Math.max(1000, Number(process.env.ALERT_WEBHOOK_COOLDOWN_MS) || 60000));
 const recentAlerts = new Map();
 let alertDeliveryActive = false;
+
+export function configureErrorAlert(url) {
+  alertWebhookUrl = String(url || process.env.ALERT_WEBHOOK_URL || '').trim();
+}
 
 function shouldLog(level) {
   return LOG_LEVELS[level] >= LOG_LEVELS[currentLevel];

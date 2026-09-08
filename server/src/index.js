@@ -35,13 +35,19 @@ import { cleanupOldTasks, cleanupOldDocs } from './services/task-store.js';
 import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
 import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
-import logger from './logger.js';
+import logger, { configureErrorAlert } from './logger.js';
 import db from './db.js';
 import { recoverInterruptedChapterJobs } from './services/chapter-service.js';
 import { adminAuditMiddleware } from './services/admin-audit.js';
 import { startBackupScheduler } from './services/backup-scheduler.js';
+import { getSecureSetting, migrateLegacySecureSettings } from './services/secure-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// 将历史 settings 表中的明文密钥一次性迁入 AES-GCM 保险箱，并加载可热更新的告警地址。
+const migratedSecrets = migrateLegacySecureSettings();
+if (migratedSecrets > 0) logger.info('secure-settings', `migrated ${migratedSecrets} legacy secrets into encrypted storage`);
+configureErrorAlert(getSecureSetting('alert_webhook_url', ''));
 
 // 初始化管理员账号（异步：bcrypt hash 不阻塞事件循环）
 await ensureAdminAccount();

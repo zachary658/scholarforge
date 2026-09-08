@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { Refresh } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
-import { useConfirm } from '../../components/ConfirmModal.jsx';
+import SecureConfigPanel from '../../components/SecureConfigPanel.jsx';
 
 const SENSITIVE_FIELDS = ['alipay_private_key', 'alipay_public_key', 'wechat_api_v3_key', 'wechat_private_key', 'wechat_platform_public_key', 'aliyun_access_key_secret', 'yidun_secret_key'];
 
@@ -83,13 +83,13 @@ const defaultSettings = {
 };
 
 export default function AdminSettings() {
-  const confirm = useConfirm();
   const [settings, setSettings] = useState(defaultSettings);
   const [configured, setConfigured] = useState({}); // sensitive field -> already configured?
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [qrcodeUploading, setQrcodeUploading] = useState(false);
   const [error, setError] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -186,6 +186,7 @@ export default function AdminSettings() {
     setError('');
     try {
       const payload = {
+        admin_password: adminPassword,
         site_name: settings.site_name,
         site_description: settings.site_description,
         footer_text: settings.footer_text,
@@ -301,6 +302,14 @@ export default function AdminSettings() {
       )}
 
       <div className="mt-6 space-y-6">
+        <SecureConfigPanel />
+
+        <div className="card p-6">
+          <h3 className="text-sm font-semibold text-ink">敏感设置二次确认</h3>
+          <p className="mt-1 text-xs text-slate-400">只有在本次填写了新的支付密钥或内容审核密钥时才需要。普通站点设置可留空。</p>
+          <input type="password" autoComplete="current-password" className="input mt-4" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="管理员当前密码" />
+        </div>
+
         {/* 站点信息 */}
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-ink">站点信息</h3>

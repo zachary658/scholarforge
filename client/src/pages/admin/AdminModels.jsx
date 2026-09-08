@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { Check, Refresh, Shield, Info, Cpu } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
+import ModelConfigModal from '../../components/ModelConfigModal.jsx';
 
 const PROVIDER_LABELS = {
   deepseek: 'DeepSeek',
@@ -38,6 +39,7 @@ export default function AdminModels() {
   const [setting, setSetting] = useState(null); // 正在设为默认的模型 key
   const [testing, setTesting] = useState(null); // 正在测试连接的模型 key
   const [testResult, setTestResult] = useState({}); // { [key]: {ok, message} }
+  const [editingModel, setEditingModel] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -92,7 +94,7 @@ export default function AdminModels() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">模型配置</h1>
-          <p className="mt-1 text-sm text-slate-500">选择默认 AI 模型，API Key 通过环境变量注入，不在系统内保存</p>
+          <p className="mt-1 text-sm text-slate-500">管理员可在加密保险箱中配置模型 API，也可继续使用服务器环境变量</p>
         </div>
       </div>
 
@@ -101,11 +103,9 @@ export default function AdminModels() {
         <div className="flex items-start gap-2">
           <Shield className="mt-0.5 h-4 w-4 flex-shrink-0" />
           <div>
-            <p className="font-medium">API Key 安全设计：不在系统中录入或存储 Key</p>
+            <p className="font-medium">API Key 安全设计：只写入，不回显</p>
             <p className="mt-1 leading-relaxed">
-              每个模型的 API Key 通过服务器环境变量 <code className="rounded bg-white/60 px-1 font-mono text-xs">LLM_API_KEY_&lt;KEY&gt;</code>{' '}
-              注入（如 <code className="rounded bg-white/60 px-1 font-mono text-xs">LLM_API_KEY_DEEPSEEK</code>），
-              不写入数据库、不返回给前端，降低数据库泄露或前端暴露带来的风险。仍需妥善保护服务器环境变量。
+              后台录入的 Key 使用 AES-256-GCM 加密，接口只返回配置状态；保存和删除均需重新验证管理员密码。服务器环境变量优先级更高且不能从后台覆盖或删除。
             </p>
             <p className="mt-1 leading-relaxed">
               后续新增模型：只需在服务端 <code className="rounded bg-white/60 px-1 font-mono text-xs">model-catalog.js</code>{' '}
@@ -210,6 +210,7 @@ export default function AdminModels() {
                     <Refresh className={`h-4 w-4 ${testing === m.key ? 'animate-spin' : ''}`} />
                     {testing === m.key ? '测试中…' : '测试连接'}
                   </button>
+                  <button onClick={() => setEditingModel(m)} className="btn-secondary text-xs">配置 API</button>
                   {!isDefault && (
                     <button
                       onClick={() => setDefault(m)}
@@ -224,7 +225,7 @@ export default function AdminModels() {
                   {!configured && (
                     <span className="flex items-center gap-1 text-xs text-slate-400">
                       <Info className="h-3.5 w-3.5" />
-                      需在服务器环境变量中配置 {m.env_key}
+                      点击“配置 API”写入加密保险箱，或使用服务器环境变量 {m.env_key}
                     </span>
                   )}
                 </div>
@@ -237,6 +238,7 @@ export default function AdminModels() {
           </div>
         </div>
       )}
+      {editingModel && <ModelConfigModal model={editingModel} onClose={() => setEditingModel(null)} onSaved={load} />}
     </div>
   );
 }

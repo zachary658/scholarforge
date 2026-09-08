@@ -14,6 +14,12 @@ function safeJson(value) {
   try { return JSON.stringify(redact(value)); } catch { return JSON.stringify('[unserializable]'); }
 }
 
+function auditRequestBody(req) {
+  const body = req.body && typeof req.body === 'object' ? { ...req.body } : req.body;
+  if (body && /(^|\/)secure-config\//.test(req.path)) body.value = '***redacted***';
+  return body;
+}
+
 function snapshotTable(table, id, idColumn = 'id') {
   if (!TABLES.has(table) || id === undefined || id === null || id === '') return null;
   const column = idColumn === 'key' ? 'key' : 'id';
@@ -102,7 +108,7 @@ export function adminAuditMiddleware(req, res, next) {
         status_code: res.statusCode,
         before_json: safeJson(before),
         after_json: safeJson(after || responseBody),
-        request_json: safeJson(req.body),
+        request_json: safeJson(auditRequestBody(req)),
         error_message: res.statusCode >= 400 ? String(responseBody?.error || '').slice(0, 1000) : '',
         created_at: Math.floor(Date.now() / 1000),
       });
