@@ -156,6 +156,9 @@ server {
 
 - 数据文件：`server/data/scholarforge.db`（SQLite，WAL 模式）+ `server/uploads/`（生成文档/图表/模板）
 - 数据库在线备份：在 `server/` 执行 `npm run backup`，使用 SQLite backup API 生成包含 WAL 数据的一致快照；不要在服务运行时只复制主 `.db` 文件
+- 生产环境默认每 24 小时自动执行同样的一致性备份，并保留 14 天；可通过 `BACKUP_*` 环境变量调整。Docker 备份位于独立 `sf-backups` 卷，正式部署应再将该卷同步到异机或对象存储，并定期演练恢复
+- 后台与客服的所有写操作记录在“管理后台 → 操作审计”，包含操作者、目标、成功/失败及脱敏后的前后值
+- 可配置 `ALERT_WEBHOOK_URL` 接收经过脱敏、去重且非阻塞的服务端错误告警；管理员/客服可在侧栏盾牌按钮启用 TOTP 双因素认证
 - 文件备份：同时备份 `server/uploads/`；生产环境建议由主机计划任务每天执行数据库与文件备份，并定期做恢复演练
 - 日志：`server/logs/`（按天滚动，注意磁盘空间）
 - 可选增强：`MINERU_API_URL`（PDF 高质量解析）、`CNKI_MCP_COMMAND`（知网文献，注意合规）

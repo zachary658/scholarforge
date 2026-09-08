@@ -6,6 +6,7 @@ import {
   Logout, Receipt, Layers, Menu, X, Wallet, BookOpen, Wechat, Tag, Lock, Book,
 } from '../../components/Icons.jsx';
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
+import TwoFactorModal from '../../components/TwoFactorModal.jsx';
 
 const nav = [
   { to: '/admin', label: '概览', icon: ChartBar, end: true },
@@ -26,6 +27,7 @@ const nav = [
   { to: '/admin/models', label: '模型配置', icon: Cpu, end: false },
   { to: '/admin/users', label: '用户管理', icon: Users, end: false },
   { to: '/admin/logs', label: '使用日志', icon: Activity, end: false },
+  { to: '/admin/operation-logs', label: '操作审计', icon: Shield, end: false },
   { to: '/admin/settings', label: '系统设置', icon: Sliders, end: false },
 ];
 
@@ -34,6 +36,7 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const [twoFactorOpen, setTwoFactorOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -104,6 +107,13 @@ export default function AdminLayout() {
             <div className="truncate text-[11px] text-slate-400">{user?.email}</div>
           </div>
           <button
+            onClick={() => setTwoFactorOpen(true)}
+            title="双因素认证"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
+          >
+            <Shield className="h-[18px] w-[18px]" />
+          </button>
+          <button
             onClick={() => setChangePwdOpen(true)}
             title="修改密码"
             className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-ink"
@@ -162,6 +172,7 @@ export default function AdminLayout() {
       </main>
 
       {changePwdOpen && <ChangePasswordModal onClose={() => setChangePwdOpen(false)} />}
+      {twoFactorOpen && <TwoFactorModal onClose={() => setTwoFactorOpen(false)} />}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrde
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
 import { getOperationalMetrics } from '../services/operational-metrics.js';
+import { listAdminAuditLogs } from '../services/admin-audit.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(__dirname, '..', '..', 'uploads', 'templates');
@@ -41,6 +42,10 @@ const router = Router();
 
 // 所有管理员路由都需要 admin 权限
 router.use(adminRequired);
+
+router.get('/operation-logs', (req, res) => {
+  res.json(listAdminAuditLogs(req.query));
+});
 
 // 模板上传配置
 const upload = multer({

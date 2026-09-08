@@ -50,6 +50,7 @@ const AdminModels = lazy(() => import('./pages/admin/AdminModels.jsx'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers.jsx'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings.jsx'));
 const AdminLogs = lazy(() => import('./pages/admin/AdminLogs.jsx'));
+const AdminOperationLogs = lazy(() => import('./pages/admin/AdminOperationLogs.jsx'));
 const AdminFinance = lazy(() => import('./pages/admin/AdminFinance.jsx'));
 const AdminGraduation = lazy(() => import('./pages/admin/AdminGraduation.jsx'));
 const AdminGraduationOrders = lazy(() => import('./pages/admin/AdminGraduationOrders.jsx'));
@@ -166,6 +167,7 @@ export default function App() {
         <Route path="users" element={<Suspense fallback={<PageFallback />}><AdminUsers /></Suspense>} />
         <Route path="settings" element={<Suspense fallback={<PageFallback />}><AdminSettings /></Suspense>} />
         <Route path="logs" element={<Suspense fallback={<PageFallback />}><AdminLogs /></Suspense>} />
+        <Route path="operation-logs" element={<Suspense fallback={<PageFallback />}><AdminOperationLogs /></Suspense>} />
         <Route path="finance" element={<Suspense fallback={<PageFallback />}><AdminFinance /></Suspense>} />
         <Route path="graduation" element={<Suspense fallback={<PageFallback />}><AdminGraduation /></Suspense>} />
         <Route path="graduation-orders" element={<Suspense fallback={<PageFallback />}><AdminGraduationOrders /></Suspense>} />

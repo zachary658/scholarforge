@@ -42,7 +42,7 @@ RUN mkdir -p /app/client
 COPY --from=client-build /app/client/dist /app/client/dist
 
 # 运行时可变目录（建议挂卷持久化）
-RUN mkdir -p /app/server/data /app/server/uploads /app/server/logs \
+RUN mkdir -p /app/server/data /app/server/uploads /app/server/logs /app/server/backups \
   && chown -R node:node /app/server /app/client
 
 EXPOSE 3001

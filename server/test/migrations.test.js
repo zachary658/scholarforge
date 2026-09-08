@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -80,4 +80,11 @@ test('008_operational_metrics：运行指标表已创建', () => {
 test('009_email_verification：用户验证字段与验证码表已创建', () => {
   assert.ok(columnsOf('users').includes('email_verified_at'));
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='email_verification_codes'").get());
+});
+
+test('010/011：操作审计与后台双因素认证结构已创建', () => {
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='admin_operation_logs'").get());
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='totp_recovery_codes'").get());
+  assert.ok(columnsOf('users').includes('totp_secret_enc'));
+  assert.ok(columnsOf('users').includes('totp_enabled_at'));
 });

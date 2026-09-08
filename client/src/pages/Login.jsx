@@ -9,7 +9,8 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [form, setForm] = useState({ email: '', password: '' });
+  const [form, setForm] = useState({ email: '', password: '', two_factor_code: '' });
+  const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -25,10 +26,13 @@ export default function Login() {
     if (!email) { setError('请输入邮箱'); return; }
     if (!EMAIL_RE.test(email)) { setError('邮箱格式不正确'); return; }
     if (!password) { setError('请输入密码'); return; }
+    if (needsTwoFactor && !/^(\d{6}|[A-Fa-f0-9]{10})$/.test(form.two_factor_code.replace(/[\s-]/g, ''))) {
+      setError('请输入 6 位动态验证码或 10 位恢复码'); return;
+    }
     setError('');
     setLoading(true);
     try {
-      const user = await login({ email, password });
+      const user = await login({ email, password, two_factor_code: form.two_factor_code.replace(/[\s-]/g, '') });
       // 仅允许站内相对路径（以 / 开头且非 //），防开放重定向到外站
       const rawRedirect = params.get('redirect');
       const redirect = rawRedirect && /^\/(?!\/)/.test(rawRedirect) ? rawRedirect : null;
@@ -42,6 +46,7 @@ export default function Login() {
         navigate('/app');
       }
     } catch (err) {
+      if (err.code === 'TWO_FACTOR_REQUIRED') setNeedsTwoFactor(true);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -70,6 +75,21 @@ export default function Login() {
                 disabled={loading}
               />
             </div>
+            {needsTwoFactor && (
+              <div>
+                <label className="label">双因素验证码</label>
+                <input
+                  className="input font-mono tracking-[0.2em]"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6 位动态码或恢复码"
+                  value={form.two_factor_code}
+                  onChange={update('two_factor_code')}
+                  disabled={loading}
+                  autoFocus
+                />
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-between">
                 <label className="label">密码</label>

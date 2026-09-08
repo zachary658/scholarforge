@@ -23,6 +23,7 @@ import { authRequired } from '../middleware.js';
 import { getSetting, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
 import { sendMail, buildEmailVerificationEmail, buildPasswordResetEmail } from '../services/mailer.js';
 import logger from '../logger.js';
+import { beginTotpEnrollment, confirmTotpEnrollment, disableTotp, verifyStaffSecondFactor } from '../services/totp.js';
 
 const router = Router();
 const verificationSecret = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
@@ -278,7 +279,7 @@ router.post('/email-verification/verify', authRequired, loginLimiter, (req, res)
 });
 
 router.post('/login', loginLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
+  const { email, password, two_factor_code } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: '请填写邮箱和密码' });
   const normalizedEmail = String(email).trim().toLowerCase();
   // 账号维度防爆破：锁定期内直接拒绝（即使密码正确也返回 429，并提示剩余等待时间）
@@ -298,9 +299,44 @@ router.post('/login', loginLimiter, async (req, res) => {
   await clearAccountFailures(normalizedEmail);
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被禁用' });
   if (user.status === 'deleted') return res.status(403).json({ error: '账号不存在' });
+  if ((user.is_admin || user.is_support) && user.totp_enabled_at && !verifyStaffSecondFactor(user, two_factor_code)) {
+    return res.status(401).json({
+      error: two_factor_code ? '动态验证码或恢复码不正确' : '请输入身份验证器中的 6 位动态验证码',
+      code: 'TWO_FACTOR_REQUIRED',
+      requires_2fa: true,
+    });
+  }
   const { accessToken, refreshToken } = await issueTokens(user);
   setRefreshCookie(res, refreshToken);
   res.json({ token: accessToken, accessToken, user: safeUser(user) });
+});
+
+router.post('/2fa/setup', authRequired, loginLimiter, async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user || !(await verifyPassword(req.body?.password || '', user.password_hash))) {
+    return res.status(400).json({ error: '当前密码不正确' });
+  }
+  res.json(beginTotpEnrollment(user));
+});
+
+router.post('/2fa/confirm', authRequired, loginLimiter, (req, res) => {
+  const recoveryCodes = confirmTotpEnrollment(req.user.id, req.body?.code);
+  if (!recoveryCodes) return res.status(400).json({ error: '动态验证码不正确，请确认手机时间已自动同步' });
+  incrementTokenVersion(req.user.id);
+  revokeAllRefreshTokens(req.user.id);
+  clearRefreshCookie(res);
+  res.json({ ok: true, recovery_codes: recoveryCodes, relogin_required: true });
+});
+
+router.post('/2fa/disable', authRequired, loginLimiter, async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user || !(await verifyPassword(req.body?.password || '', user.password_hash))) return res.status(400).json({ error: '当前密码不正确' });
+  if (!verifyStaffSecondFactor(user, req.body?.code)) return res.status(400).json({ error: '动态验证码或恢复码不正确' });
+  disableTotp(user.id);
+  incrementTokenVersion(user.id);
+  revokeAllRefreshTokens(user.id);
+  clearRefreshCookie(res);
+  res.json({ ok: true, relogin_required: true });
 });
 
 // 刷新 access token：用 refresh token 换新 access + 新 refresh（轮换）

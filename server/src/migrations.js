@@ -207,6 +207,33 @@ const OPERATIONAL_METRICS_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_operational_metrics_name ON operational_metrics(metric, bucket_hour DESC);
 `;
 
+const ADMIN_OPERATION_LOG_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS admin_operation_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    actor_email TEXT NOT NULL DEFAULT '',
+    actor_role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT '',
+    target_id TEXT NOT NULL DEFAULT '',
+    request_id TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    success INTEGER NOT NULL DEFAULT 0,
+    status_code INTEGER NOT NULL DEFAULT 0,
+    before_json TEXT,
+    after_json TEXT,
+    request_json TEXT,
+    error_message TEXT NOT NULL DEFAULT '',
+    prev_hash TEXT NOT NULL DEFAULT '',
+    entry_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_admin_operation_actor ON admin_operation_logs(actor_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_admin_operation_target ON admin_operation_logs(target_type, target_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_admin_operation_action ON admin_operation_logs(action, created_at DESC);
+`;
+
 // 守卫式加列：仅当列不存在时 ALTER，保证对旧库幂等
 function addColumnIfMissing(db, table, column, def) {
   const tableName = table.replaceAll('"', '');
@@ -290,6 +317,28 @@ const MIGRATIONS = [
         sent_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       )`);
+    },
+  },
+  {
+    version: '010_admin_operation_log',
+    name: '后台与客服操作审计日志',
+    up(db) { db.exec(ADMIN_OPERATION_LOG_SCHEMA); },
+  },
+  {
+    version: '011_staff_totp',
+    name: '管理员与客服 TOTP 双因素认证',
+    up(db) {
+      addColumnIfMissing(db, 'users', 'totp_secret_enc', 'TEXT');
+      addColumnIfMissing(db, 'users', 'totp_enabled_at', 'INTEGER');
+      db.exec(`CREATE TABLE IF NOT EXISTS totp_recovery_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        used_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(user_id, code_hash)
+      );
+      CREATE INDEX IF NOT EXISTS idx_totp_recovery_user ON totp_recovery_codes(user_id, used_at);`);
     },
   },
 ];

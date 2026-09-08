@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-writable_dirs="/app/server/data /app/server/uploads /app/server/logs"
+writable_dirs="/app/server/data /app/server/uploads /app/server/logs /app/server/backups"
 
 if [ "$(id -u)" = "0" ]; then
   # Named volumes keep ownership from older root-running images. Repair only the

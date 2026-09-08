@@ -1,4 +1,4 @@
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import { SignJWT, jwtVerify } from 'jose';
 import { now } from './utils.js';
 
@@ -42,7 +42,7 @@ const ACCESS_TOKEN_EXPIRES_IN = '15m';
 const REFRESH_TOKEN_EXPIRES_SECONDS = 7 * 24 * 3600; // 7 天
 const PASSWORD_RESET_EXPIRES_SECONDS = 30 * 60; // 30 分钟
 
-// 使用异步 bcrypt 避免阻塞事件循环（bcryptjs 同步实现较慢）
+// 使用原生 bcrypt 的异步接口，避免纯 JS 哈希阻塞事件循环。
 export async function hashPassword(password) {
   return bcrypt.hash(password, 10);
 }
@@ -106,7 +106,7 @@ export function verifyRefreshToken(token) {
   const tokenHash = hashToken(token);
   const row = db.prepare(
     `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at,
-            u.email, u.name, u.is_admin, u.status, u.token_version
+            u.email, u.name, u.is_admin, u.is_support, u.status, u.token_version
      FROM refresh_tokens rt
      JOIN users u ON u.id = rt.user_id
      WHERE rt.token_hash = ?`
@@ -120,6 +120,7 @@ export function verifyRefreshToken(token) {
     email: row.email,
     name: row.name,
     is_admin: !!row.is_admin,
+    is_support: !!row.is_support,
     token_version: row.token_version || 0,
     _rt_id: row.id,
   };
@@ -202,6 +203,7 @@ export function safeUser(user) {
     created_at: user.created_at,
     academic_integrity_agreed: !!user.academic_integrity_agreed_at,
     email_verified: !!user.email_verified_at || !!user.is_admin || !!user.is_support,
+    two_factor_enabled: !!user.totp_enabled_at,
   };
 }
 

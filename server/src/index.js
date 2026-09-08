@@ -38,6 +38,8 @@ import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
 import logger from './logger.js';
 import db from './db.js';
 import { recoverInterruptedChapterJobs } from './services/chapter-service.js';
+import { adminAuditMiddleware } from './services/admin-audit.js';
+import { startBackupScheduler } from './services/backup-scheduler.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -164,6 +166,10 @@ app.use(express.json({
   },
 }));
 
+// 后台和客服的全部写操作统一审计。放在具体路由之前，使新增接口也不会漏记；
+// 路由内的权限中间件随后写入 req.user，响应结束时记录实际操作者。
+app.use(['/api/admin', '/api/support'], adminAuditMiddleware);
+
 // 健康检查（不暴露服务名，防指纹识别）
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/health/live', (_req, res) => res.json({ ok: true }));
@@ -229,6 +235,8 @@ const server = app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   logger.info('server', `ScholarForge server running at http://localhost:${PORT}`);
 });
 
+const backupScheduler = startBackupScheduler();
+
 // 定时清理过期订单（每 5 分钟）
 const intervalOrders = setInterval(() => {
   try {
@@ -281,6 +289,10 @@ async function shutdown(signal) {
   clearInterval(intervalTasks);
   clearInterval(intervalDocs);
   clearInterval(intervalCleanup);
+  if (backupScheduler) {
+    clearTimeout(backupScheduler.initialTimer);
+    clearInterval(backupScheduler.interval);
+  }
   // 断开限流 Redis 连接（若配置了 REDIS_URL），避免连接句柄阻塞进程退出
   await closeRateLimitStore();
   server.close((err) => {

@@ -179,6 +179,9 @@ export const api = {
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (payload) => request('/auth/reset-password', { method: 'POST', body: payload, auth: false }),
   changePassword: (payload) => request('/auth/change-password', { method: 'POST', body: payload }),
+  setupTwoFactor: (password) => request('/auth/2fa/setup', { method: 'POST', body: { password } }),
+  confirmTwoFactor: (code) => request('/auth/2fa/confirm', { method: 'POST', body: { code } }),
+  disableTwoFactor: (payload) => request('/auth/2fa/disable', { method: 'POST', body: payload }),
   agreeAcademicIntegrity: () => request('/auth/academic-integrity', { method: 'POST', body: { agreed: true } }),
 
   // ===== public / 站点信息 =====
@@ -376,6 +379,7 @@ export const api = {
 
   // ===== admin: 日志 =====
   adminListLogs: (params) => request(`/admin/logs?${new URLSearchParams(params).toString()}`),
+  adminListOperationLogs: (params) => request(`/admin/operation-logs?${new URLSearchParams(params).toString()}`),
 
   // ===== admin: 财务 =====
   adminFinance: (params) => request(`/admin/finance?${new URLSearchParams(params).toString()}`),

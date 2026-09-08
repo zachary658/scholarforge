@@ -49,12 +49,19 @@ services:
       SMTP_URL: "${SMTP_URL:-}"
       MAIL_FROM: "${MAIL_FROM:-}"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:3001}"
+      ALERT_WEBHOOK_URL: "${ALERT_WEBHOOK_URL:-}"
+      TOTP_ENCRYPTION_KEY: "${TOTP_ENCRYPTION_KEY:-}"
+      BACKUP_ENABLED: "${BACKUP_ENABLED:-true}"
+      BACKUP_DIR: "/app/server/backups"
+      BACKUP_INTERVAL_HOURS: "${BACKUP_INTERVAL_HOURS:-24}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-14}"
     env_file:
       - .env
     volumes:
       - sf-data:/app/server/data
       - sf-uploads:/app/server/uploads
       - sf-logs:/app/server/logs
+      - sf-backups:/app/server/backups
     restart: unless-stopped
 
   # 可选研究引擎：`docker compose --profile research up --build` 启用。
@@ -104,4 +111,5 @@ volumes:
   sf-data:
   sf-uploads:
   sf-logs:
+  sf-backups:
   qdrant-data:
