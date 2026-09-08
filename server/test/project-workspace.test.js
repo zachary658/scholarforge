@@ -20,6 +20,7 @@ process.env.NODE_ENV = 'test';
 const db = (await import('../src/db.js')).default;
 const { createProject, updateProject, getProject, listProjects } = await import('../src/services/task-store.js');
 const { hashPassword } = await import('../src/auth.js');
+const { recoverInterruptedChapterJobs } = await import('../src/services/chapter-service.js');
 
 const DEADLINE = 1735689600; // 2025-01-01 00:00:00 UTC（Unix 秒）
 
@@ -132,4 +133,21 @@ test('getProject / listProjects：返回新字段', async () => {
   assert.equal(single.deadline, DEADLINE);
   assert.equal(single.current_stage, 'literature');
   assert.equal(single.completion_percent, 30);
+});
+
+test('服务重启后将遗留的生成中章节立即恢复为可重试状态', async () => {
+  const uid = await createTestUser(`proj-recover-${Date.now()}@example.com`);
+  const project = createProject({ userId: uid, title: '中断恢复测试论文' });
+  const chapters = [
+    { id: 'ch_1', chapter: '第一章', status: 'done', content: '已完成' },
+    { id: 'ch_2', chapter: '第二章', status: 'processing', content: '' },
+  ];
+  db.prepare('UPDATE projects SET chapters_json = ? WHERE id = ?').run(JSON.stringify(chapters), project.id);
+
+  assert.deepEqual(recoverInterruptedChapterJobs(), { projectsRecovered: 1, chaptersRecovered: 1 });
+  const recovered = JSON.parse(db.prepare('SELECT chapters_json FROM projects WHERE id = ?').get(project.id).chapters_json);
+  assert.equal(recovered[0].status, 'done');
+  assert.equal(recovered[1].status, 'failed');
+  assert.match(recovered[1].error, /重试/);
+  assert.deepEqual(recoverInterruptedChapterJobs(), { projectsRecovered: 0, chaptersRecovered: 0 }, '恢复操作应幂等');
 });

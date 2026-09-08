@@ -582,7 +582,7 @@ const settingsDefaults = {
   ai_input_cost_per_million: '1',
   ai_output_cost_per_million: '16',
   ai_profit_margin: '0.8',
-  // 完整论文分层项目套餐。纯利润率按“利润/成本”计算，服务端硬下限为 500%。
+  // 完整论文分层项目套餐。成本利润率按“利润/成本”计算，服务端硬下限为 500%。
   full_paper_price_undergraduate: '59',
   full_paper_price_master: '159',
   full_paper_price_doctorate: '499',

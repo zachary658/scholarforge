@@ -533,6 +533,32 @@ export async function searchMultiSource(query, opts = {}) {
   const variants = buildQueryVariants(query, opts.queryVariants || []);
   if (variants.length === 0) return { results: [], sources_used: [], errors: [], diagnostics: { variants: [] } };
 
+  // CI/本地离线冒烟专用。生产环境即使误配也绝不返回 fixture，避免测试数据进入真实论文。
+  if (process.env.SF_REFERENCE_FIXTURE_MODE === '1' && process.env.NODE_ENV !== 'production') {
+    const fixtures = [
+      ['Deep Residual Learning for Image Recognition', '10.1109/CVPR.2016.90', 'en'],
+      ['Attention Is All You Need', '10.48550/arXiv.1706.03762', 'en'],
+      ['BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding', '10.48550/arXiv.1810.04805', 'en'],
+      ['U-Net: Convolutional Networks for Biomedical Image Segmentation', '10.1007/978-3-319-24574-4_28', 'en'],
+      ['ImageNet Classification with Deep Convolutional Neural Networks', '10.1145/3065386', 'en'],
+      ['Generative Adversarial Nets', '10.48550/arXiv.1406.2661', 'en'],
+      ['Adam: A Method for Stochastic Optimization', '10.48550/arXiv.1412.6980', 'en'],
+      ['Dropout: A Simple Way to Prevent Neural Networks from Overfitting', '10.5555/2627435.2670313', 'en'],
+      ['Random Forests', '10.1023/A:1010933404324', 'en'],
+      ['Support-vector networks', '10.1007/BF00994018', 'en'],
+    ].slice(0, limit).map(([title, doi, language], index) => ({
+      title, doi, language, authors: 'Offline CI fixture', year: String(2015 + (index % 8)),
+      journal: 'Verified fixture dataset', source_db: 'OfflineFixture', source_url: `https://doi.org/${doi}`,
+      cited_by_count: 0, relevance_score: 100 - index,
+    }));
+    return {
+      results: fixtures,
+      sources_used: ['OfflineFixture'],
+      errors: [],
+      diagnostics: { variants: [variants[0]], fixture: true, candidates: fixtures.length, returned: fixtures.length, traceable: fixtures.length },
+    };
+  }
+
   const first = await searchSingleQuery(variants[0], opts);
   let combined = [...first.results];
   const sources = new Set(first.sources_used);

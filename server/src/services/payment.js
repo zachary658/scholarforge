@@ -14,6 +14,16 @@ import { AlipaySdk } from 'alipay-sdk';
 import { Wechatpay, Aes, Rsa } from 'wechatpay-axios-plugin';
 import { activatePaidServiceProject, ensureServiceProject, linkServiceOrder, resolvePromotion } from './service-project-service.js';
 
+function requireVerifiedEmailForPayment(userId) {
+  if (process.env.NODE_ENV !== 'production') return;
+  const account = db.prepare('SELECT email_verified_at,is_admin,is_support FROM users WHERE id=?').get(userId);
+  if (account && !account.email_verified_at && !account.is_admin && !account.is_support) {
+    const error = new Error('请先完成邮箱验证后再创建付费订单');
+    error.code = 'EMAIL_VERIFICATION_REQUIRED';
+    throw error;
+  }
+}
+
 // 生成订单号：SF + YYYYMMDD + 8位十六进制随机
 export function genOrderNo() {
   const rand = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -69,6 +79,7 @@ function resolveChannel(channel) {
 
 // 创建订单（课程 / 毕业作品，保留独立流程）
 export function createOrder({ userId, type, target, channel = null, courseRequirements = null }) {
+  requireVerifiedEmailForPayment(userId);
   const cfg = getPaymentConfig();
   const useChannel = resolveChannel(channel);
 
@@ -162,6 +173,7 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
 
 // 创建固定价格功能订单（现金直付；支持参考材料：订单金额 = 功能价 + 材料解读 token 费）
 export function createFeatureOrder({ userId, itemType, quantity = 1, paymentMethod = null, params = null, materialIdsParam = null }) {
+  requireVerifiedEmailForPayment(userId);
   const feature = getFeaturePrice(itemType);
   if (!feature || !feature.is_active) throw new Error('功能不存在或已下架');
   if (feature.is_unlimited) throw new Error('该功能免费，无需下单');
@@ -285,6 +297,7 @@ export function adminQuoteOrder(orderId, quotedPrice, quoteNote = '') {
 export function initiateOrderPayment(orderNo, paymentMethod) {
   const order = getOrder(orderNo);
   if (!order) throw new Error('订单不存在');
+  requireVerifiedEmailForPayment(order.user_id);
   if (order.type !== 'feature') throw new Error('仅功能订单支持支付');
   if (order.status !== 'quoted') throw new Error(`订单状态 ${order.status}，不能支付`);
   if (order.quoted_price == null || order.quoted_price <= 0) throw new Error('订单尚未报价');

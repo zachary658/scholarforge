@@ -19,7 +19,7 @@ const uid = db.prepare('INSERT INTO users (email,password_hash,name) VALUES (?,?
 const refs = Array.from({ length: 10 }, (_, index) => index + 1).map(i => attestReference({ title: `Fixture reference ${i}`, doi: `10.1000/fixture-${i}`, source_db: 'CrossRef', year: 2024, language: i <= 3 ? 'en' : 'zh' }));
 const outline = [{ chapter: '第一章 绪论', sections: [] }, { chapter: '第二章 结论', sections: [] }];
 
-test('完整论文按学历分层定价且预计利润/成本不低于500%', () => {
+test('完整论文按学历分层定价且预计成本利润率不低于500%', () => {
   const undergraduate = getFullPaperPricing({ degree: '本科' });
   const master = getFullPaperPricing({ degree: '硕士' });
   const doctorate = getFullPaperPricing({ degree: '博士' });

@@ -5,7 +5,7 @@ import { copyText } from '../lib/utils.js';
 import PayModal from '../components/PayModal.jsx';
 import { toast } from '../components/Toast.jsx';
 import {
-  BookOpen, ChevronLeft, Receipt, Wechat, Refresh, Check, Cart, Info, Copy, X,
+  BookOpen, ChevronLeft, Receipt, Refresh, Check, Cart, Info, Copy, X,
 } from '../components/Icons.jsx';
 
 const PAPER_TYPES = ['毕业论文', '课程论文', '期刊论文', '其他'];
@@ -187,7 +187,7 @@ export default function CourseQuote() {
   const onPaid = ({ order }) => {
     setPayState(null);
     setSuccess({ order, requirements, quote });
-    toast.success('支付成功，请添加客服微信对接');
+    toast.success('支付成功，服务项目已进入工作区');
   };
 
   if (loading) {
@@ -198,7 +198,7 @@ export default function CourseQuote() {
     );
   }
 
-  // ===== 支付成功：客服微信对接 =====
+  // ===== 支付成功：进入统一服务工作区 =====
   if (success) {
     const serviceWechat = site?.service_wechat || '';
     const serviceWechatQrcode = site?.service_wechat_qrcode || '';
@@ -208,14 +208,14 @@ export default function CourseQuote() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-green-500">
             <Check className="h-7 w-7" />
           </div>
-          <h1 className="mt-4 text-xl font-bold text-ink">支付成功，请添加客服微信对接</h1>
-          <p className="mt-2 text-sm text-slate-500">客服将根据你的需求安排导师，请按以下步骤完成对接</p>
+          <h1 className="mt-4 text-xl font-bold text-ink">支付成功，服务项目已创建</h1>
+          <p className="mt-2 text-sm text-slate-500">后续进度、资料补充、修改申请和成果交付均在服务工作区完成</p>
 
           {/* 三步引导 */}
           <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <Step index="1" title="复制订单号" desc="点击下方复制订单号" />
-            <Step index="2" title="添加客服微信" desc="扫码或搜索微信号添加" />
-            <Step index="3" title="备注订单号" desc="发送订单号与需求给客服" />
+            <Step index="1" title="进入工作区" desc="查看项目状态与预计时间" />
+            <Step index="2" title="按需补充" desc="直接上传材料或填写说明" />
+            <Step index="3" title="接收并验收" desc="下载成果或提交修改意见" />
           </div>
 
           {/* 订单号复制 */}
@@ -306,7 +306,7 @@ export default function CourseQuote() {
             )}
             <h1 className="text-xl font-bold text-ink">{course.title}</h1>
           </div>
-          <p className="mt-1 text-sm text-slate-500">填写论文需求，系统将根据需求实时计算报价；支付后添加客服微信对接导师</p>
+          <p className="mt-1 text-sm text-slate-500">填写论文需求，系统实时计算报价；支付后自动创建可追踪的服务项目</p>
         </div>
       </div>
 
@@ -482,7 +482,7 @@ export default function CourseQuote() {
 
             <div className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
               <Info className="h-4 w-4 shrink-0 text-slate-400" />
-              <span>支付完成后将展示客服微信二维码，添加后备注订单号即可对接导师。</span>
+              <span>支付完成后自动创建服务项目；进度、资料补充、修改申请和成果均在服务工作区统一处理。</span>
             </div>
           </div>
         </div>

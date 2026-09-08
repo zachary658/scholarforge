@@ -137,9 +137,9 @@ export default function GraduationProjects() {
           <Wechat className="h-5 w-5" />
         </div>
         <div className="text-sm text-slate-600">
-          <div className="font-semibold text-ink">定制流程：选择分类 → 浏览项目 → 联系客服 → 确认需求 → 支付 → 交付</div>
+          <div className="font-semibold text-ink">定制流程：选择分类 → 提交需求 → 平台评估报价 → 支付 → 工作区交付</div>
           <div className="mt-0.5">
-            选择感兴趣的项目后，可联系客服获取详细报价与定制方案：
+            提交后可在服务工作区查看评估和报价进度；微信仅作为补充沟通方式：
             {serviceWechat ? (
               <span className="font-semibold text-accent"> {serviceWechat}</span>
             ) : (

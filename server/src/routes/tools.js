@@ -699,9 +699,6 @@ router.post('/writing', authRequired, async (req, res) => {
       autoProject: result.autoProject,
       autoProjectTitle: result.autoProjectTitle,
       retention_days: result.retention_days,
-      autoProject: result.autoProject,
-      autoProjectTitle: result.autoProjectTitle,
-      retention_days: result.retention_days,
       orderNo: result.orderNo,
     });
   } catch (err) {

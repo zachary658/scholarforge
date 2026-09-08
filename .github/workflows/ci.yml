@@ -9,6 +9,9 @@ jobs:
   server-test:
     name: Server (install / audit / test)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     defaults:
       run:
         working-directory: server
@@ -25,6 +28,7 @@ jobs:
       # 新出现的未列出的高危漏洞会直接使 CI 失败。
       - name: npm audit (allowlist gate)
         run: node ../scripts/audit-allowlist.mjs
+      - run: npm run lint
       - run: npm test
       - name: End-to-end smoke test
         env:
@@ -32,6 +36,7 @@ jobs:
           JWT_SECRET: ci-smoke-jwt-secret-at-least-32-characters
           ADMIN_PASSWORD: Admin123456
           LOG_TO_FILE: "false"
+          SF_REFERENCE_FIXTURE_MODE: "1"
         run: |
           npm start > /tmp/scholarforge-smoke.log 2>&1 &
           server_pid=$!
@@ -46,7 +51,7 @@ jobs:
             fi
             sleep 1
           done
-          node scripts/smoke.mjs
+          npm run smoke:offline
       # 生成质量门禁：Promptfoo 在预置 fixture 上验证断言逻辑（mock 模式，离线确定性）。
       # 覆盖引用真实性 / 证据可溯源 / 数据不编造 / 大纲一致性 / 格式合规五个维度。
       - name: Promptfoo quality gate (mock)
@@ -55,6 +60,7 @@ jobs:
   client-build:
     name: Client (install / build)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: client
@@ -66,6 +72,9 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
       - run: npm ci
+      - name: npm audit (allowlist gate)
+        run: node ../scripts/audit-allowlist.mjs
+      - run: npm run lint
       - run: npm test
       - run: npm run build
 
@@ -85,11 +94,13 @@ jobs:
             research-engine/requirements.txt
             research-engine/requirements-full.txt
       - name: Install runtime and quality tools
-        run: python -m pip install -r requirements.txt ruff pip-audit
+        run: python -m pip install -r requirements.txt ruff pip-audit pytest
       - name: Check for syntax and undefined-name errors
         run: ruff check --select E9,F63,F7,F82 .
       - name: Compile Python sources
         run: python -m compileall -q .
+      - name: Run research engine unit tests
+        run: python -m pytest -q
       - name: Audit Python runtime dependencies
         run: pip-audit -r requirements.txt
       - name: Resolve full-mode dependency tree

@@ -36,11 +36,19 @@ import { cleanupStaleData } from './db.js';
 import { getPaymentConfig, getAvailableChannels } from './config-store.js';
 import { makeLimiter, closeRateLimitStore } from './middleware/rateLimit.js';
 import logger from './logger.js';
+import db from './db.js';
+import { recoverInterruptedChapterJobs } from './services/chapter-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // 初始化管理员账号（异步：bcrypt hash 不阻塞事件循环）
 await ensureAdminAccount();
+
+// 上次进程崩溃/重启遗留的章节任务无法继续执行，启动时立即恢复为可重试状态。
+const recoveredChapterJobs = recoverInterruptedChapterJobs();
+if (recoveredChapterJobs.chaptersRecovered > 0) {
+  logger.warn('recovery', `recovered ${recoveredChapterJobs.chaptersRecovered} interrupted chapters in ${recoveredChapterJobs.projectsRecovered} projects`);
+}
 
 // 生产环境安全自检：默认支付模式为 mock 且未配置任何真实通道时拒绝启动。
 // 防止"上线即免费支付"的配置事故（NODE_ENV=production 但 payment_mode 仍是默认 mock，用户可零成本绕过支付）
@@ -158,6 +166,14 @@ app.use(express.json({
 
 // 健康检查（不暴露服务名，防指纹识别）
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/health/live', (_req, res) => res.json({ ok: true }));
+app.get('/api/health/ready', (_req, res) => {
+  const checks = { database: false, uploadsWritable: false, emailConfigured: process.env.NODE_ENV !== 'production' || Boolean(process.env.SMTP_URL) };
+  try { checks.database = db.prepare('SELECT 1 AS ok').get()?.ok === 1; } catch {}
+  try { fs.accessSync(join(__dirname, '..', 'uploads'), fs.constants.W_OK); checks.uploadsWritable = true; } catch {}
+  const ok = Object.values(checks).every(Boolean);
+  res.status(ok ? 200 : 503).json({ ok, checks });
+});
 
 // 公开静态资源：客服微信二维码等前台需要展示的图片（仅公开 public 子目录，不含文档/模板等敏感文件）
 const publicUploadsDir = join(__dirname, '..', 'uploads', 'public');

@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -67,4 +67,17 @@ test('007_service_projects_and_promotion：人工服务履约与推广归因表�
   for (const column of ['project_no', 'service_type', 'request_snapshot_json', 'promotion_code_snapshot', 'promotion_locked_at', 'version']) {
     assert.ok(columnsOf('service_projects').includes(column), `service_projects 缺少列 ${column}`);
   }
+});
+
+test('008_operational_metrics：运行指标表已创建', () => {
+  const found = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='operational_metrics'").get();
+  assert.ok(found);
+  for (const column of ['bucket_hour', 'metric', 'dimension', 'count', 'total_value']) {
+    assert.ok(columnsOf('operational_metrics').includes(column));
+  }
+});
+
+test('009_email_verification：用户验证字段与验证码表已创建', () => {
+  assert.ok(columnsOf('users').includes('email_verified_at'));
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='email_verification_codes'").get());
 });

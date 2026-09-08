@@ -44,7 +44,7 @@ router.post('/:id/literature/confirm', authRequired, async (req, res) => {
     const wf = await confirmLiterature(parseInt(req.params.id, 10), req.user.id, references);
     res.json({ ok: true, workflow: wf });
   } catch (err) {
-    res.status(err.code === 'LITERATURE_INSUFFICIENT' ? 422 : 400).json({ error: err.message, code: err.code });
+    res.status(err.code === 'LITERATURE_INSUFFICIENT' ? 422 : 400).json({ error: err.message, code: err.code, details: err.details });
   }
 });
 

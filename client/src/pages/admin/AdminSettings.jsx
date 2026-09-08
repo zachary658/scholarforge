@@ -513,7 +513,7 @@ export default function AdminSettings() {
             <div>
               <div className="text-sm font-medium text-ink">完整论文分层项目套餐</div>
               <p className="mt-1 text-xs text-slate-400">
-                一个项目只支付一次。最终售价取“套餐基础价”和“预计总成本 ×（1 + 加价率）”中的较高值；加价率服务端强制不低于 5，即利润/成本不低于 500%。
+                一个项目只支付一次。最终售价取“套餐基础价”和“预计总成本 ×（1 + 成本利润倍数）”中的较高值；倍数服务端强制不低于 5，即成本利润率不低于 500%。
               </p>
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -547,7 +547,7 @@ export default function AdminSettings() {
               ))}
             </div>
             <div>
-              <label className="label">最低利润/成本倍数</label>
+              <label className="label">最低成本利润倍数</label>
               <input
                 type="number"
                 step="0.1"
@@ -557,7 +557,7 @@ export default function AdminSettings() {
                 value={settings.full_paper_min_profit_markup}
                 onChange={(e) => update('full_paper_min_profit_markup', e.target.value)}
               />
-              <p className="mt-1.5 text-xs text-slate-400">5 = 纯利润为成本的 500%，对应售价至少为总成本的 6 倍。</p>
+              <p className="mt-1.5 text-xs text-slate-400">5 = 成本利润率 500%，对应售价至少为预计总成本的 6 倍；该指标不是销售净利率。</p>
             </div>
           </div>
         </div>

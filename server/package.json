@@ -9,6 +9,10 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "test": "node --test",
+    "lint": "eslint src test scripts",
+    "smoke:offline": "cross-env SF_REFERENCE_FIXTURE_MODE=1 node scripts/smoke.mjs",
+    "smoke:live": "node scripts/smoke.mjs",
+    "backup": "node scripts/backup.mjs",
     "eval": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
     "eval:mock": "cross-env SF_PROMPTFOO_MOCK=1 promptfoo eval -c promptfooconfig.yaml --no-cache --no-write",
     "eval:live": "promptfoo eval -c promptfooconfig.yaml --no-cache --no-write"
@@ -48,6 +52,8 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
     "promptfoo": "0.100.6"
   },
   "overrides": {

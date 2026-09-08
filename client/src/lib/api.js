@@ -174,6 +174,8 @@ export const api = {
     clearTokens();
   },
   me: () => request('/auth/me'),
+  sendEmailVerification: () => request('/auth/email-verification/send', { method: 'POST' }),
+  verifyEmail: (code) => request('/auth/email-verification/verify', { method: 'POST', body: { code } }),
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (payload) => request('/auth/reset-password', { method: 'POST', body: payload, auth: false }),
   changePassword: (payload) => request('/auth/change-password', { method: 'POST', body: payload }),
@@ -283,6 +285,7 @@ export const api = {
   staffUpdateServiceProject: (scope, id, payload) => request(`/${scope}/service-projects/${id}`, { method: 'PUT', body: payload }),
   staffUploadDeliverable: (scope, id, file) => upload(`/${scope}/service-projects/${id}/attachments`, file),
   adminPromotion: () => request('/admin/promotion'),
+  adminOperationalMetrics: (hours = 24) => request(`/admin/operational-metrics?hours=${hours}`),
   adminCreatePromotionPartner: (payload) => request('/admin/promotion/partners', { method: 'POST', body: payload }),
   adminCreatePromotionCode: (payload) => request('/admin/promotion/codes', { method: 'POST', body: payload }),
   adminSetPromotionCode: (id, is_active) => request(`/admin/promotion/codes/${id}`, { method: 'PUT', body: { is_active } }),

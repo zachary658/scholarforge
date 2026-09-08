@@ -18,7 +18,7 @@ import { resolveWritingReferences } from './reference-verification.js';
 import { hasReferenceProof } from './reference-proof.js';
 import { runAI } from '../ai-service.js';
 import { getRoleModel } from './orchestrator.js';
-import { supplementVerifiedReferences } from './reference-policy.js';
+import { isForeignReference, supplementVerifiedReferences } from './reference-policy.js';
 import { parseReviewVerdict } from './review-chain.js';
 
 export const WORKFLOW_STATES = [
@@ -120,13 +120,15 @@ export async function confirmLiterature(projectId, userId, references) {
   if (p.workflow_mode !== 'full' || p.workflow_state !== 'researching') throw new Error('请在文献确认阶段操作');
   const candidate = Array.isArray(references) ? references : (sources.references || []);
   const verified = await resolveWritingReferences(candidate);
-  if (verified.length < 3) {
-    const e = new Error(`真实可溯源文献不足（需≥3篇，当前 ${verified.length} 篇）。请先完成检索，不得补造参考文献。`);
+  const supplement = await supplementVerifiedReferences({ ...p, sources: { ...sources, references: verified } });
+  if (!supplement.complete) {
+    const e = new Error(`真实文献尚未达到生成标准（需≥10篇且至少3篇外文；当前 ${supplement.total} 篇、外文 ${supplement.foreign} 篇）。请重试检索，不得补造参考文献。`);
     e.code = 'LITERATURE_INSUFFICIENT';
+    e.details = { total: supplement.total, foreign: supplement.foreign, errors: supplement.errors };
     throw e;
   }
   if (getProject(projectId, userId)?.workflow_state !== 'researching') throw new Error('流程已变更，请刷新后重试');
-  sources.references = verified;
+  sources.references = supplement.references;
   saveProjectSources(projectId, userId, sources);
   return setState(projectId, userId, 'outline_review');
 }
@@ -173,7 +175,12 @@ export function confirmOutlineValidated(projectId, userId) {
   const p = getProject(projectId, userId);
   if (!p) throw new Error('工作区不存在');
   const v = validateThesisOutline(p.outline || [], { fix: false });
-  if (p.workflow_mode === 'full' && ((p.sources?.references || []).length < 3 || !p.sources.references.every(hasReferenceProof))) throw new Error('请先确认可回查的真实文献');
+  const confirmedReferences = p.sources?.references || [];
+  if (p.workflow_mode === 'full' && (confirmedReferences.length < 10
+    || confirmedReferences.filter(isForeignReference).length < 3
+    || !confirmedReferences.every(hasReferenceProof))) {
+    throw new Error('请先确认不少于10篇、其中至少3篇外文的可回查真实文献');
+  }
   if (!v.valid) {
     const e = new Error('大纲未通过论文结构校验，无法进入正文生成。');
     e.code = 'OUTLINE_INVALID';

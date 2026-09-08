@@ -9,7 +9,7 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-test-'));
 process.env.DB_PATH = path.join(tmpDir, 'test.db');
 
-const { parseArxivAtom, rankAcademicResults, scoreAcademicResult, buildQueryVariants, titlesLikelySame } = await import('../src/services/multi-source-search.js');
+const { parseArxivAtom, rankAcademicResults, scoreAcademicResult, buildQueryVariants, titlesLikelySame, searchMultiSource } = await import('../src/services/multi-source-search.js');
 const { htmlTableToRows, tablesFromMinerUData } = await import('../src/services/paper-distillation.js');
 
 const ARXIV_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -75,6 +75,15 @@ test('预印本与正式版标题的轻微标点差异可识别为同一论文',
     'Medical image segmentation using deep learning — a survey',
   ), true);
   assert.equal(titlesLikelySame('Medical Image Segmentation', 'Rural E-commerce Logistics'), false);
+});
+
+test('离线冒烟检索只在非生产环境返回可溯源 fixture', async (t) => {
+  t.after(() => { delete process.env.SF_REFERENCE_FIXTURE_MODE; });
+  process.env.SF_REFERENCE_FIXTURE_MODE = '1';
+  const result = await searchMultiSource('任意测试主题', { limit: 10 });
+  assert.equal(result.results.length, 10);
+  assert.ok(result.results.every((item) => item.doi && item.source_url));
+  assert.equal(result.diagnostics.fixture, true);
 });
 
 test('htmlTableToRows：HTML 表格解析为二维数组', () => {

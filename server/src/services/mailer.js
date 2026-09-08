@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const mailLogDir = join(__dirname, '..', 'uploads', 'mail_log');
+const mailLogDir = join(__dirname, '..', '..', 'uploads', 'mail_log');
 
 const SMTP_URL = process.env.SMTP_URL || '';
 const MAIL_FROM = process.env.MAIL_FROM || 'no-reply@scholarforge.com';
@@ -74,5 +74,12 @@ export function buildPasswordResetEmail(to, resetToken) {
   const subject = '【ScholarForge】密码重置';
   const text = `您正在重置 ScholarForge 账号密码。\n\n请点击以下链接重置密码（30 分钟内有效，一次性使用）：\n${resetUrl}\n\n如非本人操作，请忽略此邮件，您的账号安全不受影响。`;
   const html = `<p>您正在重置 ScholarForge 账号密码。</p><p>请点击以下链接重置密码（30 分钟内有效，一次性使用）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件，您的账号安全不受影响。</p>`;
+  return { subject, text, html };
+}
+
+export function buildEmailVerificationEmail(code) {
+  const subject = '【ScholarForge】验证您的邮箱';
+  const text = `您的邮箱验证码是：${code}\n\n验证码 15 分钟内有效。若非本人操作，请忽略本邮件。`;
+  const html = `<p>您的邮箱验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>验证码 15 分钟内有效。若非本人操作，请忽略本邮件。</p>`;
   return { subject, text, html };
 }

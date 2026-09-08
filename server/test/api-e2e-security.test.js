@@ -11,7 +11,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,7 @@ const PORT = 4623;
 const BASE = `http://127.0.0.1:${PORT}`;
 const serverDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DB_PATH = join(mkdtempSync(join(tmpdir(), 'sf-api-')), 'test.db');
+const MAIL_LOG_DIR = join(serverDir, 'uploads', 'mail_log');
 
 let child = null;
 
@@ -107,6 +108,16 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
 
   const tokenA = await registerUser(emailA);
   const tokenB = await registerUser(emailB);
+
+  // 新账号必须通过真实可收件邮箱验证；验证码只以 HMAC 存库，测试从开发邮件沙箱读取收件内容。
+  const mailFile = readdirSync(MAIL_LOG_DIR).find((name) => name.endsWith(`_${emailA}.txt`));
+  assert.ok(mailFile, '注册后应发送邮箱验证码');
+  const verificationCode = readFileSync(join(MAIL_LOG_DIR, mailFile), 'utf8').match(/邮箱验证码是：(\d{6})/)?.[1];
+  assert.ok(verificationCode, '验证邮件应包含6位验证码');
+  r = await api('/api/auth/email-verification/verify', { method: 'POST', token: tokenA, body: { code: verificationCode } });
+  assert.equal(r.status, 200, '正确邮箱验证码应通过');
+  r = await api('/api/auth/me', { token: tokenA });
+  assert.equal((await r.json()).user.email_verified, true, '验证状态应持久化到用户资料');
 
   r = await api('/api/auth/register', {
     method: 'POST',

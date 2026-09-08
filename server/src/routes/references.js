@@ -10,6 +10,7 @@ import { searchMultiSource } from '../services/multi-source-search.js';
 import { isZoteroConfigured, searchByIdentifier, importBibliography } from '../services/zotero-client.js';
 import { classifyReferenceSearch, shouldCacheReferenceSearch } from '../services/research-quality.js';
 import { attestReference } from '../services/reference-proof.js';
+import { recordOperationalMetric } from '../services/operational-metrics.js';
 
 const router = Router();
 
@@ -38,6 +39,7 @@ function isRefSearchRateLimited(userId) {
 
 // 文献检索（OpenAlex / Semantic Scholar / CrossRef / arXiv / 可选 CNKI）
 router.get('/search', authRequired, async (req, res) => {
+  const startedAt = Date.now();
   const q = (req.query.q || '').toString().trim();
   // 无查询参数时不调用 API，直接返回空数组
   if (!q) {
@@ -90,6 +92,9 @@ router.get('/search', authRequired, async (req, res) => {
       diagnostics: { ...(search.diagnostics || {}), source_verified_count: results.length },
       note: '结果来自 OpenAlex、CrossRef、Semantic Scholar、arXiv 等多个公开学术数据库，并按主题相关度、可溯源性与学术影响力综合排序',
     };
+    recordOperationalMetric('reference_search', health, Date.now() - startedAt);
+    for (const source of sources_used) recordOperationalMetric('reference_source_success', source);
+    for (const warning of warnings) recordOperationalMetric('reference_source_error', String(warning).split(':')[0]);
     // 故障与部分覆盖结果不进入 24 小时缓存，避免外部来源恢复后用户仍看到旧状态。
     if (shouldCacheReferenceSearch(health)) {
       searchCache.set(cacheKey, { data: payload, at: Date.now() });
@@ -113,6 +118,7 @@ router.get('/search', authRequired, async (req, res) => {
     });
     return res.json(payload);
   } catch (err) {
+    recordOperationalMetric('reference_search', 'unavailable', Date.now() - startedAt);
     logger.error('references', `多源文献检索失败: ${err && err.message ? err.message : String(err)}`);
     return res.status(502).json({
       error: '无法连接学术文献检索服务，请稍后重试',

@@ -57,6 +57,7 @@ const AdminPatentOrders = lazy(() => import('./pages/admin/AdminPatentOrders.jsx
 const AdminPublicationOrders = lazy(() => import('./pages/admin/AdminPublicationOrders.jsx'));
 const AdminServiceProjects = lazy(() => import('./pages/admin/AdminServiceProjects.jsx'));
 const AdminPromotion = lazy(() => import('./pages/admin/AdminPromotion.jsx'));
+const AdminOperations = lazy(() => import('./pages/admin/AdminOperations.jsx'));
 
 const SupportLayout = lazy(() => import('./pages/support/SupportLayout.jsx'));
 const SupportDashboard = lazy(() => import('./pages/support/SupportDashboard.jsx'));
@@ -172,6 +173,7 @@ export default function App() {
         <Route path="publication-orders" element={<Suspense fallback={<PageFallback />}><AdminPublicationOrders /></Suspense>} />
         <Route path="service-projects" element={<Suspense fallback={<PageFallback />}><AdminServiceProjects /></Suspense>} />
         <Route path="promotion" element={<Suspense fallback={<PageFallback />}><AdminPromotion /></Suspense>} />
+        <Route path="operations" element={<Suspense fallback={<PageFallback />}><AdminOperations /></Suspense>} />
       </Route>
       <Route
         path="/support"

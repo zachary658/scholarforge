@@ -194,6 +194,19 @@ const SERVICE_PROJECTS_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_promotion_codes_partner ON promotion_codes(partner_id, is_active);
 `;
 
+const OPERATIONAL_METRICS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS operational_metrics (
+    bucket_hour INTEGER NOT NULL,
+    metric TEXT NOT NULL,
+    dimension TEXT NOT NULL DEFAULT '',
+    count INTEGER NOT NULL DEFAULT 0,
+    total_value REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY(bucket_hour, metric, dimension)
+  );
+  CREATE INDEX IF NOT EXISTS idx_operational_metrics_name ON operational_metrics(metric, bucket_hour DESC);
+`;
+
 // 守卫式加列：仅当列不存在时 ALTER，保证对旧库幂等
 function addColumnIfMissing(db, table, column, def) {
   const tableName = table.replaceAll('"', '');
@@ -257,6 +270,27 @@ const MIGRATIONS = [
     version: '007_service_projects_and_promotion',
     name: '人工服务项目、推广归因与站内通知',
     up(db) { db.exec(SERVICE_PROJECTS_SCHEMA); },
+  },
+  {
+    version: '008_operational_metrics',
+    name: '生产运行指标聚合',
+    up(db) { db.exec(OPERATIONAL_METRICS_SCHEMA); },
+  },
+  {
+    version: '009_email_verification',
+    name: '邮箱真实性验证',
+    up(db) {
+      const added = addColumnIfMissing(db, 'users', 'email_verified_at', 'INTEGER');
+      if (added) db.prepare('UPDATE users SET email_verified_at=COALESCE(email_verified_at, created_at)').run();
+      db.exec(`CREATE TABLE IF NOT EXISTS email_verification_codes (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        sent_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )`);
+    },
   },
 ];
 

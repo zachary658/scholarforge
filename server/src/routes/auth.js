@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import db from '../db.js';
-import { makeLimiter } from '../middleware/rateLimit.js';
+import { executeRateLimitRedisCommand, makeLimiter } from '../middleware/rateLimit.js';
 import {
   hashPassword,
   verifyPassword,
@@ -20,10 +21,25 @@ import {
 } from '../auth.js';
 import { authRequired } from '../middleware.js';
 import { getSetting, getSignupGuardConfig, isDisposableEmail } from '../config-store.js';
-import { sendMail, buildPasswordResetEmail } from '../services/mailer.js';
+import { sendMail, buildEmailVerificationEmail, buildPasswordResetEmail } from '../services/mailer.js';
 import logger from '../logger.js';
 
 const router = Router();
+const verificationSecret = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const verificationHash = (userId, code) => crypto.createHmac('sha256', verificationSecret).update(`${userId}:${code}`).digest('hex');
+
+async function sendVerificationCode(user) {
+  const code = String(crypto.randomInt(100000, 1000000));
+  const timestamp = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `INSERT INTO email_verification_codes (user_id,code_hash,expires_at,sent_at)
+     VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+       code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0,sent_at=excluded.sent_at`
+  ).run(user.id, verificationHash(user.id, code), timestamp + 15 * 60, timestamp);
+  const mail = buildEmailVerificationEmail(code);
+  const result = await sendMail({ to: user.email, ...mail });
+  return result.ok;
+}
 
 // 登录速率限制：每个 IP 15 分钟最多 10 次尝试，防暴力破解
 // 通过 makeLimiter 创建：配置 REDIS_URL 时自动使用集中式 Redis 存储（多实例共享计数）
@@ -59,15 +75,24 @@ const changePasswordLimiter = makeLimiter({
 });
 
 // ===== 登录账号维度防爆破（与 IP 限流互补）=====
-// 内存 Map 按归一化账号（邮箱小写）记录连续失败次数，≥5 次锁定该账号 15 分钟；
-// 锁定期内即使密码正确也返回 429，登录成功清零计数，锁过期自动清除（单实例部署下的内存方案）。
+// 按归一化账号（邮箱小写）记录连续失败次数，≥5 次锁定该账号 15 分钟；
+// 配置 REDIS_URL 时跨实例共享，未配置时回退内存 Map。锁定期内即使密码正确也返回 429。
 const ACCOUNT_LOCK_THRESHOLD = 5;      // 连续失败阈值
 const ACCOUNT_LOCK_SECONDS = 15 * 60;  // 锁定时长：15 分钟
 const ACCOUNT_FAIL_MAP_LIMIT = 10000;  // 失败记录条数上限（防恶意构造大量账号撑爆内存）
 const accountFailures = new Map();     // 归一化账号 -> { fails, lockedUntil }
 
 // 查询账号剩余锁定期（秒）；锁已过期时自动清除记录，未锁定返回 0
-function accountLockRemaining(key) {
+async function accountLockRemaining(key) {
+  if (process.env.REDIS_URL) {
+    const redisKey = `sf:auth:fail:${crypto.createHash('sha256').update(key).digest('hex')}`;
+    const [count, ttl] = await Promise.all([
+      executeRateLimitRedisCommand('GET', redisKey),
+      executeRateLimitRedisCommand('TTL', redisKey),
+    ]);
+    if (count !== null && Number(count) >= ACCOUNT_LOCK_THRESHOLD) return Math.max(0, Number(ttl) || 0);
+    if (count !== null) return 0;
+  }
   const rec = accountFailures.get(key);
   if (!rec || !rec.lockedUntil) return 0;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -79,7 +104,17 @@ function accountLockRemaining(key) {
 }
 
 // 记录一次登录失败：达到阈值则锁定；对不存在与存在的账号一视同仁，避免借 429 差异枚举注册邮箱
-function recordAccountFailure(key) {
+async function recordAccountFailure(key) {
+  if (process.env.REDIS_URL) {
+    const redisKey = `sf:auth:fail:${crypto.createHash('sha256').update(key).digest('hex')}`;
+    const count = await executeRateLimitRedisCommand('INCR', redisKey);
+    if (count !== null) {
+      if (Number(count) === 1 || Number(count) === ACCOUNT_LOCK_THRESHOLD) {
+        await executeRateLimitRedisCommand('EXPIRE', redisKey, ACCOUNT_LOCK_SECONDS);
+      }
+      return;
+    }
+  }
   // 内存防护：超过条数上限时先清理已解锁的旧记录
   if (accountFailures.size > ACCOUNT_FAIL_MAP_LIMIT) {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -93,6 +128,15 @@ function recordAccountFailure(key) {
     rec.lockedUntil = Math.floor(Date.now() / 1000) + ACCOUNT_LOCK_SECONDS;
   }
   accountFailures.set(key, rec);
+}
+
+async function clearAccountFailures(key) {
+  if (process.env.REDIS_URL) {
+    const redisKey = `sf:auth:fail:${crypto.createHash('sha256').update(key).digest('hex')}`;
+    const result = await executeRateLimitRedisCommand('DEL', redisKey);
+    if (result !== null) return;
+  }
+  accountFailures.delete(key);
 }
 
 // 密码强度校验：至少 8 位，必须同时包含字母和数字
@@ -199,9 +243,38 @@ router.post('/register', registerLimiter, async (req, res) => {
 
   // 注册成功（现金直付模式：不再赠送积分/额度）
   const user = safeUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid));
+  const emailSent = await sendVerificationCode(user);
   const { accessToken, refreshToken } = await issueTokens(user);
   setRefreshCookie(res, refreshToken);
-  res.json({ token: accessToken, accessToken, user });
+  res.json({ token: accessToken, accessToken, user, email_verification_sent: emailSent });
+});
+
+router.post('/email-verification/send', authRequired, registerLimiter, async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  if (user.email_verified_at || user.is_admin || user.is_support) return res.json({ ok: true, already_verified: true });
+  const recent = db.prepare('SELECT sent_at FROM email_verification_codes WHERE user_id=?').get(user.id);
+  const timestamp = Math.floor(Date.now() / 1000);
+  if (recent && timestamp - recent.sent_at < 60) return res.status(429).json({ error: '验证码发送过于频繁，请稍后再试' });
+  const ok = await sendVerificationCode(user);
+  res.status(ok ? 200 : 503).json(ok ? { ok: true } : { error: '验证邮件发送失败，请稍后重试' });
+});
+
+router.post('/email-verification/verify', authRequired, loginLimiter, (req, res) => {
+  const code = String(req.body?.code || '').trim();
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: '请输入6位验证码' });
+  const row = db.prepare('SELECT * FROM email_verification_codes WHERE user_id=?').get(req.user.id);
+  const timestamp = Math.floor(Date.now() / 1000);
+  if (!row || row.expires_at < timestamp || row.attempts >= 5) return res.status(400).json({ error: '验证码无效或已过期，请重新发送' });
+  if (row.code_hash !== verificationHash(req.user.id, code)) {
+    db.prepare('UPDATE email_verification_codes SET attempts=attempts+1 WHERE user_id=?').run(req.user.id);
+    return res.status(400).json({ error: '验证码不正确' });
+  }
+  db.transaction(() => {
+    db.prepare('UPDATE users SET email_verified_at=? WHERE id=?').run(timestamp, req.user.id);
+    db.prepare('DELETE FROM email_verification_codes WHERE user_id=?').run(req.user.id);
+  })();
+  res.json({ ok: true, email_verified: true });
 });
 
 router.post('/login', loginLimiter, async (req, res) => {
@@ -209,7 +282,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: '请填写邮箱和密码' });
   const normalizedEmail = String(email).trim().toLowerCase();
   // 账号维度防爆破：锁定期内直接拒绝（即使密码正确也返回 429，并提示剩余等待时间）
-  const lockRemaining = accountLockRemaining(normalizedEmail);
+  const lockRemaining = await accountLockRemaining(normalizedEmail);
   if (lockRemaining > 0) {
     const waitMinutes = Math.ceil(lockRemaining / 60);
     return res.status(429).json({ error: `该账号登录失败次数过多，已被临时锁定，请约 ${waitMinutes} 分钟后再试` });
@@ -218,11 +291,11 @@ router.post('/login', loginLimiter, async (req, res) => {
   // 统一错误信息，防邮箱枚举
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     // 记录账号维度失败次数（不区分账号是否存在，防止借锁定行为差异枚举邮箱）
-    recordAccountFailure(normalizedEmail);
+    await recordAccountFailure(normalizedEmail);
     return res.status(401).json({ error: '邮箱或密码错误' });
   }
   // 登录成功：清零该账号的失败计数并解除锁定
-  accountFailures.delete(normalizedEmail);
+  await clearAccountFailures(normalizedEmail);
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被禁用' });
   if (user.status === 'deleted') return res.status(403).json({ error: '账号不存在' });
   const { accessToken, refreshToken } = await issueTokens(user);

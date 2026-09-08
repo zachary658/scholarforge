@@ -209,7 +209,7 @@ export default function Landing() {
               <BookOpen className="h-3.5 w-3.5" />论文辅导
             </div>
             <h2 className="text-3xl font-bold tracking-tight text-ink">资深导师一对一，全程辅导至定稿</h2>
-            <p className="mt-3 text-slate-500">选题把关、大纲搭建、逐章修改、格式规范与答辩辅导，购买请添加客服微信详聊</p>
+            <p className="mt-3 text-slate-500">选题把关、大纲搭建、逐章修改、格式规范与答辩辅导，进度和成果全程在线可追踪</p>
           </div>
 
           <div className="mt-12 grid gap-6 md:grid-cols-3">
@@ -262,7 +262,7 @@ export default function Landing() {
                 <Wechat className="h-6 w-6" />
               </div>
               <div>
-                <div className="font-semibold text-ink">课程购买请添加客服微信详聊</div>
+                <div className="font-semibold text-ink">需要沟通时可联系服务顾问</div>
                 <div className="mt-0.5 text-sm text-slate-600">
                   {serviceWechat ? (
                     <>
@@ -355,7 +355,7 @@ export default function Landing() {
               <Cpu className="h-3.5 w-3.5" />作品设计辅导
             </div>
             <h2 className="text-3xl font-bold tracking-tight text-ink">毕业设计作品，专业导师全程指导</h2>
-            <p className="mt-3 text-slate-500">覆盖建筑图纸、机械图纸、仿真模拟、计算机程序、PLC设计等多领域，购买请添加客服微信详聊</p>
+            <p className="mt-3 text-slate-500">覆盖建筑图纸、机械图纸、仿真模拟、计算机程序、PLC设计等多领域，项目进度与成果统一在线交付</p>
           </div>
 
           <div className="mt-12 grid gap-6 md:grid-cols-3">
@@ -424,7 +424,7 @@ export default function Landing() {
                 <Wechat className="h-6 w-6" />
               </div>
               <div>
-                <div className="font-semibold text-ink">毕业作品指导请添加客服微信详聊</div>
+                <div className="font-semibold text-ink">需要沟通时可联系服务顾问</div>
                 <div className="mt-0.5 text-sm text-slate-600">
                   {serviceWechat ? (
                     <>

@@ -50,6 +50,19 @@ export async function closeRateLimitStore() {
   }
 }
 
+// 复用同一个 Redis 连接存放其他短生命周期安全状态（例如账号失败锁定）。
+// 返回 null 表示未配置/不可用，调用方应回退本地实现。
+export async function executeRateLimitRedisCommand(...args) {
+  if (!process.env.REDIS_URL) return null;
+  const store = await getRedisStore();
+  if (!store || !redisClient) return null;
+  try { return await redisClient.call(...args); }
+  catch (err) {
+    logger.error('rate-limit', `Redis 安全状态命令失败: ${err.message}`);
+    return null;
+  }
+}
+
 if (process.env.NODE_ENV === 'production' && !process.env.REDIS_URL) {
   logger.warn(
     'rate-limit',

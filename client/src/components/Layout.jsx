@@ -9,6 +9,7 @@ import {
 import ChangePasswordModal from './ChangePasswordModal.jsx';
 import WorkModeGate from './WorkModeGate.jsx';
 import NotificationCenter from './NotificationCenter.jsx';
+import EmailVerificationBanner from './EmailVerificationBanner.jsx';
 
 // 导航字符串图标键 → 实际图标组件（与 navigation.js 的 icon 键一一对应）
 const NAV_ICONS = {
@@ -220,6 +221,7 @@ export default function Layout() {
             <span className="text-sm font-bold text-ink">ScholarForge</span>
           </div>
         </div>
+        <EmailVerificationBanner />
         <Outlet />
       </main>
 

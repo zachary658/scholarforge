@@ -591,7 +591,7 @@ export default function PaperWorkflow() {
             )}
             <div className="mt-4 flex justify-end">
               <button onClick={confirmLiterature} disabled={references.length < 3 || researchBusy} className="btn-primary text-sm">
-                <Check className="h-4 w-4" /> {researchBusy ? '核验中…' : '核验并确认文献'}{references.length < 3 ? '（需≥3篇）' : ''}
+                <Check className="h-4 w-4" /> {researchBusy ? '核验并自动补充中…' : '核验并确认文献'}{references.length < 3 ? '（至少先选3篇）' : ''}
               </button>
             </div>
           </div>

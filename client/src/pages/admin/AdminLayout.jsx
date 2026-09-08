@@ -17,6 +17,7 @@ const nav = [
   { to: '/admin/patent-orders', label: '专利申请', icon: Shield, end: false },
   { to: '/admin/publication-orders', label: '期刊发表', icon: Book, end: false },
   { to: '/admin/service-projects', label: '服务履约', icon: Activity, end: false },
+  { to: '/admin/operations', label: '运行监控', icon: Activity, end: false },
   { to: '/admin/promotion', label: '推广渠道', icon: Tag, end: false },
   { to: '/admin/features', label: '功能定价', icon: Tag, end: false },
   { to: '/admin/quotes', label: '报价管理', icon: Receipt, end: false },

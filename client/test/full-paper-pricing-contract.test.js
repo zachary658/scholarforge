@@ -18,5 +18,5 @@ test('后台可配置学历价格且500%利润保护不能调低', () => {
   assert.match(admin, /full_paper_price_master/);
   assert.match(admin, /full_paper_price_doctorate/);
   assert.match(admin, /min="5"/);
-  assert.match(admin, /利润\/成本不低于 500%/);
+  assert.match(admin, /成本利润率不低于 500%/);
 });

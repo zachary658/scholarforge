@@ -96,7 +96,7 @@ export default function Courses() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">论文 1 对 1 指导</h1>
-          <p className="mt-1 text-sm text-slate-500">选择学历课程，填写需求实时报价，支付后客服微信对接导师</p>
+          <p className="mt-1 text-sm text-slate-500">选择服务并填写需求，支付后在统一工作区查看进度、补充资料和接收成果</p>
         </div>
         <button onClick={load} className="btn-ghost text-xs">
           <Refresh className="h-4 w-4" /> 刷新
@@ -109,9 +109,9 @@ export default function Courses() {
           <Wechat className="h-5 w-5" />
         </div>
         <div className="text-sm text-slate-600">
-          <div className="font-semibold text-ink">定制流程：选择学历 → 填写需求 → 实时报价 → 支付 → 客服微信对接</div>
+          <div className="font-semibold text-ink">定制流程：选择学历 → 填写需求 → 实时报价 → 支付 → 进入服务工作区</div>
           <div className="mt-0.5">
-            支付完成后将展示客服二维码，添加后备注订单号即可。如有疑问也可直接咨询：
+            站内工作区是进度与交付的唯一入口；微信仅用于需要时的补充沟通：
             {serviceWechat ? (
               <span className="font-semibold text-accent"> {serviceWechat}</span>
             ) : (

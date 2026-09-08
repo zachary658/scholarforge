@@ -71,6 +71,36 @@ const running = new Set();
 // 章节数硬上限：超长大纲（恶意构造或模型失控输出）会令分章节生成成本失控
 const MAX_CHAPTERS = 15;
 
+// 进程启动后，数据库里仍为 processing 的章节不可能再有对应的本进程任务继续执行。
+// 将它们立即转为可重试的 failed，避免用户在服务重启后被旧的 15 分钟租约卡住。
+// 全文套餐订单仍保持 processing：它也表示项目权益已绑定，不能误当成正在调用模型。
+export function recoverInterruptedChapterJobs() {
+  const rows = db.prepare("SELECT id, chapters_json FROM projects WHERE chapters_json LIKE '%\"status\":\"processing\"%'").all();
+  let projectsRecovered = 0;
+  let chaptersRecovered = 0;
+  const update = db.prepare('UPDATE projects SET chapters_json = ?, final_check_json = NULL, updated_at = ? WHERE id = ? AND chapters_json = ?');
+  const recover = db.transaction(() => {
+    for (const row of rows) {
+      let chapters;
+      try { chapters = JSON.parse(row.chapters_json || '[]'); } catch { continue; }
+      let changed = 0;
+      const recovered = chapters.map((chapter) => {
+        if (chapter.status !== 'processing') return chapter;
+        changed += 1;
+        return { ...chapter, status: 'failed', error: '服务重启中断，请点击重试' };
+      });
+      if (changed === 0) continue;
+      const result = update.run(JSON.stringify(recovered), now(), row.id, row.chapters_json);
+      if (result.changes === 1) {
+        projectsRecovered += 1;
+        chaptersRecovered += changed;
+      }
+    }
+  });
+  recover();
+  return { projectsRecovered, chaptersRecovered };
+}
+
 export function isGenerating(projectId) {
   if (running.has(projectId)) return true;
   const row = db.prepare('SELECT chapters_json, updated_at FROM projects WHERE id = ?').get(projectId);

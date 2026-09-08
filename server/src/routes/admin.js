@@ -22,6 +22,7 @@ import { getModelPreset, getModelKeyFromEnv } from '../model-catalog.js';
 import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrder, markOrderPaid } from '../services/payment.js';
 import { parseTemplate } from '../services/template-parser.js';
 import logger from '../logger.js';
+import { getOperationalMetrics } from '../services/operational-metrics.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(__dirname, '..', '..', 'uploads', 'templates');
@@ -91,6 +92,10 @@ const today = () => {
 
 // 金额整数累加表达式：ROUND(amount*100) 转整数分累加，/100.0 转回元，避免浮点累加误差
 const AMOUNT_SUM = 'COALESCE(SUM(ROUND(amount*100)),0)/100.0';
+
+router.get('/operational-metrics', (req, res) => {
+  res.json(getOperationalMetrics(req.query.hours));
+});
 
 // ========== 概览统计 ==========
 router.get('/overview', (_req, res) => {

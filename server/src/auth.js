@@ -201,6 +201,7 @@ export function safeUser(user) {
     status: user.status,
     created_at: user.created_at,
     academic_integrity_agreed: !!user.academic_integrity_agreed_at,
+    email_verified: !!user.email_verified_at || !!user.is_admin || !!user.is_support,
   };
 }
 
