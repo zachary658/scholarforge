@@ -57,6 +57,7 @@ test('可展开分组的二级工具正确', () => {
     ['/app/docs', '我的文档'],
     ['/app/orders', '我的订单'],
     ['/app/service-projects', '服务进度与交付'],
+    ['/app/service-changes', '需求变更与补款'],
   ]);
 });
 
