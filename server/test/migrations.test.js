@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp', '012_secure_settings', '013_admin_audit_hmac', '014_commercial_foundation'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp', '012_secure_settings', '013_admin_audit_hmac', '014_commercial_foundation', '015_support_quote_ownership', '016_service_change_orders', '017_course_support_quotes'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -107,5 +107,27 @@ test('014：商业漏斗、售后、渠道佣金与履约成本结构已创建',
   assert.ok(columnsOf('promotion_partners').includes('commission_bps'));
   for (const column of ['estimated_hours', 'actual_hours', 'internal_cost_cents', 'scope_summary']) {
     assert.ok(columnsOf('service_projects').includes(column));
+  }
+});
+
+test('015：人工服务报价保存学科成本快照与用户确认时间', () => {
+  for (const table of ['graduation_project_orders', 'patent_orders', 'publication_orders']) {
+    for (const column of ['discipline_category', 'estimated_hours', 'quote_scope', 'quote_exclusions', 'cost_snapshot_json', 'quoted_by', 'quote_sent_at', 'quote_confirmed_at']) {
+      assert.ok(columnsOf(table).includes(column), `${table} 缺少列 ${column}`);
+    }
+  }
+  assert.ok(columnsOf('service_projects').includes('discipline_category'));
+});
+
+test('016：人工服务需求变更单与补款关联结构已创建', () => {
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='service_change_orders'").get());
+  for (const column of ['change_no', 'source_order_id', 'payment_order_id', 'assessment_type', 'amount_cents', 'cost_snapshot_json']) {
+    assert.ok(columnsOf('service_change_orders').includes(column));
+  }
+});
+
+test('017：论文指导正式报价在服务项目中完整留痕', () => {
+  for (const column of ['quote_exclusions', 'cost_snapshot_json', 'quoted_by', 'quote_sent_at', 'quote_confirmed_at']) {
+    assert.ok(columnsOf('service_projects').includes(column), `service_projects 缺少列 ${column}`);
   }
 });

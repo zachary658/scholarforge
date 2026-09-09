@@ -288,7 +288,7 @@ export default function Landing() {
               <Shield className="h-3.5 w-3.5" />专业服务
             </div>
             <h2 className="text-3xl font-bold tracking-tight text-ink">专利与期刊服务，过程透明可跟踪</h2>
-            <p className="mt-3 text-slate-500">AI 辅助撰写专业文件 + 专业人员对接办理，提交需求后客服报价，审批通过在线支付</p>
+            <p className="mt-3 text-slate-500">AI 辅助撰写专业文件 + 专业人员对接办理，客服评估报价，用户确认范围后在线支付</p>
           </div>
 
           <div className="mt-12 grid gap-6 md:grid-cols-2">

@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
-import { copyText } from '../lib/utils.js';
-import PayModal from '../components/PayModal.jsx';
 import { toast } from '../components/Toast.jsx';
 import {
-  BookOpen, ChevronLeft, Receipt, Refresh, Check, Cart, Info, Copy, X,
+  BookOpen, ChevronLeft, Receipt, Refresh, Cart, Info, X,
 } from '../components/Icons.jsx';
 
 const PAPER_TYPES = ['毕业论文', '课程论文', '期刊论文', '其他'];
@@ -75,7 +73,6 @@ export default function CourseQuote() {
   const courseId = searchParams.get('course');
 
   const [course, setCourse] = useState(null);
-  const [site, setSite] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const projectId = searchParams.get('projectId');
   useEffect(() => {
@@ -90,8 +87,6 @@ export default function CourseQuote() {
   const [loading, setLoading] = useState(true);
   const [quoting, setQuoting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [payState, setPayState] = useState(null);
-  const [success, setSuccess] = useState(null); // { order, requirements, quote }
   const debounceRef = useRef(null);
   const quoteSeqRef = useRef(0);
 
@@ -114,8 +109,7 @@ export default function CourseQuote() {
   const load = async () => {
     setLoading(true);
     try {
-      const [siteData, listData] = await Promise.all([api.getSite(), api.listCourses()]);
-      setSite(siteData);
+      const listData = await api.listCourses();
       const found = (listData.courses || []).find((c) => String(c.id) === String(courseId));
       if (!found) throw new Error('课程不存在或已下架');
       setCourse(found);
@@ -171,12 +165,9 @@ export default function CourseQuote() {
     }
     setSubmitting(true);
     try {
-      const data = await api.createOrder({
-        type: 'course',
-        target: course.id,
-        courseRequirements: requirements,
-      });
-      setPayState(data);
+      await api.requestCourseServiceQuote({ course_id: course.id, requirements });
+      toast.success('需求已提交，客服确认服务范围后会发送正式报价');
+      navigate('/app/orders');
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -184,109 +175,10 @@ export default function CourseQuote() {
     }
   };
 
-  const onPaid = ({ order }) => {
-    setPayState(null);
-    setSuccess({ order, requirements, quote });
-    toast.success('支付成功，服务项目已进入工作区');
-  };
-
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="animate-pulse text-slate-400">加载中…</div>
-      </div>
-    );
-  }
-
-  // ===== 支付成功：进入统一服务工作区 =====
-  if (success) {
-    const serviceWechat = site?.service_wechat || '';
-    const serviceWechatQrcode = site?.service_wechat_qrcode || '';
-    return (
-      <div className="mx-auto max-w-3xl px-8 py-10">
-        <div className="card p-8 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-green-500">
-            <Check className="h-7 w-7" />
-          </div>
-          <h1 className="mt-4 text-xl font-bold text-ink">支付成功，服务项目已创建</h1>
-          <p className="mt-2 text-sm text-slate-500">后续进度、资料补充、修改申请和成果交付均在服务工作区完成</p>
-
-          {/* 三步引导 */}
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <Step index="1" title="进入工作区" desc="查看项目状态与预计时间" />
-            <Step index="2" title="按需补充" desc="直接上传材料或填写说明" />
-            <Step index="3" title="接收并验收" desc="下载成果或提交修改意见" />
-          </div>
-
-          {/* 订单号复制 */}
-          <div className="mt-6 flex items-center justify-between rounded-xl border border-accent-100 bg-accent-50 px-4 py-3">
-            <div className="min-w-0 text-left">
-              <div className="text-xs text-slate-500">订单号</div>
-              <div className="mt-0.5 truncate font-mono text-sm font-medium text-ink">{success.order?.order_no}</div>
-            </div>
-            <button
-              onClick={() => copyText(success.order?.order_no, '订单号')}
-              className="btn-secondary shrink-0 px-3 py-2 text-xs"
-            >
-              <Copy className="h-3.5 w-3.5" /> 复制
-            </button>
-          </div>
-
-          {serviceWechatQrcode && (
-            <div className="mx-auto mt-6 w-fit rounded-xl border border-slate-200 bg-white p-3">
-              <img src={serviceWechatQrcode} alt="客服微信二维码" className="h-52 w-52 object-contain" />
-              <div className="mt-1 text-xs text-slate-400">扫码添加客服微信</div>
-            </div>
-          )}
-          {serviceWechat && (
-            <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3">
-              <div className="min-w-0 text-left">
-                <div className="text-xs text-slate-500">客服微信号</div>
-                <div className="mt-0.5 truncate text-sm font-semibold text-accent">{serviceWechat}</div>
-              </div>
-              <button
-                onClick={() => copyText(serviceWechat, '微信号')}
-                className="btn-secondary shrink-0 px-3 py-2 text-xs"
-              >
-                <Copy className="h-3.5 w-3.5" /> 复制
-              </button>
-            </div>
-          )}
-
-          <div className="mt-8 rounded-xl bg-slate-50 p-5 text-left">
-            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <Receipt className="h-4 w-4 text-accent" /> 需求确认单
-            </div>
-            <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-              <Item label="课程" value={course.title} />
-              <Item label="专业" value={success.requirements.major} />
-              <Item label="论文类型" value={success.requirements.paper_type} />
-              <Item label="论文字数" value={`${success.requirements.word_count} 字`} />
-              <Item label="图表 / 图纸" value={`${success.requirements.chart_count} 张 / ${success.requirements.drawing_count} 张`} />
-              <Item label="公式复杂度" value={success.requirements.formula} />
-              <Item label="加急" value={success.requirements.urgent ? '是' : '否'} />
-              <Item label="支付金额" value={fmt(success.order?.amount)} strong />
-            </dl>
-            {success.requirements.note && (
-              <div className="mt-4 border-t border-slate-200 pt-3 text-sm">
-                <span className="text-slate-500">补充说明：</span>
-                <span className="text-ink">{success.requirements.note}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <button onClick={() => navigate('/app/courses')} className="btn-secondary">
-              <BookOpen className="h-4 w-4" /> 返回课程
-            </button>
-            <button onClick={() => navigate('/app/orders')} className="btn-primary">
-              <Receipt className="h-4 w-4" /> 查看订单
-            </button>
-            <button onClick={() => navigate('/app/service-projects')} className="btn-primary">
-              <BookOpen className="h-4 w-4" /> 查看服务进度
-            </button>
-          </div>
-        </div>
       </div>
     );
   }
@@ -306,7 +198,7 @@ export default function CourseQuote() {
             )}
             <h1 className="text-xl font-bold text-ink">{course.title}</h1>
           </div>
-          <p className="mt-1 text-sm text-slate-500">填写论文需求，系统实时计算报价；支付后自动创建可追踪的服务项目</p>
+          <p className="mt-1 text-sm text-slate-500">填写需求并提交客服复核；服务范围和正式报价确认后再付款</p>
         </div>
       </div>
 
@@ -443,7 +335,7 @@ export default function CourseQuote() {
         <div>
           <div className="card sticky top-24 p-6">
             <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <Receipt className="h-4 w-4 text-accent" /> 报价明细
+              <Receipt className="h-4 w-4 text-accent" /> 参考估价
             </div>
 
             {quoting && !quote ? (
@@ -476,26 +368,17 @@ export default function CourseQuote() {
               {submitting ? (
                 <><Refresh className="h-4 w-4 animate-spin" /> 提交中…</>
               ) : (
-                <><Cart className="h-4 w-4" /> 提交并支付 {quote ? fmt(quote.amount) : ''}</>
+                <><Cart className="h-4 w-4" /> 提交客服复核</>
               )}
             </button>
 
             <div className="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
               <Info className="h-4 w-4 shrink-0 text-slate-400" />
-              <span>支付完成后自动创建服务项目；进度、资料补充、修改申请和成果均在服务工作区统一处理。</span>
+              <span>此处金额仅供参考。客服会核对实际范围、学科与工时，发送一次正式报价；你确认后只需统一付款一次。</span>
             </div>
           </div>
         </div>
       </div>
-
-      {payState && (
-        <PayModal
-          order={payState.order}
-          payParams={payState.payParams}
-          onClose={() => setPayState(null)}
-          onPaid={onPaid}
-        />
-      )}
 
       {/* 公式复杂度说明弹窗 */}
       {formulaModal && (
@@ -563,27 +446,6 @@ export default function CourseQuote() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Item({ label, value, strong = false }) {
-  return (
-    <div>
-      <dt className="text-xs text-slate-400">{label}</dt>
-      <dd className={`mt-0.5 ${strong ? 'text-base font-bold text-accent' : 'text-ink'}`}>{value}</dd>
-    </div>
-  );
-}
-
-function Step({ index, title, desc }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 text-left">
-      <div className="flex items-center gap-2">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-white">{index}</span>
-        <span className="text-sm font-semibold text-ink">{title}</span>
-      </div>
-      <p className="mt-2 text-xs text-slate-500">{desc}</p>
     </div>
   );
 }

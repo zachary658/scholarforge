@@ -24,12 +24,14 @@ const STATUS_LABEL = {
 
 const NEXT_STATUS = { pending: 'contacted', contacted: 'completed', completed: 'pending' };
 const NEXT_LABEL = { pending: '标记已对接', contacted: '标记已完成', completed: '重置为待对接' };
+const READ_ONLY = true;
 
 const QUOTE_STATUS = {
-  none: { label: '未报价', badge: 'bg-slate-100 text-slate-500' },
-  pending: { label: '待审批', badge: 'bg-amber-50 text-amber-600' },
-  approved: { label: '已生效', badge: 'bg-green-50 text-green-600' },
-  rejected: { label: '已驳回', badge: 'bg-red-50 text-red-600' },
+  none: { label: '待客服报价', badge: 'bg-slate-100 text-slate-500' },
+  pending: { label: '历史待处理', badge: 'bg-amber-50 text-amber-600' },
+  awaiting_customer: { label: '待用户确认', badge: 'bg-blue-50 text-blue-600' },
+  approved: { label: '用户已确认', badge: 'bg-green-50 text-green-600' },
+  rejected: { label: '已关闭', badge: 'bg-red-50 text-red-600' },
 };
 
 function fmtDateTime(ts) {
@@ -199,12 +201,12 @@ export default function AdminGraduationOrders() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">毕业作品订单</h1>
-          <p className="mt-1 text-sm text-slate-500">查看毕业作品订单与需求，标记客服对接状态，设置报价</p>
+          <p className="mt-1 text-sm text-slate-500">查看毕业作品需求、报价与进度；管理员只读监督，业务操作由客服完成。</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowCreate(true)} className="btn-primary text-xs">
+          {!READ_ONLY && <button onClick={() => setShowCreate(true)} className="btn-primary text-xs">
             <Plus className="h-4 w-4" /> 新建订单
-          </button>
+          </button>}
           <button onClick={() => load(page, status)} className="btn-ghost text-xs">
             <Refresh className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
           </button>
@@ -297,12 +299,12 @@ export default function AdminGraduationOrders() {
                             <span className="text-slate-700">
                               {it.quoted_price != null ? `¥${Number(it.quoted_price).toFixed(2)}` : '未报价'}
                             </span>
-                            <button
+                            {!READ_ONLY && <button
                               onClick={() => openQuote(it)}
                               className="text-xs text-accent hover:underline"
                             >
                               报价
-                            </button>
+                            </button>}
                           </div>
                           {(() => {
                             const qs = QUOTE_STATUS[it.quote_status] || QUOTE_STATUS.none;
@@ -310,7 +312,7 @@ export default function AdminGraduationOrders() {
                               <span className={`inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs ${qs.badge}`}>{qs.label}</span>
                             );
                           })()}
-                          {it.quote_status === 'pending' && (
+                          {!READ_ONLY && it.quote_status === 'pending' && (
                             <div className="flex gap-1">
                               <button
                                 onClick={() => approveQuote(it, 'approved')}
@@ -338,7 +340,7 @@ export default function AdminGraduationOrders() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
+                      {!READ_ONLY ? <button
                         onClick={() => toggleStatus(it)}
                         disabled={updatingId === it.id}
                         className="btn-ghost text-xs"
@@ -351,7 +353,7 @@ export default function AdminGraduationOrders() {
                           <Check className="h-3.5 w-3.5" />
                         )}
                         {NEXT_LABEL[it.contact_status] || '更新状态'}
-                      </button>
+                      </button> : <span className="text-xs text-slate-400">仅查看</span>}
                     </td>
                   </tr>
                 ))
@@ -371,7 +373,7 @@ export default function AdminGraduationOrders() {
         </div>
       )}
 
-      {showCreate && (
+      {!READ_ONLY && showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowCreate(false)} />
           <div className="relative mx-4 w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">

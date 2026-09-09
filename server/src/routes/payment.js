@@ -35,6 +35,7 @@ router.use((req, res, next) => {
 router.post('/create-order', authRequired, (req, res) => {
   const { type, target, channel, courseRequirements } = req.body || {};
   if (!type || !target) return res.status(400).json({ error: '请指定订单类型和目标' });
+  if (type === 'course') return res.status(409).json({ error: '论文一对一指导须先提交需求，由客服确认范围并发送正式报价' });
   try {
     const result = createOrder({
       userId: req.user.id,

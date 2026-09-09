@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { Refresh, Check, X, Search, Receipt } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import OrderNotes from '../../components/OrderNotes.jsx';
+import FormalQuoteModal from '../../components/FormalQuoteModal.jsx';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -28,8 +29,9 @@ const NEXT_LABEL = { pending: '标记已对接', contacted: '标记已完成', c
 
 const QUOTE_STATUS = {
   none: { label: '未报价', badge: 'bg-slate-100 text-slate-500' },
-  pending: { label: '报价待审批', badge: 'bg-amber-50 text-amber-600' },
-  approved: { label: '报价已生效', badge: 'bg-green-50 text-green-600' },
+  pending: { label: '旧版待审批', badge: 'bg-amber-50 text-amber-600' },
+  awaiting_customer: { label: '待用户确认', badge: 'bg-blue-50 text-blue-600' },
+  approved: { label: '用户已确认', badge: 'bg-green-50 text-green-600' },
   rejected: { label: '报价已驳回', badge: 'bg-red-50 text-red-600' },
 };
 
@@ -69,8 +71,7 @@ export default function SupportGraduationOrders() {
   const [error, setError] = useState('');
   const [updatingId, setUpdatingId] = useState(null);
   // 报价编辑状态
-  const [quotingId, setQuotingId] = useState(null);
-  const [quotePrice, setQuotePrice] = useState('');
+  const [quoteItem, setQuoteItem] = useState(null);
   const [quotingSaving, setQuotingSaving] = useState(false);
   // 详情抽屉
   const [detail, setDetail] = useState(null);
@@ -122,26 +123,19 @@ export default function SupportGraduationOrders() {
   };
 
   const openQuote = (item) => {
-    setQuotingId(item.id);
-    setQuotePrice(item.quoted_price != null ? String(item.quoted_price) : '');
+    setQuoteItem(item);
   };
 
   const cancelQuote = () => {
-    setQuotingId(null);
-    setQuotePrice('');
+    setQuoteItem(null);
     setQuotingSaving(false);
   };
 
-  const saveQuote = async (item) => {
-    const price = Number(quotePrice);
-    if (isNaN(price) || price < 0) {
-      toast.warning('请输入有效的报价金额');
-      return;
-    }
+  const saveQuote = async (payload) => {
     setQuotingSaving(true);
     try {
-      await api.supportQuoteGraduationOrder(item.id, price);
-      toast.success('报价已提交，待管理员审批后生效');
+      await api.supportQuoteGraduationOrder(quoteItem.id, payload);
+      toast.success('正式报价已发送，等待用户确认并支付');
       cancelQuote();
       load(page, status, q);
     } catch (err) {
@@ -156,7 +150,7 @@ export default function SupportGraduationOrders() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">毕业设计对接</h1>
-          <p className="mt-1 text-sm text-slate-500">查看毕业设计订单与需求，报价（提交后待管理员审批）、标记对接状态</p>
+          <p className="mt-1 text-sm text-slate-500">评估需求并发送正式报价；用户确认付款后进入履约，无需管理员审批。</p>
         </div>
         <button onClick={() => load(page, status, q)} className="btn-ghost text-xs">
           <Refresh className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
@@ -221,28 +215,12 @@ export default function SupportGraduationOrders() {
                         <div className="text-xs text-slate-400">{it.category || ''}</div>
                       </td>
                       <td className="px-4 py-3">
-                        {quotingId === it.id ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              className="input w-24 py-1 text-xs"
-                              value={quotePrice}
-                              onChange={(e) => setQuotePrice(e.target.value)}
-                              step="0.01"
-                            />
-                            <button onClick={() => saveQuote(it)} disabled={quotingSaving} className="btn-primary px-2 py-1 text-xs">
-                              {quotingSaving ? '...' : '提交'}
-                            </button>
-                            <button onClick={cancelQuote} className="btn-ghost px-1 py-1 text-xs">取消</button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2">
                             <span className="text-slate-700">{fmtPrice(it.quoted_price)}</span>
                             {it.status === 'pending' && (
                               <button onClick={() => openQuote(it)} className="text-xs text-accent hover:underline">报价</button>
                             )}
                           </div>
-                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`rounded-md px-2 py-0.5 text-xs ${qs.badge}`}>{qs.label}</span>
@@ -320,6 +298,7 @@ export default function SupportGraduationOrders() {
           </div>
         </div>
       )}
+      <FormalQuoteModal open={!!quoteItem} initial={quoteItem ? { quoted_price: quoteItem.quoted_price ?? '', discipline_category: quoteItem.discipline_category || 'humanities', estimated_hours: quoteItem.estimated_hours || '', quote_scope: quoteItem.quote_scope || '', quote_exclusions: quoteItem.quote_exclusions || '' } : null} busy={quotingSaving} onClose={cancelQuote} onSubmit={saveQuote} />
     </div>
   );
 }

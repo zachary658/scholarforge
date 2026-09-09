@@ -78,7 +78,7 @@ export default function GraduationOrdersPanel() {
   };
 
   // 是否可支付：待支付且客服已报价（quoted_price > 0）
-  const canPay = (o) => o.status === 'pending' && o.quoted_price != null && Number(o.quoted_price) > 0;
+  const canPay = (o) => o.status === 'pending' && ['awaiting_customer','approved'].includes(o.quote_status) && o.quoted_price != null && Number(o.quoted_price) > 0;
 
   useEffect(() => { load(); }, []);
 
@@ -188,7 +188,7 @@ export default function GraduationOrdersPanel() {
                             onClick={() => handlePay(o)}
                             className="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-white hover:opacity-90"
                           >
-                            去支付
+                            确认并支付
                           </button>
                         )}
                       </div>
@@ -258,12 +258,13 @@ export default function GraduationOrdersPanel() {
                   <span className="line-clamp-3">{o.requirements.remark}</span>
                 </div>
               )}
+              {o.quote_scope && <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900"><div className="font-medium">客服报价范围</div><div className="mt-1 whitespace-pre-wrap">{o.quote_scope}</div>{o.quote_exclusions && <div className="mt-1 text-blue-700">不包含：{o.quote_exclusions}</div>}</div>}
               {canPay(o) && (
                 <button
                   onClick={() => handlePay(o)}
                   className="btn-primary mt-3 w-full py-2 text-sm"
                 >
-                  去支付 ¥{Number(o.quoted_price).toFixed(2)}
+                  确认报价并支付 ¥{Number(o.quoted_price).toFixed(2)}
                 </button>
               )}
             </div>

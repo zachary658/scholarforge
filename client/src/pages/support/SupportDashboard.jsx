@@ -36,8 +36,8 @@ const CARDS = [
   },
   {
     key: 'quotePending',
-    label: '待审批报价',
-    sub: '需管理员审批后生效',
+    label: '待用户确认报价',
+    sub: '客服已发送，等待用户确认付款',
     to: '/support/graduation',
     icon: Cpu,
     tone: 'bg-violet-50 text-violet-600',
@@ -46,13 +46,13 @@ const CARDS = [
   },
   {
     key: 'featureQuote',
-    label: '待报价订单',
-    sub: '功能订单待报价',
-    to: '/support',
+    label: '待复核报价',
+    sub: '一对一指导 + 功能订单',
+    to: '/support/orders',
     icon: AlertCircle,
     tone: 'bg-purple-50 text-purple-600',
     valueTone: 'text-purple-700',
-    value: (o) => o.featureAwaitingQuote || 0,
+    value: (o) => (o.featureAwaitingQuote || 0) + (o.courseAwaitingQuote || 0),
   },
   {
     key: 'featureToday',
@@ -87,7 +87,7 @@ const QUICK_LINKS = [
   {
     to: '/support/graduation',
     title: '毕业作品',
-    desc: '毕业作品订单、报价审批与对接跟进',
+    desc: '毕业作品需求、正式报价与对接跟进',
     icon: Cpu,
     tone: 'bg-blue-50 text-blue-600',
   },

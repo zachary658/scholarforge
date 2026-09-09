@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { Refresh, Check } from '../../components/Icons.jsx';
-import { toast } from '../../components/Toast.jsx';
+import { Refresh } from '../../components/Icons.jsx';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -21,10 +20,6 @@ const STATUS_LABEL = {
   contacted: '已对接',
   completed: '已完成',
 };
-
-// 对接状态流转：待对接 → 已对接 → 已完成 → 待对接
-const NEXT_STATUS = { pending: 'contacted', contacted: 'completed', completed: 'pending' };
-const NEXT_LABEL = { pending: '标记已对接', contacted: '标记已完成', completed: '重置为待对接' };
 
 function fmtDateTime(ts) {
   if (!ts) return '—';
@@ -54,7 +49,6 @@ export default function AdminCourseOrders() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [updatingId, setUpdatingId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
 
   const SIZE = 20;
@@ -85,27 +79,12 @@ export default function AdminCourseOrders() {
     load(1, v);
   };
 
-  const toggleStatus = async (item) => {
-    const next = NEXT_STATUS[item.contact_status] || 'contacted';
-    setUpdatingId(item.id);
-    setError('');
-    try {
-      await api.adminUpdateCourseContact(item.id, next);
-      toast.success(`已更新为「${STATUS_LABEL[next]}」`);
-      load(page, status);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">课程对接</h1>
-          <p className="mt-1 text-sm text-slate-500">查看已支付课程订单与需求，标记客服对接状态，避免漏单</p>
+          <p className="mt-1 text-sm text-slate-500">只读监督已支付订单、需求和客服对接状态；履约操作统一在客服工作台完成</p>
         </div>
         <button onClick={() => load(page, status)} className="btn-ghost text-xs">
           <Refresh className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 刷新
@@ -179,20 +158,7 @@ export default function AdminCourseOrders() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => toggleStatus(it)}
-                        disabled={updatingId === it.id}
-                        className="btn-ghost text-xs"
-                      >
-                        {updatingId === it.id ? (
-                          <Refresh className="h-3.5 w-3.5 animate-spin" />
-                        ) : it.contact_status === 'completed' ? (
-                          <Refresh className="h-3.5 w-3.5" />
-                        ) : (
-                          <Check className="h-3.5 w-3.5" />
-                        )}
-                        {NEXT_LABEL[it.contact_status] || '更新状态'}
-                      </button>
+                      <span className="text-xs text-slate-400">只读</span>
                     </td>
                   </tr>
                 ))

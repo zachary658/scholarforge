@@ -379,12 +379,7 @@ router.get('/course-orders', (req, res) => {
 });
 
 router.put('/course-orders/:id/contact-status', (req, res) => {
-  const { status } = req.body || {};
-  if (!['pending', 'contacted', 'completed'].includes(status)) return res.status(400).json({ error: '无效的对接状态' });
-  const row = db.prepare('SELECT id FROM user_courses WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: '课程订单不存在' });
-  db.prepare('UPDATE user_courses SET contact_status = ? WHERE id = ?').run(status, row.id);
-  res.json({ ok: true, id: row.id, contact_status: status });
+  res.status(403).json({ error: '管理员仅可监督人工服务，履约状态必须由客服工作台更新' });
 });
 
 // ========== 订单管理 ==========
@@ -734,6 +729,7 @@ const SETTINGS_WHITELIST = new Set([
   'full_paper_price_undergraduate', 'full_paper_price_master', 'full_paper_price_doctorate', 'full_paper_price_other',
   'full_paper_cost_reserve_undergraduate', 'full_paper_cost_reserve_master', 'full_paper_cost_reserve_doctorate', 'full_paper_cost_reserve_other',
   'full_paper_min_profit_markup',
+  'service_labor_cost_stem', 'service_labor_cost_humanities', 'service_min_profit_markup',
   'payment_mode', 'order_expire_seconds', 'doc_retention_days',
   'course_quote_base_word_count', 'course_quote_word_price', 'course_quote_chart_price', 'course_quote_drawing_price',
   'course_quote_formula_low', 'course_quote_formula_mid', 'course_quote_formula_high', 'course_quote_urgent_multiplier',
@@ -774,6 +770,10 @@ const NUMERIC_SETTINGS = {
   full_paper_cost_reserve_other: { min: 0.01, max: 100000 },
   // 5 = 利润/成本 500%；允许调高，不允许调低。
   full_paper_min_profit_markup: { min: 5, max: 100 },
+  service_labor_cost_stem: { min: 0.01, max: 100000 },
+  service_labor_cost_humanities: { min: 0.01, max: 100000 },
+  // 保持平台承诺：人工服务利润/成本不得低于 500%。
+  service_min_profit_markup: { min: 5, max: 100 },
   course_quote_base_word_count: { min: 0, max: 1000000, integer: true },
   course_quote_word_price: { min: 0, max: 100000 },
   course_quote_chart_price: { min: 0, max: 100000 },
@@ -1174,6 +1174,13 @@ router.delete('/graduation/:id', (req, res) => {
 
 // ========== 毕业作品订单管理 ==========
 // 手动录入订单（线下成交补录 / 客服代录）：生成待对接订单供后续报价与跟进
+router.use(['/graduation-orders', '/graduation-orders/:id', '/patent-orders/:id', '/publication-orders/:id'], (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return res.status(403).json({ error: '管理员仅可监督查看人工服务记录，报价与履约操作请由客服工作台完成' });
+  }
+  next();
+});
+
 router.post('/graduation-orders', (req, res) => {
   const { email, project_id, requirements, quoted_price, status, contact_status } = req.body || {};
   if (!email || !project_id) return res.status(400).json({ error: '请填写用户邮箱和项目' });

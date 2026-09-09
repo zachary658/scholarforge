@@ -120,16 +120,19 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     if (!gpOrder) throw new Error('毕业作品订单不存在');
     if (gpOrder.user_id !== userId) throw new Error('无权操作该订单');
     if (gpOrder.status !== 'pending') throw new Error(`订单状态 ${gpOrder.status}，不能支付`);
-    if (gpOrder.quote_status === 'pending') throw new Error('报价待管理员审批，请稍后再试');
+    if (gpOrder.quote_status === 'pending') throw new Error('这是旧版待审批报价，请联系客服重新发送正式报价');
     if (gpOrder.quote_status === 'rejected') throw new Error('报价已被驳回，请联系客服重新报价');
-    if (gpOrder.quote_status !== 'approved' || gpOrder.quoted_price == null || gpOrder.quoted_price <= 0) {
+    if (!['awaiting_customer', 'approved'].includes(gpOrder.quote_status) || gpOrder.quoted_price == null || gpOrder.quoted_price <= 0) {
       throw new Error('订单尚未报价，请联系客服报价后再支付');
+    }
+    if (gpOrder.quote_status === 'awaiting_customer') {
+      db.prepare("UPDATE graduation_project_orders SET quote_status='approved', quote_confirmed_at=? WHERE id=? AND quote_status='awaiting_customer'").run(now(), gpOrder.id);
     }
     amount = gpOrder.quoted_price;
     targetName = `毕业作品：${gpOrder.title}`;
     metadata = { gp_order_id: gpOrder.id, project_title: gpOrder.title };
   } else if (type === 'patent' || type === 'publication') {
-    // 专利申请 / 期刊发表服务订单：人工报价（客服报价 → 管理员审批通过后用户方可支付）
+    // 专利申请 / 期刊发表服务订单：客服正式报价 → 用户确认并支付。
     const table = type === 'patent' ? 'patent_orders' : 'publication_orders';
     const titleCol = type === 'patent' ? 'title' : 'paper_title';
     const label = type === 'patent' ? '专利申请' : '期刊发表';
@@ -140,10 +143,13 @@ export function createOrder({ userId, type, target, channel = null, courseRequir
     if (!svc) throw new Error(`${label}服务订单不存在`);
     if (svc.user_id !== userId) throw new Error('无权操作该订单');
     if (svc.status !== 'pending') throw new Error(`订单状态 ${svc.status}，不能支付`);
-    if (svc.quote_status === 'pending') throw new Error('报价待管理员审批，请稍后再试');
+    if (svc.quote_status === 'pending') throw new Error('这是旧版待审批报价，请联系客服重新发送正式报价');
     if (svc.quote_status === 'rejected') throw new Error('报价已被驳回，请联系客服重新报价');
-    if (svc.quote_status !== 'approved' || svc.quoted_price == null || svc.quoted_price <= 0) {
+    if (!['awaiting_customer', 'approved'].includes(svc.quote_status) || svc.quoted_price == null || svc.quoted_price <= 0) {
       throw new Error('订单尚未报价，请联系客服报价后再支付');
+    }
+    if (svc.quote_status === 'awaiting_customer') {
+      db.prepare(`UPDATE ${table} SET quote_status='approved', quote_confirmed_at=? WHERE id=? AND quote_status='awaiting_customer'`).run(now(), svc.id);
     }
     amount = svc.quoted_price;
     targetName = `${label}：${svc.title || '(未命名)'}`;
@@ -283,6 +289,44 @@ export function requestQuoteOrder({ userId, itemType, customRequirements, expect
   return { order: getOrder(orderNo) };
 }
 
+export function requestCourseServiceQuote({ userId, courseId, requirements }) {
+  const course = getCourse(Number(courseId));
+  if (!course || !course.is_active) throw new Error('指导服务不存在或已下架');
+  resolvePromotion(requirements?.promotion_code || '');
+  const existing = db.prepare("SELECT id FROM orders WHERE user_id=? AND type='course' AND target=? AND status IN ('awaiting_quote','quoted')").get(userId, String(course.id));
+  if (existing) throw new Error('该指导服务已有待处理报价，请在“我的订单”中查看');
+  const orderNo = genOrderNo();
+  const metadata = { course_id:course.id, validity_days:course.validity_days, degree:course.degree, requirements:requirements || {} };
+  const info = db.prepare(`INSERT INTO orders (order_no,user_id,type,target,target_name,status,item_name,quantity,custom_requirements,metadata)
+    VALUES (?,?,?,?,?,'awaiting_quote',?,1,?,?)`).run(orderNo, userId, 'course', String(course.id), course.title, course.title, String(requirements?.note || '').slice(0, 5000), JSON.stringify(metadata));
+  ensureServiceProject({ userId, serviceType:'thesis_coaching', sourceType:'order', sourceId:Number(info.lastInsertRowid), orderId:Number(info.lastInsertRowid), requestSnapshot:{ course_id:course.id, course_title:course.title, ...(requirements || {}) }, promotionCode:requirements?.promotion_code || '', status:'evaluating' });
+  return { order: getOrder(orderNo) };
+}
+
+// 用户确认收费变更单后创建补款订单。金额只读取客服已锁定的服务端记录。
+export function createChangeOrderPayment({ userId, changeOrderId, paymentMethod = null }) {
+  requireVerifiedEmailForPayment(userId);
+  const change = db.prepare('SELECT * FROM service_change_orders WHERE id=?').get(changeOrderId);
+  if (!change) throw new Error('变更单不存在');
+  if (change.user_id !== userId) throw new Error('无权操作该变更单');
+  if (!['awaiting_customer', 'payment_pending'].includes(change.status) || change.assessment_type !== 'chargeable' || change.amount_cents <= 0) throw new Error('该变更单当前不能补款');
+  let order = change.payment_order_id ? db.prepare('SELECT * FROM orders WHERE id=?').get(change.payment_order_id) : null;
+  if (order?.status === 'cancelled') {
+    db.prepare("UPDATE service_change_orders SET payment_order_id=NULL,status='awaiting_customer',updated_at=? WHERE id=?").run(now(), change.id);
+    order = null;
+  }
+  if (order && !['quoted', 'pending'].includes(order.status)) throw new Error(`补款订单状态 ${order.status}，请联系客服处理`);
+  if (!order) {
+    const orderNo = genOrderNo();
+    const amount = Math.round(change.amount_cents) / 100;
+    const info = db.prepare(`INSERT INTO orders (order_no,user_id,type,target,target_name,amount,quoted_price,status,item_name,quantity,metadata,expires_at)
+      VALUES (?,?,?,?,?,?,?,'quoted',?,1,?,?)`).run(orderNo, userId, 'change_order', String(change.id), `需求变更单 ${change.change_no}`, amount, amount, `需求变更补款 ${change.change_no}`, JSON.stringify({ change_order_id: change.id, source_order_id: change.source_order_id }), now() + getPaymentConfig().orderExpireSeconds);
+    db.prepare("UPDATE service_change_orders SET payment_order_id=?,status='payment_pending',customer_confirmed_at=?,updated_at=? WHERE id=?").run(Number(info.lastInsertRowid), now(), now(), change.id);
+    order = db.prepare('SELECT * FROM orders WHERE id=?').get(info.lastInsertRowid);
+  }
+  return initiateOrderPayment(order.order_no, paymentMethod);
+}
+
 // 管理员报价：更新 quoted_price / quote_note，状态变为 quoted
 export function adminQuoteOrder(orderId, quotedPrice, quoteNote = '') {
   const price = Number(quotedPrice);
@@ -309,7 +353,7 @@ export function initiateOrderPayment(orderNo, paymentMethod) {
   const order = getOrder(orderNo);
   if (!order) throw new Error('订单不存在');
   requireVerifiedEmailForPayment(order.user_id);
-  if (order.type !== 'feature') throw new Error('仅功能订单支持支付');
+  if (!['feature', 'course', 'change_order'].includes(order.type)) throw new Error('该订单不支持此支付入口');
   if (order.status !== 'quoted') throw new Error(`订单状态 ${order.status}，不能支付`);
   if (order.quoted_price == null || order.quoted_price <= 0) throw new Error('订单尚未报价');
 
@@ -317,6 +361,10 @@ export function initiateOrderPayment(orderNo, paymentMethod) {
   // 状态仍是 quoted（此处仅回填支付渠道与金额，不改变状态）
   db.prepare('UPDATE orders SET amount = ?, payment_method = ?, payment_channel = ? WHERE order_no = ?')
     .run(order.quoted_price, useChannel, useChannel, orderNo);
+  if (order.type === 'course') {
+    db.prepare("UPDATE service_projects SET quote_confirmed_at=?,stage='用户已确认报价',next_action='等待支付结果',updated_at=? WHERE order_id=?")
+      .run(now(), now(), order.id);
+  }
 
   const updated = getOrder(orderNo);
   const payParams = buildPaymentParams(updated, useChannel);
@@ -443,6 +491,13 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
           }
           db.prepare(`UPDATE ${table} SET status = ?, order_id = ? WHERE id = ?`).run('paid', order.id, refId);
         }
+      }
+      if (order.type === 'change_order') {
+        const meta = JSON.parse(order.metadata || '{}');
+        const change = db.prepare('SELECT id,user_id,status,payment_order_id,amount_cents FROM service_change_orders WHERE id=?').get(meta.change_order_id);
+        if (!change || change.user_id !== order.user_id || change.payment_order_id !== order.id) throw new Error('变更单归属异常，支付已取消');
+        if (change.status !== 'payment_pending' || Math.round(Number(order.amount) * 100) !== change.amount_cents) throw new Error('变更单金额或状态已变化，支付已取消');
+        db.prepare("UPDATE service_change_orders SET status='in_progress',updated_at=? WHERE id=?").run(now(), change.id);
       }
     },
   });

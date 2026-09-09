@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { toast } from '../../components/Toast.jsx';
 import { Refresh } from '../../components/Icons.jsx';
+import FormalQuoteModal from '../../components/FormalQuoteModal.jsx';
 
 const LEVEL_LABEL = { general: '普通期刊', core: '核心期刊', sci: 'SCI / EI' };
-const QUOTE_LABEL = { none: '待报价', pending: '待审批', approved: '已通过', rejected: '已驳回' };
+const QUOTE_LABEL = { none: '待报价', pending: '旧版待审批', awaiting_customer: '待用户确认', approved: '用户已确认', rejected: '已驳回' };
 
 // 客服：期刊发表对接（查看需求 / 标记对接 / 提交报价）
 export default function SupportPublicationOrders() {
@@ -12,8 +13,8 @@ export default function SupportPublicationOrders() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
-  const [quoteId, setQuoteId] = useState(null);
-  const [quotePrice, setQuotePrice] = useState('');
+  const [quoteItem, setQuoteItem] = useState(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -36,10 +37,9 @@ export default function SupportPublicationOrders() {
     try { await api.supportUpdatePublicationContact(id, s); toast.success('对接状态已更新'); load(); } catch (err) { toast.error(err.message); }
   };
 
-  const submitQuote = async () => {
-    const price = Number(quotePrice);
-    if (!Number.isFinite(price) || price < 0) { toast.warning('请填写有效报价'); return; }
-    try { await api.supportQuotePublicationOrder(quoteId, price); toast.success('报价已提交，待管理员审批'); setQuoteId(null); setQuotePrice(''); load(); } catch (err) { toast.error(err.message); }
+  const submitQuote = async (payload) => {
+    setQuoteBusy(true);
+    try { await api.supportQuotePublicationOrder(quoteItem.id, payload); toast.success('正式报价已发送，等待用户确认'); setQuoteItem(null); load(); } catch (err) { toast.error(err.message); } finally { setQuoteBusy(false); }
   };
 
   return (
@@ -97,7 +97,7 @@ export default function SupportPublicationOrders() {
                   <div className="flex flex-col gap-1">
                     {it.status === 'pending' && (
                       <>
-                        <button onClick={() => { setQuoteId(it.id); setQuotePrice(it.quoted_price != null ? String(it.quoted_price) : ''); }} className="btn-primary px-2 py-1 text-[11px]">报价</button>
+                        <button onClick={() => setQuoteItem(it)} className="btn-primary px-2 py-1 text-[11px]">正式报价</button>
                         <button onClick={() => updateContact(it.id, 'contacted')} className="btn-ghost px-2 py-1 text-[11px]">标记已对接</button>
                         <button onClick={() => updateContact(it.id, 'completed')} className="btn-ghost px-2 py-1 text-[11px]">标记完成</button>
                       </>
@@ -114,18 +114,7 @@ export default function SupportPublicationOrders() {
         </table>
       </div>
 
-      {quoteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={(e) => { if (e.target === e.currentTarget) setQuoteId(null); }}>
-          <div className="w-[360px] rounded-xl bg-white p-6 shadow-card">
-            <h3 className="text-base font-semibold text-ink">提交报价</h3>
-            <input className="input mt-4" type="number" step="0.01" placeholder="报价金额（元）" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} />
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setQuoteId(null)} className="btn-ghost px-4 py-2 text-sm">取消</button>
-              <button onClick={submitQuote} className="btn-primary px-4 py-2 text-sm">提交（待审批）</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <FormalQuoteModal open={!!quoteItem} initial={quoteItem ? { quoted_price: quoteItem.quoted_price ?? '', discipline_category: quoteItem.discipline_category || 'humanities', estimated_hours: quoteItem.estimated_hours || '', quote_scope: quoteItem.quote_scope || '', quote_exclusions: quoteItem.quote_exclusions || '' } : null} busy={quoteBusy} onClose={() => setQuoteItem(null)} onSubmit={submitQuote} />
     </div>
   );
 }

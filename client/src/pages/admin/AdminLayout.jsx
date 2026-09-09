@@ -8,28 +8,38 @@ import {
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 import TwoFactorModal from '../../components/TwoFactorModal.jsx';
 
-const nav = [
-  { to: '/admin', label: '概览', icon: ChartBar, end: true },
-  { to: '/admin/finance', label: '财务中心', icon: Wallet, end: false },
-  { to: '/admin/courses', label: '课程管理', icon: BookOpen, end: false },
-  { to: '/admin/course-orders', label: '课程对接', icon: Wechat, end: false },
-  { to: '/admin/graduation', label: '毕业作品', icon: Cpu, end: false },
-  { to: '/admin/graduation-orders', label: '作品对接', icon: Wechat, end: false },
-  { to: '/admin/patent-orders', label: '专利申请', icon: Shield, end: false },
-  { to: '/admin/publication-orders', label: '期刊发表', icon: Book, end: false },
-  { to: '/admin/service-projects', label: '服务履约', icon: Activity, end: false },
-  { to: '/admin/operations', label: '运行监控', icon: Activity, end: false },
-  { to: '/admin/after-sales', label: '售后中心', icon: Receipt, end: false },
-  { to: '/admin/promotion', label: '推广渠道', icon: Tag, end: false },
-  { to: '/admin/features', label: '功能定价', icon: Tag, end: false },
-  { to: '/admin/quotes', label: '报价管理', icon: Receipt, end: false },
-  { to: '/admin/orders', label: '订单管理', icon: Receipt, end: false },
-  { to: '/admin/templates', label: '模板管理', icon: Layers, end: false },
-  { to: '/admin/models', label: '模型配置', icon: Cpu, end: false },
-  { to: '/admin/users', label: '用户管理', icon: Users, end: false },
-  { to: '/admin/logs', label: '使用日志', icon: Activity, end: false },
-  { to: '/admin/operation-logs', label: '操作审计', icon: Shield, end: false },
-  { to: '/admin/settings', label: '系统设置', icon: Sliders, end: false },
+const navGroups = [
+  { label: '经营总览', items: [
+    { to: '/admin', label: '业务概览', icon: ChartBar, end: true },
+    { to: '/admin/finance', label: '财务中心', icon: Wallet },
+    { to: '/admin/operations', label: '运行监控', icon: Activity },
+  ] },
+  { label: '服务监督（只读）', items: [
+    { to: '/admin/service-projects', label: '履约全景', icon: Activity },
+    { to: '/admin/course-orders', label: '论文指导记录', icon: Wechat },
+    { to: '/admin/graduation-orders', label: '毕业作品记录', icon: Wechat },
+    { to: '/admin/patent-orders', label: '专利服务记录', icon: Shield },
+    { to: '/admin/publication-orders', label: '期刊服务记录', icon: Book },
+    { to: '/admin/after-sales', label: '售后中心', icon: Receipt },
+    { to: '/admin/change-orders', label: '需求变更记录', icon: Receipt },
+  ] },
+  { label: '商品与定价', items: [
+    { to: '/admin/service-pricing', label: '人工服务定价', icon: Wallet },
+    { to: '/admin/features', label: 'AI 功能定价', icon: Tag },
+    { to: '/admin/courses', label: '指导产品', icon: BookOpen },
+    { to: '/admin/graduation', label: '毕业作品产品', icon: Cpu },
+    { to: '/admin/promotion', label: '推广渠道', icon: Tag },
+    { to: '/admin/templates', label: '模板管理', icon: Layers },
+  ] },
+  { label: '平台治理', items: [
+    { to: '/admin/orders', label: '全部订单', icon: Receipt },
+    { to: '/admin/quotes', label: 'AI 定制报价', icon: Receipt },
+    { to: '/admin/models', label: '模型配置', icon: Cpu },
+    { to: '/admin/users', label: '用户与员工', icon: Users },
+    { to: '/admin/logs', label: '使用日志', icon: Activity },
+    { to: '/admin/operation-logs', label: '操作审计', icon: Shield },
+    { to: '/admin/settings', label: '系统与密钥', icon: Sliders },
+  ] },
 ];
 
 export default function AdminLayout() {
@@ -72,8 +82,10 @@ export default function AdminLayout() {
       </div>
 
       {/* 导航 */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {nav.map((item) => (
+      <nav className="flex-1 overflow-y-auto px-3 py-2">
+        {navGroups.map((group) => <section key={group.label} className="mb-4">
+          <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{group.label}</div>
+          <div className="space-y-1">{group.items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -90,7 +102,8 @@ export default function AdminLayout() {
             <item.icon className="h-[18px] w-[18px]" />
             {item.label}
           </NavLink>
-        ))}
+          ))}</div>
+        </section>)}
       </nav>
 
       {/* 底部 */}

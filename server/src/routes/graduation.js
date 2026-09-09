@@ -38,7 +38,8 @@ router.get('/', (req, res) => {
 // 我的已购毕业作品订单
 router.get('/my/orders', authRequired, (req, res) => {
   const rows = db.prepare(
-    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.purchased_at, gpo.expires_at, gpo.requirements, gpo.quoted_price,
+    `SELECT gpo.id, gpo.status, gpo.contact_status, gpo.purchased_at, gpo.expires_at, gpo.requirements, gpo.quoted_price, gpo.quote_status,
+            gpo.quote_scope, gpo.quote_exclusions, gpo.discipline_category, gpo.estimated_hours,
             gp.id AS project_id, gp.title AS project_title, gp.category, gp.description AS project_description, gp.duration_text,
             o.order_no, o.amount
      FROM graduation_project_orders gpo

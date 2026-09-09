@@ -427,6 +427,12 @@ db.exec(`
 // 毕业作品订单：报价审批状态（none=未报价 / pending=待审批 / approved=已生效 / rejected=已驳回）
 // 客服报价进入 pending，管理员审批通过后 approved 才生效（用户方可支付）
 addColumnIfMissing('graduation_project_orders', 'quote_status', "TEXT NOT NULL DEFAULT 'none'");
+for (const [column, definition] of [
+  ['discipline_category', "TEXT NOT NULL DEFAULT 'humanities'"], ['estimated_hours', 'REAL NOT NULL DEFAULT 0'],
+  ['quote_scope', "TEXT NOT NULL DEFAULT ''"], ['quote_exclusions', "TEXT NOT NULL DEFAULT ''"],
+  ['cost_snapshot_json', "TEXT NOT NULL DEFAULT '{}'"], ['quoted_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL'],
+  ['quote_sent_at', 'INTEGER'], ['quote_confirmed_at', 'INTEGER'],
+]) addColumnIfMissing('graduation_project_orders', column, definition);
 
 // 已有人工服务订单回填到统一服务工作区。INSERT OR IGNORE + 唯一来源键保证每次启动均幂等。
 // 历史订单没有推广码，归因字段保持 NULL；原始需求快照按当时已保存的数据生成。
@@ -512,6 +518,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pub_orders_user ON publication_orders(user_id, id DESC);
   CREATE INDEX IF NOT EXISTS idx_pub_orders_contact ON publication_orders(contact_status);
 `);
+for (const table of ['patent_orders', 'publication_orders']) {
+  for (const [column, definition] of [
+    ['discipline_category', "TEXT NOT NULL DEFAULT 'humanities'"], ['estimated_hours', 'REAL NOT NULL DEFAULT 0'],
+    ['quote_scope', "TEXT NOT NULL DEFAULT ''"], ['quote_exclusions', "TEXT NOT NULL DEFAULT ''"],
+    ['cost_snapshot_json', "TEXT NOT NULL DEFAULT '{}'"], ['quoted_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL'],
+    ['quote_sent_at', 'INTEGER'], ['quote_confirmed_at', 'INTEGER'],
+  ]) addColumnIfMissing(table, column, definition);
+}
 
 // ===== 客服跟进备注（沟通时间线）：课程订单与毕业作品订单共用 =====
 db.exec(`
@@ -592,6 +606,10 @@ const settingsDefaults = {
   full_paper_cost_reserve_doctorate: '70',
   full_paper_cost_reserve_other: '14',
   full_paper_min_profit_markup: '5',
+  // 人工服务成本（元/小时）。报价底线 = 人工成本 × (1 + 最低利润/成本倍数)。
+  service_labor_cost_stem: '80',
+  service_labor_cost_humanities: '50',
+  service_min_profit_markup: '5',
   // 课程定制报价规则（论文 1 对 1 指导）：基础价来自课程"起"价，需求项在其上累加
   course_quote_base_word_count: '10000',   // 基准字数（字），含在起价内
   course_quote_word_price: '500',          // 每超 1 万字加价（元）

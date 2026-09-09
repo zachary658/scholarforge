@@ -386,6 +386,13 @@ export const api = {
   adminSaveEmailConfig: (payload) => request('/admin/email-config', { method: 'PUT', body: payload }),
   adminDeleteSmtpConfig: (payload) => request('/admin/email-config/smtp', { method: 'DELETE', body: payload }),
   adminTestEmailConfig: (payload) => request('/admin/email-config/test', { method: 'POST', body: payload }),
+  listServiceChanges: () => request('/service-changes'),
+  createServiceChange: (payload) => request('/service-changes', { method: 'POST', body: payload }),
+  confirmServiceChange: (id, paymentMethod = null) => request(`/service-changes/${id}/confirm`, { method: 'POST', body: { payment_method: paymentMethod } }),
+  withdrawServiceChange: (id) => request(`/service-changes/${id}/withdraw`, { method: 'POST' }),
+  staffListServiceChanges: (scope, params = {}) => request(`/${scope}/change-orders?${new URLSearchParams(params).toString()}`),
+  supportAssessServiceChange: (id, payload) => request(`/support/change-orders/${id}/assess`, { method: 'PUT', body: payload }),
+  supportCompleteServiceChange: (id) => request(`/support/change-orders/${id}/complete`, { method: 'PUT' }),
 
   // ===== admin: 用户 =====
   adminListUsers: (params) => request(`/admin/users?${new URLSearchParams(params).toString()}`),
@@ -423,7 +430,10 @@ export const api = {
   // ===== support: 毕业作品订单查看 =====
   supportListGraduationOrders: (params) => request(`/support/graduation-orders?${new URLSearchParams(params).toString()}`),
   supportUpdateGraduationContact: (id, status) => request(`/support/graduation-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
-  supportQuoteGraduationOrder: (id, quoted_price) => request(`/support/graduation-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+  supportQuoteGraduationOrder: (id, payload) => request(`/support/graduation-orders/${id}/quote`, { method: 'POST', body: payload }),
+  requestCourseServiceQuote: (payload) => request('/courses/request-quote', { method:'POST', body:payload }),
+  supportListCourseQuoteOrders: () => request('/support/course-quote-orders'),
+  supportQuoteCourseOrder: (id, payload) => request(`/support/course-quote-orders/${id}/quote`, { method:'POST', body:payload }),
 
   // ===== support: 跟进备注 =====
   supportListNotes: (orderType, orderRefId) => request(`/support/notes?order_type=${orderType}&order_ref_id=${orderRefId}`),
@@ -432,10 +442,10 @@ export const api = {
   // ===== support: 专利申请 / 期刊发表对接 =====
   supportListPatentOrders: (params) => request(`/support/patent-orders?${new URLSearchParams(params).toString()}`),
   supportUpdatePatentContact: (id, status) => request(`/support/patent-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
-  supportQuotePatentOrder: (id, quoted_price) => request(`/support/patent-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+  supportQuotePatentOrder: (id, payload) => request(`/support/patent-orders/${id}/quote`, { method: 'POST', body: payload }),
   supportListPublicationOrders: (params) => request(`/support/publication-orders?${new URLSearchParams(params).toString()}`),
   supportUpdatePublicationContact: (id, status) => request(`/support/publication-orders/${id}/contact-status`, { method: 'PUT', body: { status } }),
-  supportQuotePublicationOrder: (id, quoted_price) => request(`/support/publication-orders/${id}/quote`, { method: 'POST', body: { quoted_price } }),
+  supportQuotePublicationOrder: (id, payload) => request(`/support/publication-orders/${id}/quote`, { method: 'POST', body: payload }),
 
   // ===== admin: 专利申请 / 期刊发表管理 =====
   adminListPatentOrders: (params) => request(`/admin/patent-orders?${new URLSearchParams(params).toString()}`),

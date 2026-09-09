@@ -11,7 +11,7 @@ import { toast } from '../components/Toast.jsx';
 
 const LEVEL_LABEL = { general: '普通期刊', core: '核心期刊', sci: 'SCI / EI' };
 const STATUS_LABEL = { pending: '待对接', contacted: '已对接', paid: '已支付', completed: '已完成' };
-const QUOTE_LABEL = { none: '待报价', pending: '报价待审批', approved: '报价已通过', rejected: '报价已驳回' };
+const QUOTE_LABEL = { none: '待报价', pending: '等待客服重新报价', awaiting_customer: '待您确认', approved: '您已确认', rejected: '报价已撤回' };
 
 // 期刊论文发表：服务需求提交 + AI 审稿意见回复 + 我的发表订单
 export default function Publication() {
@@ -242,7 +242,7 @@ export default function Publication() {
             <button onClick={submitService} disabled={submitting} className="btn-primary w-full py-3">
               {submitting ? '提交中…' : '提交发表需求'}
             </button>
-            <p className="text-center text-xs text-slate-400">提交后客服将与您对接选刊建议并报价，管理员审批通过后即可在线支付</p>
+            <p className="text-center text-xs text-slate-400">提交后由客服对接选刊需求并发送正式报价，您确认服务范围后再在线支付</p>
           </div>
         </div>
       )}
@@ -264,16 +264,17 @@ export default function Publication() {
                   {o.amount != null && <span className="ml-2">已支付 ¥{Number(o.amount).toFixed(2)}</span>}
                 </div>
               </div>
-              {o.status === 'pending' && o.quote_status === 'approved' && (
+              {o.quote_scope && <div className="w-full rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900"><div className="font-medium">客服报价范围</div><div className="mt-1 whitespace-pre-wrap">{o.quote_scope}</div>{o.quote_exclusions && <div className="mt-1 text-blue-700">不包含：{o.quote_exclusions}</div>}</div>}
+              {o.status === 'pending' && ['awaiting_customer','approved'].includes(o.quote_status) && (
                 <button onClick={() => handlePay(o)} disabled={payingId === o.id} className="btn-primary px-4 py-2 text-xs">
-                  {payingId === o.id ? '支付中…' : `去支付 ¥${Number(o.quoted_price).toFixed(2)}`}
+                  {payingId === o.id ? '处理中…' : `确认报价并支付 ¥${Number(o.quoted_price).toFixed(2)}`}
                 </button>
               )}
               {o.status === 'pending' && o.quote_status === 'none' && (
                 <span className="text-xs text-slate-400">等待客服报价</span>
               )}
               {o.status === 'pending' && o.quote_status === 'pending' && (
-                <span className="text-xs text-amber-600">报价待管理员审批</span>
+                <span className="text-xs text-amber-600">旧版报价，请等待客服重新发送</span>
               )}
               {o.status === 'paid' && (
                 <span className="flex items-center gap-1 text-xs text-emerald-600"><BadgeCheck className="h-3.5 w-3.5" /> 已支付，服务进行中</span>

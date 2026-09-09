@@ -22,7 +22,7 @@ router.get('/', (req, res) => {
 router.get('/my/orders', authRequired, (req, res) => {
   const rows = db.prepare(
     `SELECT pu.id, pu.paper_title, pu.field, pu.journal_level, pu.requirements, pu.contact, pu.status, pu.contact_status,
-            pu.quoted_price, pu.quote_status, pu.created_at,
+            pu.quoted_price, pu.quote_status, pu.quote_scope, pu.quote_exclusions, pu.discipline_category, pu.estimated_hours, pu.created_at,
             o.order_no, o.amount
      FROM publication_orders pu
      LEFT JOIN orders o ON o.id = pu.order_id
@@ -54,7 +54,7 @@ router.post('/orders', authRequired, (req, res) => {
   res.json({ ok: true, id: info.lastInsertRowid });
 });
 
-// 对已审批报价的发表订单发起支付
+// 用户确认客服正式报价并发起支付
 router.post('/orders/:id/pay', authRequired, (req, res) => {
   const po = db.prepare('SELECT id, user_id, status FROM publication_orders WHERE id = ?').get(req.params.id);
   if (!po) return res.status(404).json({ error: '订单不存在' });

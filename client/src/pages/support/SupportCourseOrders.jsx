@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { Refresh, Check, X, Search, Receipt } from '../../components/Icons.jsx';
 import { toast } from '../../components/Toast.jsx';
 import OrderNotes from '../../components/OrderNotes.jsx';
+import FormalQuoteModal from '../../components/FormalQuoteModal.jsx';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -57,6 +58,9 @@ export default function SupportCourseOrders() {
   const [error, setError] = useState('');
   const [updatingId, setUpdatingId] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [quoteRequests, setQuoteRequests] = useState([]);
+  const [quoteTarget, setQuoteTarget] = useState(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
 
   const SIZE = 20;
 
@@ -67,11 +71,12 @@ export default function SupportCourseOrders() {
       const params = { page: p, size: SIZE };
       if (st) params.status = st;
       if (kw) params.q = kw;
-      const data = await api.supportListCourseOrders(params);
+      const [data, quoteData] = await Promise.all([api.supportListCourseOrders(params), api.supportListCourseQuoteOrders()]);
       setItems(data.items || []);
       setPage(data.page || p);
       setPages(data.pages || 1);
       setTotal(data.total ?? (data.items || []).length);
+      setQuoteRequests(quoteData.items || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -104,6 +109,20 @@ export default function SupportCourseOrders() {
     }
   };
 
+  const sendQuote = async (payload) => {
+    setQuoteBusy(true);
+    try {
+      await api.supportQuoteCourseOrder(quoteTarget.id, payload);
+      toast.success('正式报价已发送给用户');
+      setQuoteTarget(null);
+      await load(page, status, q);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setQuoteBusy(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
       <div className="flex items-end justify-between">
@@ -119,6 +138,21 @@ export default function SupportCourseOrders() {
       {error && (
         <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
       )}
+
+      <section className="card mt-6 p-5">
+        <div className="flex items-center justify-between">
+          <div><h2 className="font-semibold text-ink">待复核报价</h2><p className="mt-1 text-xs text-slate-500">客服先确认实际范围、学科类别和工时，再向用户发送唯一正式报价</p></div>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{quoteRequests.filter((item) => item.status === 'awaiting_quote').length} 待处理</span>
+        </div>
+        <div className="mt-4 space-y-3">
+          {quoteRequests.length === 0 ? <div className="rounded-lg bg-slate-50 px-4 py-5 text-center text-sm text-slate-400">暂无待复核需求</div> : quoteRequests.map((item) => (
+            <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4">
+              <div className="min-w-0"><div className="font-medium text-ink">{item.course_title}</div><div className="mt-1 text-xs text-slate-500">{item.user_name || '—'} · {item.user_email} · {reqSummary(item.requirements)}</div></div>
+              <button className="btn-primary text-xs" onClick={() => setQuoteTarget(item)}>{item.status === 'quoted' ? '修订报价' : '复核并报价'}</button>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
@@ -255,6 +289,7 @@ export default function SupportCourseOrders() {
           </div>
         </div>
       )}
+      <FormalQuoteModal open={!!quoteTarget} initial={quoteTarget ? { quoted_price:quoteTarget.quoted_price || '', discipline_category:quoteTarget.discipline_category, estimated_hours:quoteTarget.estimated_hours || '', quote_scope:quoteTarget.quote_scope || '', quote_exclusions:quoteTarget.quote_exclusions || '' } : null} busy={quoteBusy} onClose={() => setQuoteTarget(null)} onSubmit={sendQuote} />
     </div>
   );
 }

@@ -22,7 +22,7 @@ router.get('/', (req, res) => {
 router.get('/my/orders', authRequired, (req, res) => {
   const rows = db.prepare(
     `SELECT po.id, po.patent_type, po.title, po.tech_description, po.contact, po.status, po.contact_status,
-            po.quoted_price, po.quote_status, po.created_at,
+            po.quoted_price, po.quote_status, po.quote_scope, po.quote_exclusions, po.discipline_category, po.estimated_hours, po.created_at,
             o.order_no, o.amount
      FROM patent_orders po
      LEFT JOIN orders o ON o.id = po.order_id
@@ -32,7 +32,7 @@ router.get('/my/orders', authRequired, (req, res) => {
   res.json({ orders: rows });
 });
 
-// 提交专利申请需求（生成待对接订单，客服报价 → 管理员审批 → 用户支付）
+// 提交专利申请需求（生成待对接订单，客服正式报价 → 用户确认并支付）
 router.post('/orders', authRequired, (req, res) => {
   const { patent_type, title, tech_description, contact } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: '请填写发明/设计名称' });
@@ -53,7 +53,7 @@ router.post('/orders', authRequired, (req, res) => {
   res.json({ ok: true, id: info.lastInsertRowid });
 });
 
-// 对已审批报价的专利订单发起支付
+// 用户确认客服正式报价并发起支付
 router.post('/orders/:id/pay', authRequired, (req, res) => {
   const po = db.prepare('SELECT id, user_id, status FROM patent_orders WHERE id = ?').get(req.params.id);
   if (!po) return res.status(404).json({ error: '订单不存在' });

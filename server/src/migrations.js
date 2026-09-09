@@ -431,6 +431,67 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: '015_support_quote_ownership',
+    name: '客服报价权限、学科成本快照与用户确认',
+    up(db) {
+      for (const table of ['graduation_project_orders', 'patent_orders', 'publication_orders']) {
+        addColumnIfMissing(db, table, 'discipline_category', "TEXT NOT NULL DEFAULT 'humanities'");
+        addColumnIfMissing(db, table, 'estimated_hours', 'REAL NOT NULL DEFAULT 0');
+        addColumnIfMissing(db, table, 'quote_scope', "TEXT NOT NULL DEFAULT ''");
+        addColumnIfMissing(db, table, 'quote_exclusions', "TEXT NOT NULL DEFAULT ''");
+        addColumnIfMissing(db, table, 'cost_snapshot_json', "TEXT NOT NULL DEFAULT '{}'");
+        addColumnIfMissing(db, table, 'quoted_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+        addColumnIfMissing(db, table, 'quote_sent_at', 'INTEGER');
+        addColumnIfMissing(db, table, 'quote_confirmed_at', 'INTEGER');
+      }
+      addColumnIfMissing(db, 'service_projects', 'discipline_category', "TEXT NOT NULL DEFAULT 'humanities'");
+    },
+  },
+  {
+    version: '016_service_change_orders',
+    name: '人工服务需求变更单与补款闭环',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS service_change_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        change_no TEXT UNIQUE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE RESTRICT,
+        payment_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','needs_info','awaiting_customer','payment_pending','in_progress','completed','rejected','withdrawn')),
+        assessment_type TEXT NOT NULL DEFAULT 'pending' CHECK(assessment_type IN ('pending','included','chargeable','rejected')),
+        request_summary TEXT NOT NULL,
+        requested_deadline TEXT NOT NULL DEFAULT '',
+        discipline_category TEXT NOT NULL DEFAULT 'humanities',
+        estimated_hours REAL NOT NULL DEFAULT 0,
+        change_scope TEXT NOT NULL DEFAULT '',
+        quote_exclusions TEXT NOT NULL DEFAULT '',
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        cost_snapshot_json TEXT NOT NULL DEFAULT '{}',
+        support_note TEXT NOT NULL DEFAULT '',
+        quoted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        quoted_at INTEGER,
+        customer_confirmed_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_service_changes_user ON service_change_orders(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_service_changes_status ON service_change_orders(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_service_changes_source ON service_change_orders(source_order_id, created_at DESC);`);
+    },
+  },
+  {
+    version: '017_course_support_quotes',
+    name: '课程指导客服正式报价留痕',
+    up(db) {
+      addColumnIfMissing(db, 'service_projects', 'quote_exclusions', "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(db, 'service_projects', 'cost_snapshot_json', "TEXT NOT NULL DEFAULT '{}'");
+      addColumnIfMissing(db, 'service_projects', 'quoted_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+      addColumnIfMissing(db, 'service_projects', 'quote_sent_at', 'INTEGER');
+      addColumnIfMissing(db, 'service_projects', 'quote_confirmed_at', 'INTEGER');
+    },
+  },
 ];
 
 export function runMigrations(db) {

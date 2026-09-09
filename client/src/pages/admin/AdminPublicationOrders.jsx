@@ -4,7 +4,8 @@ import { toast } from '../../components/Toast.jsx';
 import { Refresh } from '../../components/Icons.jsx';
 
 const LEVEL_LABEL = { general: '普通期刊', core: '核心期刊', sci: 'SCI / EI' };
-const QUOTE_LABEL = { none: '待报价', pending: '待审批', approved: '已通过', rejected: '已驳回' };
+const QUOTE_LABEL = { none: '待客服报价', pending: '历史待处理', awaiting_customer: '待用户确认', approved: '用户已确认', rejected: '已关闭' };
+const READ_ONLY = true;
 
 // 管理端：期刊发表订单（列表 / 对接状态 / 报价审批）
 export default function AdminPublicationOrders() {
@@ -19,7 +20,7 @@ export default function AdminPublicationOrders() {
       const params = { page: 1, size: 100 };
       const d = await api.adminListPublicationOrders(params);
       const all = d.items || [];
-      setItems(pendingOnly ? all.filter((i) => i.quote_status === 'pending') : all);
+      setItems(pendingOnly ? all.filter((i) => ['pending', 'awaiting_customer'].includes(i.quote_status)) : all);
       setTotal(d.total || 0);
     } catch (err) {
       toast.error(err.message);
@@ -43,11 +44,11 @@ export default function AdminPublicationOrders() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">期刊发表管理</h1>
-          <p className="mt-1 text-sm text-slate-500">共 {total} 条发表订单</p>
+          <p className="mt-1 text-sm text-slate-500">共 {total} 条发表订单 · 管理员只读监督，报价与履约由客服处理</p>
         </div>
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-slate-600">
-            <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} /> 只看待审批
+            <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} /> 只看待确认
           </label>
           <button onClick={load} className="btn-ghost text-xs"><Refresh className="h-4 w-4" /> 刷新</button>
         </div>
@@ -83,13 +84,14 @@ export default function AdminPublicationOrders() {
                 <td className="px-4 py-3 text-xs">{it.status === 'paid' ? <span className="text-emerald-600">已支付 ¥{Number(it.amount || 0).toFixed(2)}</span> : '未支付'}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-col gap-1">
-                    {it.quote_status === 'pending' && (
+                    {!READ_ONLY && it.quote_status === 'pending' && (
                       <>
                         <button onClick={() => approve(it.id, 'approved')} className="btn-primary px-2 py-1 text-[11px]">通过报价</button>
                         <button onClick={() => approve(it.id, 'rejected')} className="btn-ghost px-2 py-1 text-[11px] text-red-600">驳回</button>
                       </>
                     )}
-                    <button onClick={() => updateContact(it.id, 'completed')} className="btn-ghost px-2 py-1 text-[11px]">标记完成</button>
+                    {!READ_ONLY && <button onClick={() => updateContact(it.id, 'completed')} className="btn-ghost px-2 py-1 text-[11px]">标记完成</button>}
+                    {READ_ONLY && <span className="text-xs text-slate-400">仅查看</span>}
                   </div>
                 </td>
               </tr>

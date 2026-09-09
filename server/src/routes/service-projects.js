@@ -122,7 +122,7 @@ router.get('/promotion/validate/:code', (req, res) => {
   } catch (err) { res.status(400).json({ valid: false, error: err.message }); }
 });
 
-export function createServiceProjectStaffRouter() {
+export function createServiceProjectStaffRouter({ readOnly = false } = {}) {
   const staff = Router();
   staff.use(supportRequired);
   staff.get('/', (req, res) => res.json({ projects: listServiceProjects({ status: req.query.status, serviceType: req.query.service_type, q: req.query.q }) }));
@@ -133,6 +133,7 @@ export function createServiceProjectStaffRouter() {
     res.json({ project: { ...project, internal_note: internal?.internal_note || '' } });
   });
   staff.put('/:id', (req, res) => {
+    if (readOnly) return res.status(403).json({ error: '管理员仅可监督查看，履约操作请由客服工作台完成' });
     try {
       const project = updateServiceProject(req.params.id, {
         expectedVersion: req.body?.expected_version,
@@ -155,6 +156,10 @@ export function createServiceProjectStaffRouter() {
     } catch (err) { res.status(err.status || 400).json({ error: err.message, code: err.code }); }
   });
   staff.post('/:id/attachments', upload.single('file'), (req, res) => {
+    if (readOnly) {
+      if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+      return res.status(403).json({ error: '管理员仅可监督查看，交付文件请由客服上传' });
+    }
     const project = getServiceProject(req.params.id);
     if (!project) {
       if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }

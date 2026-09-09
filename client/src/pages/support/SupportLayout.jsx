@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth.jsx';
-import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock, Shield, Book } from '../../components/Icons.jsx';
+import { Wechat, BookOpen, Cpu, Grid, Logout, Menu, X, ArrowRight, Lock, Shield, Book, Receipt } from '../../components/Icons.jsx';
 import ChangePasswordModal from '../../components/ChangePasswordModal.jsx';
 import TwoFactorModal from '../../components/TwoFactorModal.jsx';
 
@@ -13,6 +13,7 @@ const nav = [
   { to: '/support/patent', label: '专利申请', icon: Shield, end: false },
   { to: '/support/publication', label: '期刊发表', icon: Book, end: false },
   { to: '/support/service-projects', label: '服务履约', icon: ArrowRight, end: false },
+  { to: '/support/change-orders', label: '需求变更单', icon: Receipt, end: false },
 ];
 
 export default function SupportLayout() {

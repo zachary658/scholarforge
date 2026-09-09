@@ -4,6 +4,7 @@ import { authRequired } from '../middleware.js';
 import db from '../db.js';
 import { getCourses, getCourse } from '../config-store.js';
 import { computeCourseQuote } from '../services/course-quote.js';
+import { requestCourseServiceQuote } from '../services/payment.js';
 
 const router = Router();
 
@@ -28,6 +29,12 @@ router.post('/quote', authRequired, (req, res) => {
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
   }
+});
+
+router.post('/request-quote', authRequired, (req, res) => {
+  const { course_id, requirements } = req.body || {};
+  try { res.json(requestCourseServiceQuote({ userId:req.user.id, courseId:course_id, requirements:requirements || {} })); }
+  catch (error) { res.status(error.status || 400).json({ error:error.message }); }
 });
 
 // 我的已购课程
