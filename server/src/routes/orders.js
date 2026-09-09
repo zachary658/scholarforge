@@ -84,8 +84,13 @@ router.get('/', authRequired, (req, res) => {
   const orders = db.prepare(
     `SELECT * FROM orders ${where} ORDER BY id DESC LIMIT ? OFFSET ?`
   ).all(...params, size, offset);
+  const afterSales = orders.length ? db.prepare(
+    `SELECT * FROM after_sales_requests WHERE order_id IN (${orders.map(() => '?').join(',')}) ORDER BY id DESC`
+  ).all(...orders.map((order) => order.id)) : [];
+  const latestByOrder = new Map();
+  for (const item of afterSales) if (!latestByOrder.has(item.order_id)) latestByOrder.set(item.order_id, item);
   res.json({
-    orders: orders.map(sanitizeOrder),
+    orders: orders.map((order) => ({ ...sanitizeOrder(order), after_sales: latestByOrder.get(order.id) || null })),
     total, page, size, pages: Math.ceil(total / size),
   });
 });
@@ -94,7 +99,29 @@ router.get('/', authRequired, (req, res) => {
 router.get('/:orderNo', authRequired, (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE order_no = ? AND user_id = ?').get(req.params.orderNo, req.user.id);
   if (!order) return res.status(404).json({ error: '订单不存在' });
-  res.json(sanitizeOrder(order));
+  const afterSales = db.prepare('SELECT * FROM after_sales_requests WHERE order_id=? ORDER BY id DESC').all(order.id);
+  res.json({ ...sanitizeOrder(order), after_sales: afterSales });
+});
+
+router.post('/:orderNo/after-sales', authRequired, (req, res) => {
+  const order = db.prepare('SELECT * FROM orders WHERE order_no=? AND user_id=?').get(req.params.orderNo, req.user.id);
+  if (!order) return res.status(404).json({ error: '订单不存在' });
+  const requestType = String(req.body?.request_type || 'technical_failure');
+  const reason = String(req.body?.reason || '').trim().slice(0, 2000);
+  if (!['cancel', 'refund', 'technical_failure'].includes(requestType)) return res.status(400).json({ error: '售后类型无效' });
+  if (!reason) return res.status(400).json({ error: '请说明售后原因' });
+  if (requestType === 'cancel' && !['pending', 'quoted', 'awaiting_quote'].includes(order.status)) return res.status(409).json({ error: '已支付订单不能按未开始取消，请选择退款或技术故障' });
+  if (requestType !== 'cancel' && !['paid', 'processing', 'completed'].includes(order.status)) return res.status(409).json({ error: '该订单尚未支付，无需申请退款' });
+  try {
+    const info = db.prepare(
+      `INSERT INTO after_sales_requests (order_id,user_id,request_type,reason,requested_amount_cents)
+       VALUES (?,?,?,?,?)`
+    ).run(order.id, req.user.id, requestType, reason, Math.round(Number(order.amount || 0) * 100));
+    res.json({ ok: true, id: info.lastInsertRowid, message: '售后申请已提交，处理结果会在订单中更新' });
+  } catch (err) {
+    if (/UNIQUE constraint/i.test(err.message || '')) return res.status(409).json({ error: '该订单已有处理中售后申请' });
+    throw err;
+  }
 });
 
 // 脱敏：不向用户暴露交易流水号等内部字段

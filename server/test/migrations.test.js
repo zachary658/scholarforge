@@ -19,7 +19,7 @@ const { runMigrations } = await import('../src/migrations.js');
 const appliedVersions = () => db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
 const columnsOf = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 
-const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp', '012_secure_settings', '013_admin_audit_hmac'];
+const EXPECTED_VERSIONS = ['001_initial', '002_order_events', '003_project_workflow', '004_task_retry', '005_project_resources', '006_evidence_library', '007_service_projects_and_promotion', '008_operational_metrics', '009_email_verification', '010_admin_operation_log', '011_staff_totp', '012_secure_settings', '013_admin_audit_hmac', '014_commercial_foundation'];
 
 test('schema_migrations 记录全部版本', () => {
   assert.deepEqual(appliedVersions(), EXPECTED_VERSIONS);
@@ -98,4 +98,14 @@ test('012：敏感配置保险箱已创建', () => {
 test('013：操作审计具备哈希与密钥版本列', () => {
   assert.ok(columnsOf('admin_operation_logs').includes('hash_version'));
   assert.ok(columnsOf('admin_operation_logs').includes('key_version'));
+});
+
+test('014：商业漏斗、售后、渠道佣金与履约成本结构已创建', () => {
+  for (const table of ['business_events', 'after_sales_requests']) {
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
+  }
+  assert.ok(columnsOf('promotion_partners').includes('commission_bps'));
+  for (const column of ['estimated_hours', 'actual_hours', 'internal_cost_cents', 'scope_summary']) {
+    assert.ok(columnsOf('service_projects').includes(column));
+  }
 });

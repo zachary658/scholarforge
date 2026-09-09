@@ -864,7 +864,7 @@ function ProjectDetail({ project, onClose, onEdit, initialTab = 'pipeline' }) {
               </div>
               {confirmedAt && (
                 <div className="mb-2 rounded-md bg-green-50 px-3 py-2 text-xs text-green-600">
-                  大纲已确认，可开始「分章节生成」或「全文生成」
+                  大纲已确认，可开始「分章节辅助」或「研究初稿生成」
                 </div>
               )}
               {outline.length === 0 && (

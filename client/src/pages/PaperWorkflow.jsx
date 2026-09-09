@@ -191,7 +191,7 @@ export default function PaperWorkflow() {
       setSearchParams({ projectId: String(pid) });
       setCreateMode(false);
       await loadAll(pid);
-      toast.success('已创建完整论文工作区');
+      toast.success('已创建研究初稿工作区');
     } catch (err) {
       toast.error('创建失败：' + err.message);
     } finally {
@@ -208,7 +208,7 @@ export default function PaperWorkflow() {
         description: project?.description, writingRequirements: project?.writing_requirements,
       });
       await loadAll(projectId);
-      toast.success('已进入完整论文流程');
+      toast.success('已进入研究初稿流程');
     } catch (err) {
       toast.error('启动失败：' + err.message);
     }
@@ -449,7 +449,7 @@ export default function PaperWorkflow() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-[560px] max-w-full rounded-xl bg-white shadow-card">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <h3 className="font-semibold text-ink">新建完整论文工作区</h3>
+              <h3 className="font-semibold text-ink">新建研究初稿工作区</h3>
               <button onClick={() => setCreateMode(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
             <form onSubmit={doCreateAndStart} className="space-y-4 px-6 py-5">
@@ -487,7 +487,7 @@ export default function PaperWorkflow() {
       {/* 顶部标题 */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-bold text-ink">完整论文流程</h1>
+          <h1 className="text-xl font-bold text-ink">研究初稿流程</h1>
           <p className="mt-1 text-sm text-slate-500">按步骤推进：文献 → 大纲 → 逐章生成 → 单章确认 → 全文检查 → 输出，无需自己想下一步</p>
         </div>
         {project && (
@@ -516,10 +516,10 @@ export default function PaperWorkflow() {
       {/* setup：开始完整论文流程 */}
       {wf?.state === 'setup' && (
         <div className="mt-6 card p-6">
-          <h3 className="font-semibold text-ink">开始完整论文流程</h3>
-          <p className="mt-1 text-sm text-slate-500">以下信息将作为全文生成的上下文：<span className="font-medium">{project?.title || '（未命名）'}</span> · {project?.field || '未设置学科'} · {project?.degree || '未设置学历'}</p>
+          <h3 className="font-semibold text-ink">开始研究初稿流程</h3>
+          <p className="mt-1 text-sm text-slate-500">以下信息将作为初稿生成的上下文：<span className="font-medium">{project?.title || '（未命名）'}</span> · {project?.field || '未设置学科'} · {project?.degree || '未设置学历'}</p>
           <div className="mt-4 flex gap-3">
-            <button onClick={startWorkflow} className="btn-primary"><Pen className="h-4 w-4" /> 开始完整论文流程</button>
+            <button onClick={startWorkflow} className="btn-primary"><Pen className="h-4 w-4" /> 开始研究初稿流程</button>
             <button onClick={() => navigate(`/app/projects?projectId=${projectId}&tab=overview`)} className="btn-ghost">编辑信息</button>
           </div>
         </div>

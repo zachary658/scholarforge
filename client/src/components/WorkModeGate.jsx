@@ -32,8 +32,8 @@ export default function WorkModeGate() {
         <button onClick={() => choose('full')} className="flex w-full items-start gap-3 rounded-xl border border-accent/30 bg-accent-50/50 p-4 text-left transition hover:bg-accent-50 focus:outline-none focus:ring-2 focus:ring-accent/40">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-accent text-white"><Layers className="h-5 w-5" /></div>
           <div>
-            <div className="font-semibold text-ink">生成完整论文</div>
-            <div className="mt-1 text-sm leading-6 text-slate-500">真实文献检索 → 大纲确认 → 逐章生成与确认 → 全文检查 → 输出 Word。</div>
+            <div className="font-semibold text-ink">创建研究初稿项目</div>
+            <div className="mt-1 text-sm leading-6 text-slate-500">真实文献检索 → 大纲确认 → 逐章辅助与确认 → 全文检查 → 输出带 AI 标识的 Word 初稿。</div>
           </div>
         </button>
         <button onClick={() => choose('other')} className="flex w-full items-start gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-accent/40">
@@ -54,7 +54,7 @@ export default function WorkModeGate() {
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Cpu className="h-5 w-5" /></div>
           <div>
             <div className="font-semibold text-ink">毕业作品指导</div>
-            <div className="mt-1 text-sm leading-6 text-slate-500">提交程序、设计、仿真或图纸需求，在线跟踪评估、制作、验收和交付。</div>
+            <div className="mt-1 text-sm leading-6 text-slate-500">提交程序、设计、仿真或图纸指导需求，在线跟踪评估、辅导、验收和交付。</div>
           </div>
         </button>
       </div>

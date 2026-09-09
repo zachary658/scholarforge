@@ -10,8 +10,8 @@ import {
 } from '../components/Icons.jsx';
 
 const tools = [
-  { to: '/app/paper-workflow', icon: Layers, title: '完整论文流程', desc: '一步步生成：文献→大纲→逐章→检查→输出', color: 'bg-accent-50 text-accent' },
-  { to: '/app/writing', icon: Pen, title: 'AI 论文写作', desc: '大纲 / 段落 / 摘要 / 全文，支持深度文献调研', color: 'bg-accent-50 text-accent' },
+  { to: '/app/paper-workflow', icon: Layers, title: '研究初稿流程', desc: '一步步完成：文献→大纲→逐章→检查→输出', color: 'bg-accent-50 text-accent' },
+  { to: '/app/writing', icon: Pen, title: 'AI 研究写作', desc: '大纲 / 段落 / 摘要 / 初稿，支持深度文献调研', color: 'bg-accent-50 text-accent' },
   { to: '/app/proposal', icon: FileWord, title: '开题报告', desc: '填写研究要素，生成开题报告 Word', color: 'bg-violet-50 text-violet-600' },
   { to: '/app/literature-review', icon: Book, title: '文献综述', desc: '主题分类梳理，含文献引用', color: 'bg-indigo-50 text-indigo-600' },
   { to: '/app/task-book', icon: FileText, title: '任务书', desc: '毕业论文任务书，含进度安排', color: 'bg-teal-50 text-teal-600' },
@@ -71,7 +71,7 @@ export default function Dashboard() {
         <div className="flex gap-2">
           <button onClick={() => navigate('/app/paper-workflow')} className="btn-primary">
             <Pen className="h-4 w-4" />
-            生成完整论文
+            创建研究初稿
           </button>
           <button onClick={() => navigate('/app/projects')} className="btn-ghost">
             <Layers className="h-4 w-4" />

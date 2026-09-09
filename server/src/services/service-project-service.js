@@ -211,14 +211,28 @@ export function updateServiceProject(id, options) {
   const nextAction = String(options.nextAction || defaults[2]).trim().slice(0, 300);
   const note = String(options.note || '').trim().slice(0, 2000);
   const internalNote = String(options.internalNote || '').trim().slice(0, 2000);
+  const scopeSummary = options.scopeSummary == null
+    ? current.scope_summary
+    : String(options.scopeSummary || '').trim().slice(0, 2000);
+  const estimatedHours = options.estimatedHours == null ? Number(current.estimated_hours || 0) : Number(options.estimatedHours);
+  const actualHours = options.actualHours == null ? Number(current.actual_hours || 0) : Number(options.actualHours);
+  const internalCostCents = options.internalCostCents == null ? Number(current.internal_cost_cents || 0) : Number(options.internalCostCents);
+  if (![estimatedHours, actualHours].every((value) => Number.isFinite(value) && value >= 0 && value <= 100000)) {
+    const err = new Error('预计/实际工时必须是 0-100000 之间的数字'); err.status = 400; throw err;
+  }
+  if (!Number.isInteger(internalCostCents) || internalCostCents < 0 || internalCostCents > 1000000000) {
+    const err = new Error('内部成本必须是有效的非负整数分'); err.status = 400; throw err;
+  }
   const transaction = db.transaction(() => {
     const result = db.prepare(
       `UPDATE service_projects SET status=?, progress=?, stage=?, next_action=?, eta_at=?,
        user_visible_note=?, internal_note=?, order_id=COALESCE(?, order_id),
+       scope_summary=?, estimated_hours=?, actual_hours=?, internal_cost_cents=?,
        promotion_locked_at=CASE WHEN ? THEN COALESCE(promotion_locked_at, ?) ELSE promotion_locked_at END,
        version=version+1, updated_at=? WHERE id=? AND version=?`
     ).run(target, progress, stage, nextAction, etaAt, note || current.user_visible_note,
-      internalNote || current.internal_note, options.orderId || null, options.lockPromotion ? 1 : 0, now(), now(), id, expected);
+      internalNote || current.internal_note, options.orderId || null, scopeSummary, estimatedHours, actualHours,
+      internalCostCents, options.lockPromotion ? 1 : 0, now(), now(), id, expected);
     if (!result.changes) { const err = new Error('项目已被其他操作更新，请刷新后重试'); err.status = 409; throw err; }
     db.prepare(
       `INSERT OR IGNORE INTO service_project_updates
@@ -259,7 +273,7 @@ export function promotionStats() {
     `SELECT pc.id, pc.code, pc.is_active, pp.name AS partner_name, pp.is_active AS partner_active,
             COUNT(sp.id) AS project_count,
             SUM(CASE WHEN sp.status IN ('paid','in_progress','waiting_customer','pending_acceptance','revision','completed') THEN 1 ELSE 0 END) AS paid_count,
-            COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount ELSE 0 END), 0) AS paid_amount
+            COALESCE(SUM(CASE WHEN o.status IN ('paid','processing','completed') THEN o.amount ELSE 0 END), 0) AS paid_amount
      FROM promotion_codes pc JOIN promotion_partners pp ON pp.id = pc.partner_id
      LEFT JOIN service_projects sp ON sp.promotion_code_id = pc.id LEFT JOIN orders o ON o.id = sp.order_id
      GROUP BY pc.id ORDER BY pc.id DESC`
@@ -268,10 +282,13 @@ export function promotionStats() {
 
 export function promotionPartnerStats() {
   return db.prepare(
-    `SELECT pp.id, pp.name, pp.contact, pp.note, pp.is_active, pp.created_at, pp.updated_at,
+    `SELECT pp.id, pp.name, pp.contact, pp.note, pp.is_active, pp.commission_bps,
+            pp.settlement_hold_days, pp.created_at, pp.updated_at,
             COUNT(DISTINCT pc.id) AS code_count,
             COUNT(DISTINCT sp.id) AS project_count,
-            COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount ELSE 0 END), 0) AS paid_amount
+            COALESCE(SUM(CASE WHEN o.status IN ('paid','processing','completed') THEN o.amount ELSE 0 END), 0) AS paid_amount,
+            COALESCE(SUM(CASE WHEN o.status IN ('paid','processing','completed')
+              THEN ROUND(o.amount * 100) * pp.commission_bps / 10000.0 ELSE 0 END), 0) AS commission_cents
      FROM promotion_partners pp
      LEFT JOIN promotion_codes pc ON pc.partner_id = pp.id
      LEFT JOIN service_projects sp ON sp.promotion_code_id = pc.id

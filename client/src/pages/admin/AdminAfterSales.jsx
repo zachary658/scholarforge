@@ -1,0 +1,22 @@
+import { useCallback, useEffect, useState } from 'react';
+import { api } from '../../lib/api.js';
+import { toast } from '../../components/Toast.jsx';
+import { Refresh } from '../../components/Icons.jsx';
+
+const TYPE = { cancel: '取消订单', refund: '退款申请', technical_failure: '技术故障' };
+const STATUS = { pending: '待处理', approved: '已批准待退款', rejected: '已拒绝', completed: '已完成' };
+
+export default function AdminAfterSales() {
+  const [filter, setFilter] = useState(''); const [items, setItems] = useState([]); const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ status: 'approved', resolution_note: '', payment_reference: '' });
+  const load = useCallback(async () => { try { setItems((await api.adminAfterSales(filter)).items || []); } catch (error) { toast.error(error.message); } }, [filter]);
+  useEffect(() => { load(); }, [load]);
+  const open = (item) => { setEditing(item); setForm({ status: item.request_type === 'cancel' ? 'completed' : 'approved', resolution_note: '', payment_reference: '' }); };
+  const save = async () => { try { await api.adminResolveAfterSales(editing.id, form); toast.success('售后状态已更新'); setEditing(null); await load(); } catch (error) { toast.error(error.message); } };
+  return <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="flex items-end justify-between"><div><h1 className="text-xl font-bold text-ink">售后中心</h1><p className="mt-1 text-sm text-slate-500">统一处理取消、退款和技术故障；退款完成后填写支付渠道流水号再关单。</p></div><button className="btn-ghost text-xs" onClick={load}><Refresh className="h-4 w-4" />刷新</button></div>
+    <select className="input mt-5 w-48" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">全部状态</option>{Object.entries(STATUS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+    <div className="mt-4 overflow-x-auto rounded-xl border bg-white"><table className="w-full text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr><th className="p-3">订单/用户</th><th className="p-3">类型</th><th className="p-3">原因</th><th className="p-3">金额</th><th className="p-3">状态</th><th className="p-3 text-right">操作</th></tr></thead><tbody>{items.map((item) => <tr className="border-t align-top" key={item.id}><td className="p-3"><div className="font-mono text-xs">{item.order_no}</div><div className="mt-1 text-xs text-slate-500">{item.user_name} · {item.user_email}</div></td><td className="p-3">{TYPE[item.request_type] || item.request_type}</td><td className="max-w-sm whitespace-pre-wrap p-3 text-slate-600">{item.reason}</td><td className="p-3">¥{(Number(item.requested_amount_cents || 0) / 100).toFixed(2)}</td><td className="p-3">{STATUS[item.status] || item.status}{item.resolution_note && <div className="mt-1 text-xs text-slate-400">{item.resolution_note}</div>}</td><td className="p-3 text-right">{['pending','approved'].includes(item.status) ? <button className="btn-secondary text-xs" onClick={() => open(item)}>处理</button> : <span className="text-xs text-slate-400">已关单</span>}</td></tr>)}</tbody></table>{!items.length && <div className="p-10 text-center text-sm text-slate-400">暂无售后申请</div>}</div>
+    {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-lg rounded-2xl bg-white p-6"><h2 className="font-semibold text-ink">处理 {editing.order_no}</h2><label className="mt-4 block text-sm">处理结果<select className="input mt-1" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="approved">批准，待线下退款</option><option value="rejected">拒绝</option><option value="completed">已完成</option></select></label><label className="mt-4 block text-sm">处理说明<textarea className="input mt-1" rows="3" value={form.resolution_note} onChange={(event) => setForm({ ...form, resolution_note: event.target.value })} /></label>{form.status === 'completed' && editing.request_type !== 'cancel' && <label className="mt-4 block text-sm">退款流水号<input className="input mt-1" value={form.payment_reference} onChange={(event) => setForm({ ...form, payment_reference: event.target.value })} placeholder="必须先在支付渠道完成退款" /></label>}<div className="mt-5 flex justify-end gap-2"><button className="btn-secondary" onClick={() => setEditing(null)}>取消</button><button className="btn-primary" onClick={save}>确认处理</button></div></div></div>}
+  </div>;
+}

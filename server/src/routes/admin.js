@@ -24,9 +24,12 @@ import { closePendingGraduationOrders, closePendingServiceOrders, adminQuoteOrde
 import { parseTemplate } from '../services/template-parser.js';
 import logger, { configureErrorAlert } from '../logger.js';
 import { getOperationalMetrics } from '../services/operational-metrics.js';
+import { getCommercialOverview } from '../services/commercial-metrics.js';
 import { listAdminAuditLogs, verifyAdminAuditChain } from '../services/admin-audit.js';
 import { deleteSecureSetting, getSecureSettingStatuses, hasSecureSetting, setSecureSetting } from '../services/secure-settings.js';
 import { getMailConfigStatus, sendMail } from '../services/mailer.js';
+import { transitionStatus } from '../services/order-state.js';
+import { updateServiceProject } from '../services/service-project-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(__dirname, '..', '..', 'uploads', 'templates');
@@ -113,6 +116,65 @@ const AMOUNT_SUM = 'COALESCE(SUM(ROUND(amount*100)),0)/100.0';
 
 router.get('/operational-metrics', (req, res) => {
   res.json(getOperationalMetrics(req.query.hours));
+});
+
+router.get('/commercial-overview', (req, res) => {
+  res.json(getCommercialOverview(req.query.days));
+});
+
+router.get('/after-sales', (req, res) => {
+  const status = String(req.query.status || '');
+  const where = status ? 'WHERE ar.status=?' : '';
+  const items = db.prepare(
+    `SELECT ar.*, o.order_no, o.amount AS order_amount, o.status AS order_status,
+            o.target_name, o.item_name, u.email AS user_email, u.name AS user_name
+     FROM after_sales_requests ar JOIN orders o ON o.id=ar.order_id JOIN users u ON u.id=ar.user_id
+     ${where} ORDER BY ar.id DESC LIMIT 200`
+  ).all(...(status ? [status] : []));
+  res.json({ items });
+});
+
+router.put('/after-sales/:id', (req, res) => {
+  const status = String(req.body?.status || '');
+  if (!['approved', 'rejected', 'completed'].includes(status)) return res.status(400).json({ error: '售后状态无效' });
+  const item = db.prepare('SELECT * FROM after_sales_requests WHERE id=?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: '售后申请不存在' });
+  const allowed = item.status === 'pending' ? ['approved', 'rejected', 'completed'] : item.status === 'approved' ? ['rejected', 'completed'] : [];
+  if (!allowed.includes(status)) return res.status(409).json({ error: `售后申请已处于 ${item.status}，不能再次变更` });
+  const note = String(req.body?.resolution_note || '').trim().slice(0, 2000);
+  const reference = String(req.body?.payment_reference || '').trim().slice(0, 200);
+  if (status === 'completed' && item.request_type !== 'cancel' && !reference) {
+    return res.status(400).json({ error: '确认退款完成时必须填写支付渠道退款流水号' });
+  }
+  const apply = db.transaction(() => {
+    db.prepare(`UPDATE after_sales_requests SET status=?, resolution_note=?, payment_reference=?, resolved_by=?,
+      resolved_at=CASE WHEN ? IN ('rejected','completed') THEN strftime('%s','now') ELSE NULL END,
+      updated_at=strftime('%s','now') WHERE id=?`)
+      .run(status, note, reference, req.user.id, status, item.id);
+    if (status === 'completed') {
+      const orderStatus = item.request_type === 'cancel' ? 'cancelled' : 'refunded';
+      const order = db.prepare('SELECT id,order_no,status FROM orders WHERE id=?').get(item.order_id);
+      transitionStatus({
+        domain:'order', table:'orders', recordId:order.id, field:'status', toStatus:orderStatus,
+        operatorId:req.user.id, operatorName:req.user.name || req.user.email,
+        reason:note || `售后申请 ${item.id} 处理完成`, orderId:order.id, orderNo:order.order_no,
+      });
+      const serviceProject = db.prepare('SELECT * FROM service_projects WHERE order_id=?').get(item.order_id);
+      if (serviceProject && !['cancelled','refunded'].includes(serviceProject.status)) {
+        updateServiceProject(serviceProject.id, {
+          expectedVersion:serviceProject.version, status:orderStatus === 'refunded' ? 'refunded' : 'cancelled',
+          note:orderStatus === 'refunded' ? '售后退款已完成' : '未支付订单已取消',
+          operatorId:req.user.id, operatorRole:'admin', idempotencyKey:`after-sales-${item.id}`,
+        });
+      }
+    }
+  });
+  try {
+    apply();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.statusCode || err.status || 400).json({ error: err.message });
+  }
 });
 
 // ========== 概览统计 ==========

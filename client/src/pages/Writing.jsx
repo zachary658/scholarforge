@@ -19,7 +19,7 @@ const writeTypes = [
   { value: 'outline', label: '大纲生成', free: true, desc: '免费不限次' },
   { value: 'paragraph', label: '段落续写' },
   { value: 'abstract', label: '摘要生成' },
-  { value: 'fulltext', label: '全文生成' },
+  { value: 'fulltext', label: '研究初稿' },
 ];
 
 export default function Writing() {

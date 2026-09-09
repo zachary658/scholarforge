@@ -99,4 +99,29 @@ test('进度与预计完成时间拒绝非数字脏数据', () => {
   }), /预计完成时间格式无效/);
 });
 
+test('服务边界、工时和内部成本可归集且有范围校验', () => {
+  let project = ensureServiceProject({ userId, serviceType:'thesis_coaching', sourceType:'costing', sourceId:9005 });
+  project = updateServiceProject(project.id, {
+    expectedVersion: project.version,
+    scopeSummary: '包含研究方法指导与两轮反馈，不代替用户提交',
+    estimatedHours: 12.5,
+    actualHours: 3,
+    internalCostCents: 45600,
+  });
+  assert.equal(project.scope_summary, '包含研究方法指导与两轮反馈，不代替用户提交');
+  assert.equal(project.estimated_hours, 12.5);
+  assert.equal(project.actual_hours, 3);
+  assert.equal(project.internal_cost_cents, 45600);
+  assert.throws(() => updateServiceProject(project.id, { expectedVersion:project.version, estimatedHours:-1 }), /工时必须/);
+  assert.throws(() => updateServiceProject(project.id, { expectedVersion:project.version, internalCostCents:1.5 }), /内部成本必须/);
+});
+
+test('推广方统计按佣金比例计算估算佣金', () => {
+  db.prepare('UPDATE promotion_partners SET commission_bps=1250, settlement_hold_days=14 WHERE id=?').run(partnerId);
+  const row = promotionPartnerStats().find((item) => item.id === partnerId);
+  assert.equal(row.commission_bps, 1250);
+  assert.equal(row.settlement_hold_days, 14);
+  assert.ok(Number(row.commission_cents) >= 0);
+});
+
 test.after(() => { db.close(); fs.rmSync(tmpDir, { recursive:true, force:true }); });

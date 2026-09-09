@@ -27,7 +27,7 @@ export default function Privacy() {
 
       <main className="mx-auto max-w-3xl px-6 py-10">
         <h1 className="text-2xl font-bold text-ink">隐私政策</h1>
-        <p className="mt-1.5 text-xs text-slate-400">更新日期：2026-08-19</p>
+        <p className="mt-1.5 text-xs text-slate-400">更新日期：2026-09-09</p>
 
         <div className="mt-8 space-y-8 text-sm leading-relaxed text-slate-700">
           <section>
@@ -38,6 +38,7 @@ export default function Privacy() {
               <li><strong>使用信息</strong>：您在使用 AI 工具时输入的论文信息、大纲、写作要求及生成结果；</li>
               <li><strong>订单与支付信息</strong>：订单记录、支付渠道返回的交易流水号（我们<strong>不直接存储</strong>您的支付卡号等敏感支付凭证）；</li>
               <li><strong>设备与日志信息</strong>：设备指纹、IP 地址、访问时间等，用于安全风控与反滥用。</li>
+              <li><strong>经营与服务事件</strong>：注册、验证、创建项目、下单、支付、交付及售后状态，用于计算聚合转化指标和改进服务；不向普通用户公开。</li>
             </ul>
           </section>
 

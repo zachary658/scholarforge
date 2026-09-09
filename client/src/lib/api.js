@@ -263,6 +263,7 @@ export const api = {
   createFeatureOrder: (payload) => request('/orders', { method: 'POST', body: payload }),
   requestQuote: (payload) => request('/orders/request-quote', { method: 'POST', body: payload }),
   payOrder: (orderNo, payload) => request(`/orders/${orderNo}/pay`, { method: 'POST', body: payload }),
+  requestAfterSales: (orderNo, payload) => request(`/orders/${orderNo}/after-sales`, { method: 'POST', body: payload }),
 
   // ===== 我的订单 =====
   listOrders: (params) => request(`/orders?${new URLSearchParams(params).toString()}`),
@@ -289,10 +290,14 @@ export const api = {
   staffUploadDeliverable: (scope, id, file) => upload(`/${scope}/service-projects/${id}/attachments`, file),
   adminPromotion: () => request('/admin/promotion'),
   adminOperationalMetrics: (hours = 24) => request(`/admin/operational-metrics?hours=${hours}`),
+  adminCommercialOverview: (days = 30) => request(`/admin/commercial-overview?days=${days}`),
+  adminAfterSales: (status = '') => request(`/admin/after-sales${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  adminResolveAfterSales: (id, payload) => request(`/admin/after-sales/${id}`, { method: 'PUT', body: payload }),
   adminCreatePromotionPartner: (payload) => request('/admin/promotion/partners', { method: 'POST', body: payload }),
   adminCreatePromotionCode: (payload) => request('/admin/promotion/codes', { method: 'POST', body: payload }),
   adminSetPromotionCode: (id, is_active) => request(`/admin/promotion/codes/${id}`, { method: 'PUT', body: { is_active } }),
   adminSetPromotionPartner: (id, is_active) => request(`/admin/promotion/partners/${id}`, { method: 'PUT', body: { is_active } }),
+  adminSetPromotionTerms: (id, payload) => request(`/admin/promotion/partners/${id}/terms`, { method: 'PATCH', body: payload }),
   adminDeletePromotionCode: (id, payload) => request(`/admin/promotion/codes/${id}`, { method: 'DELETE', body: payload }),
   adminDeletePromotionPartner: (id, payload) => request(`/admin/promotion/partners/${id}`, { method: 'DELETE', body: payload }),
 

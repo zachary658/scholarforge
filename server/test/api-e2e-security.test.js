@@ -274,6 +274,22 @@ test('API E2E: 注册/登录/权限/订单支付/回调/上传下载 全链路',
   assert.equal(firstPays.length, 1, '并发支付应恰好一次首次入账，另一笔幂等');
   assert.equal(c1.order.transaction_id, c2.order.transaction_id, '并发支付只应绑定一笔交易号（不重复入账）');
 
+  // 售后闭环：仅订单所有者可提交，且同一订单只能有一个处理中申请
+  r = await api(`/api/orders/${order1.order_no}/after-sales`, {
+    method: 'POST', token: tokenB, body: { request_type: 'technical_failure', reason: '越权申请' },
+  });
+  assert.equal(r.status, 404, 'B 不可为 A 的订单申请售后');
+  r = await api(`/api/orders/${order1.order_no}/after-sales`, {
+    method: 'POST', token: tokenA, body: { request_type: 'technical_failure', reason: '生成服务持续返回错误' },
+  });
+  assert.equal(r.status, 200, 'A 可为已支付订单提交售后');
+  r = await api(`/api/orders/${order1.order_no}/after-sales`, {
+    method: 'POST', token: tokenA, body: { request_type: 'refund', reason: '重复申请' },
+  });
+  assert.equal(r.status, 409, '同一订单不能重复提交处理中售后');
+  r = await api('/api/orders', { token: tokenA });
+  assert.equal((await r.json()).orders.find((o) => o.order_no === order1.order_no).after_sales.status, 'pending', '订单列表应返回最新售后状态');
+
   // 订单列表归属：B 看不到 A 的订单
   r = await api('/api/orders', { token: tokenB });
   const listB = (await r.json()).orders;

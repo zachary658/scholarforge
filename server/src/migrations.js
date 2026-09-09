@@ -362,6 +362,75 @@ const MIGRATIONS = [
       addColumnIfMissing(db, 'admin_operation_logs', 'key_version', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    version: '014_commercial_foundation',
+    name: '商业漏斗、售后、渠道佣金与履约成本',
+    up(db) {
+      addColumnIfMissing(db, 'promotion_partners', 'commission_bps', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'promotion_partners', 'settlement_hold_days', 'INTEGER NOT NULL DEFAULT 7');
+      addColumnIfMissing(db, 'service_projects', 'estimated_hours', 'REAL NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'service_projects', 'actual_hours', 'REAL NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'service_projects', 'internal_cost_cents', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'service_projects', 'scope_summary', "TEXT NOT NULL DEFAULT ''");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS business_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_name TEXT NOT NULL,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+          order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+          value_cents INTEGER NOT NULL DEFAULT 0,
+          metadata_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_business_events_name_time ON business_events(event_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_business_events_user_time ON business_events(user_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS after_sales_requests (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          request_type TEXT NOT NULL CHECK(request_type IN ('cancel','refund','technical_failure')),
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','completed')),
+          requested_amount_cents INTEGER NOT NULL DEFAULT 0,
+          resolution_note TEXT NOT NULL DEFAULT '',
+          payment_reference TEXT NOT NULL DEFAULT '',
+          resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          resolved_at INTEGER,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_after_sales_open_order ON after_sales_requests(order_id) WHERE status IN ('pending','approved');
+        CREATE INDEX IF NOT EXISTS idx_after_sales_status ON after_sales_requests(status, created_at DESC);
+        CREATE TRIGGER IF NOT EXISTS trg_business_user_registered AFTER INSERT ON users
+        WHEN NEW.is_admin = 0 AND NEW.is_support = 0 BEGIN
+          INSERT INTO business_events(event_name,user_id) VALUES ('user_registered',NEW.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_email_verified AFTER UPDATE OF email_verified_at ON users
+        WHEN OLD.email_verified_at IS NULL AND NEW.email_verified_at IS NOT NULL BEGIN
+          INSERT INTO business_events(event_name,user_id) VALUES ('email_verified',NEW.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_project_created AFTER INSERT ON projects BEGIN
+          INSERT INTO business_events(event_name,user_id,project_id) VALUES ('project_created',NEW.user_id,NEW.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_order_created AFTER INSERT ON orders BEGIN
+          INSERT INTO business_events(event_name,user_id,order_id,value_cents) VALUES ('order_created',NEW.user_id,NEW.id,ROUND(NEW.amount*100));
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_order_paid AFTER UPDATE OF status ON orders
+        WHEN OLD.status <> 'paid' AND NEW.status = 'paid' BEGIN
+          INSERT INTO business_events(event_name,user_id,order_id,value_cents) VALUES ('order_paid',NEW.user_id,NEW.id,ROUND(NEW.amount*100));
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_order_completed AFTER UPDATE OF status ON orders
+        WHEN OLD.status <> 'completed' AND NEW.status = 'completed' BEGIN
+          INSERT INTO business_events(event_name,user_id,order_id,value_cents) VALUES ('order_completed',NEW.user_id,NEW.id,ROUND(NEW.amount*100));
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_business_expert_lead AFTER INSERT ON service_projects BEGIN
+          INSERT INTO business_events(event_name,user_id,order_id,metadata_json)
+          VALUES ('expert_lead_created',NEW.user_id,NEW.order_id,json_object('service_type',NEW.service_type));
+        END;
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db) {

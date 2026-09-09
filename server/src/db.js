@@ -564,7 +564,7 @@ db.exec(`
 const seedSettings = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
 const settingsDefaults = {
   site_name: 'ScholarForge',
-  site_description: 'AI 驱动的学术论文辅助平台 · 按需付费',
+  site_description: '基于真实文献的 AI 研究与写作辅助平台 · 按项目付费',
   announcement: '',
   // 客服微信（课程购买等人工咨询用，前台展示，用户添加微信详聊）
   service_wechat: '',
@@ -630,7 +630,7 @@ const featuresSeed = [
   ['writing_outline', '大纲生成', 0, '次', 'writing', '生成论文结构大纲（免费不限次）', 1, 0],
   ['writing_paragraph', '段落续写', 2, '次', 'writing', '续写正文段落', 0, 1],
   ['writing_abstract', '摘要生成', 2, '次', 'writing', '提炼论文摘要', 0, 2],
-  ['writing_fulltext', '全文生成', 35, '次', 'writing', '生成完整论文', 0, 3],
+  ['writing_fulltext', '研究初稿项目', 59, '项目', 'writing', '基于真实文献生成可核验、需人工修改的研究初稿', 0, 3],
   ['proposal', '开题报告撰写', 8, '次', 'writing', '生成结构化开题报告', 0, 4],
   ['polish', '学术润色', 2, '次', 'polish', '学术化语句润色', 0, 5],
   ['translate', '中英翻译', 2, '次', 'translate', '中英双向翻译', 0, 6],
@@ -642,7 +642,7 @@ const featuresSeed = [
   ['literature_review', '文献综述', 6, '次', 'writing', '生成结构化文献综述，含主题分类与文献引用', 0, 14],
   ['task_book', '任务书生成', 4, '次', 'writing', '生成毕业论文任务书，含进度安排与考核指标', 0, 15],
   ['defense', '答辩PPT+演讲稿', 8, '次', 'writing', '生成答辩PPT大纲与配套演讲稿', 0, 16],
-  ['journal', '期刊论文撰写', 100, '次', 'writing', '撰写符合期刊发表规范的完整学术论文', 0, 17],
+  ['journal', '期刊投稿辅助', 100, '次', 'writing', '根据用户研究材料生成期刊投稿初稿与结构建议', 0, 17],
   // ===== 专利申请 / 论文发表辅助工具 =====
   ['patent_draft', '专利交底书撰写', 29, '次', 'writing', '根据技术方案撰写专利交底书（技术领域/背景/发明内容/实施方式）', 0, 18],
   ['review_reply', '审稿意见回复', 19, '次', 'writing', '根据审稿意见生成逐条回复信', 0, 19],
@@ -662,6 +662,18 @@ if (!copyMigRow || copyMigRow.value !== 'done') {
   db.prepare("UPDATE feature_prices SET name = ?, description = ? WHERE feature_key = 'ai_reduce'")
     .run('表达自然度优化', '识别并优化机械化表达，让文本更自然流畅');
   db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', strftime('%s','now'))").run(COPY_MIGRATION_KEY);
+}
+
+// 商业合规文案：仅更新名称和说明，不覆盖管理员配置过的价格。
+const PRODUCT_COPY_MIGRATION_KEY = 'migration_product_copy_v2';
+const productCopyMigRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(PRODUCT_COPY_MIGRATION_KEY);
+if (!productCopyMigRow || productCopyMigRow.value !== 'done') {
+  db.prepare("UPDATE feature_prices SET name=?, unit=?, description=? WHERE feature_key='writing_fulltext'")
+    .run('研究初稿项目', '项目', '基于真实文献生成可核验、需人工修改的研究初稿');
+  db.prepare("UPDATE feature_prices SET name=?, description=? WHERE feature_key='journal'")
+    .run('期刊投稿辅助', '根据用户研究材料生成期刊投稿初稿与结构建议');
+  db.prepare("UPDATE courses SET description=REPLACE(description, '直到论文定稿', '覆盖约定阶段验收与修改反馈')").run();
+  db.prepare("INSERT OR REPLACE INTO settings (key,value,updated_at) VALUES (?, 'done', strftime('%s','now'))").run(PRODUCT_COPY_MIGRATION_KEY);
 }
 
 // 版本化迁移：把 writing_outline / ref_search / ref_format 标记为 is_unlimited=1（免费不限次）
@@ -703,7 +715,7 @@ if (courseCount === 0) {
   );
   insertCourse.run(
     '论文 1 对 1 指导（本科）',
-    '资深导师一对一全程指导：选题把关、大纲搭建、正文逐章修改、格式规范与答辩辅导，直到论文定稿。',
+    '资深导师一对一阶段指导：选题把关、大纲搭建、研究方法、用户稿件反馈、格式规范与答辩辅导，覆盖约定阶段验收。',
     1999, '4 周', '本科', 90, 0
   );
   insertCourse.run(

@@ -17,6 +17,7 @@ const STATUS_FILTERS = [
   ['paid', '已支付'],
   ['processing', '服务中'],
   ['completed', '已完成'],
+  ['refunded', '已退款'],
   ['cancelled', '已取消'],
 ];
 
@@ -39,6 +40,9 @@ export default function MyOrders() {
   const [payState, setPayState] = useState(null);
   const [payingNo, setPayingNo] = useState(null);
   const [tab, setTab] = useState('feature'); // feature=功能订单 / graduation=毕业作品订单
+  const [afterSalesOrder, setAfterSalesOrder] = useState(null);
+  const [afterSalesForm, setAfterSalesForm] = useState({ request_type: 'technical_failure', reason: '' });
+  const [submittingAfterSales, setSubmittingAfterSales] = useState(false);
   const SIZE = 20;
 
   const load = async (p = page, st = status) => {
@@ -77,6 +81,19 @@ export default function MyOrders() {
     } finally {
       setPayingNo(null);
     }
+  };
+
+  const openAfterSales = (order) => {
+    const requestType = ['pending', 'quoted', 'awaiting_quote'].includes(order.status) ? 'cancel' : 'technical_failure';
+    setAfterSalesOrder(order); setAfterSalesForm({ request_type: requestType, reason: '' });
+  };
+  const submitAfterSales = async () => {
+    setSubmittingAfterSales(true);
+    try {
+      await api.requestAfterSales(afterSalesOrder.order_no, afterSalesForm);
+      toast.success('售后申请已提交'); setAfterSalesOrder(null); await load(page, status);
+    } catch (err) { toast.error(err.message); }
+    finally { setSubmittingAfterSales(false); }
   };
 
   return (
@@ -199,6 +216,7 @@ export default function MyOrders() {
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(o.paid_at || o.created_at)}</td>
                     <td className="px-4 py-3 text-right">
+                      <div className="flex flex-col items-end gap-2">
                       {o.status === 'pending' || o.status === 'quoted' ? (
                         <div className="flex items-center justify-end gap-1.5">
                           <select
@@ -219,6 +237,8 @@ export default function MyOrders() {
                       ) : (
                         <span className="text-xs text-slate-400">—</span>
                       )}
+                      {o.after_sales ? <span className="text-xs text-amber-700">售后：{({ pending:'待处理', approved:'已批准', rejected:'已拒绝', completed:'已完成' })[o.after_sales.status] || o.after_sales.status}</span> : ['pending','quoted','awaiting_quote','paid','processing','completed'].includes(o.status) && <button className="text-xs text-slate-500 underline hover:text-accent" onClick={() => openAfterSales(o)}>申请售后</button>}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -246,6 +266,7 @@ export default function MyOrders() {
           onPaid={() => { setPayState(null); load(page); toast.success('支付成功'); }}
         />
       )}
+      {afterSalesOrder && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><h2 className="font-semibold text-ink">申请售后</h2><p className="mt-1 text-xs text-slate-500">订单 {afterSalesOrder.order_no} · ¥{Number(afterSalesOrder.amount || 0).toFixed(2)}</p><label className="mt-4 block text-sm">售后类型<select className="input mt-1" value={afterSalesForm.request_type} onChange={(event) => setAfterSalesForm({ ...afterSalesForm, request_type: event.target.value })}>{['pending','quoted','awaiting_quote'].includes(afterSalesOrder.status) ? <option value="cancel">取消未支付订单</option> : <><option value="technical_failure">技术故障/服务无法使用</option><option value="refund">其他退款申请</option></>}</select></label><label className="mt-4 block text-sm">问题说明<textarea className="input mt-1" rows="4" maxLength="2000" value={afterSalesForm.reason} onChange={(event) => setAfterSalesForm({ ...afterSalesForm, reason: event.target.value })} placeholder="请说明发生时间、功能和错误现象，便于快速核实" /></label><p className="mt-3 text-xs text-slate-500">提交不代表退款已经完成；平台核实后会在订单页更新处理结果。</p><div className="mt-5 flex justify-end gap-2"><button className="btn-secondary" onClick={() => setAfterSalesOrder(null)}>取消</button><button className="btn-primary" disabled={!afterSalesForm.reason.trim() || submittingAfterSales} onClick={submitAfterSales}>{submittingAfterSales ? '提交中…' : '提交申请'}</button></div></div></div>}
         </>
       )}
     </div>

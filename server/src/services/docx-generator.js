@@ -4,6 +4,7 @@
 // 若用户提供模板，则按模板样式覆盖（template-parser 解析）
 //
 import logger from '../logger.js';
+import { randomUUID } from 'node:crypto';
 // 公式处理升级（2026-08）：
 //   原方案：mathjax 渲染 LaTeX → PNG 图片嵌入（不可编辑）
 //   新方案：mathjax@4 + mathml2omml → Word 原生可编辑公式（OMML）
@@ -484,8 +485,8 @@ export async function generateDocx({
   template = null,
   orderId = null,
   projectId = null,
-  includeWatermark = true,
 }) {
+  const contentId = randomUUID();
   const styles = resolveStyles(template);
   const blocks = parseMarkdownToBlocks(content);
   // 图表引用校验（输出前）
@@ -504,8 +505,8 @@ export async function generateDocx({
   const children = [titlePara, ...rendered.map((b) => blockToDocxElement(b, styles))];
 
   // 页脚水印
-  const footers = includeWatermark
-    ? {
+  // AI 生成内容始终保留显式标识；调用方不能通过参数关闭。
+  const footers = {
         default: new Footer({
           children: [
             new Paragraph({
@@ -523,13 +524,14 @@ export async function generateDocx({
             }),
           ],
         }),
-      }
-    : undefined;
+      };
 
   const doc = new Document({
     creator: 'ScholarForge',
     title: title || '未命名文档',
-    description: feature,
+    subject: 'AI 辅助研究草稿',
+    description: `${feature || '研究写作辅助'}；AI 辅助生成；内容标识 ${contentId}`,
+    keywords: `ScholarForge, AI辅助生成, ${contentId}`,
     sections: [
       {
         properties: {},
@@ -565,5 +567,6 @@ export async function generateDocx({
     fileName,
     downloadUrl: `/api/docs/download/${info.lastInsertRowid}`,
     warnings,
+    contentId,
   };
 }

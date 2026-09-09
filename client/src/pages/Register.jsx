@@ -47,7 +47,7 @@ export default function Register() {
           <div>
             <h2 className="text-2xl font-bold leading-snug">按需付费<br />学术辅助</h2>
             <ul className="mt-6 space-y-3 text-sm text-slate-300">
-              {['AI 论文大纲与全文生成', '学术润色与中英翻译', '文献检索与格式化导出', '固定价格与人工报价，灵活透明'].map((t) => (
+              {['真实文献与 AI 研究初稿', '学术润色与中英翻译', '文献检索与格式化导出', '固定价格与人工报价，灵活透明'].map((t) => (
                 <li key={t} className="flex items-center gap-2.5">
                   <Check className="h-4 w-4 text-accent" />
                   {t}

@@ -143,6 +143,10 @@ export function createServiceProjectStaffRouter() {
         etaAt: req.body?.eta_at,
         note: req.body?.user_visible_note,
         internalNote: req.body?.internal_note,
+        scopeSummary: req.body?.scope_summary,
+        estimatedHours: req.body?.estimated_hours,
+        actualHours: req.body?.actual_hours,
+        internalCostCents: req.body?.internal_cost_cents,
         operatorId: req.user.id,
         operatorRole: req.user.is_admin ? 'admin' : 'support',
         idempotencyKey: req.body?.idempotency_key,
@@ -172,7 +176,12 @@ export function createPromotionAdminRouter() {
   admin.post('/partners', (req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 100);
     if (!name) return res.status(400).json({ error: '请填写推广方名称' });
-    const info = db.prepare('INSERT INTO promotion_partners (name, contact, note) VALUES (?, ?, ?)').run(name, String(req.body?.contact || '').trim().slice(0, 200), String(req.body?.note || '').trim().slice(0, 500));
+    const commissionPercent = Number(req.body?.commission_percent || 0);
+    const holdDays = Number(req.body?.settlement_hold_days ?? 7);
+    if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 50) return res.status(400).json({ error: '佣金比例须为 0-50%' });
+    if (!Number.isInteger(holdDays) || holdDays < 0 || holdDays > 90) return res.status(400).json({ error: '结算冻结期须为 0-90 天整数' });
+    const info = db.prepare('INSERT INTO promotion_partners (name, contact, note, commission_bps, settlement_hold_days) VALUES (?, ?, ?, ?, ?)')
+      .run(name, String(req.body?.contact || '').trim().slice(0, 200), String(req.body?.note || '').trim().slice(0, 500), Math.round(commissionPercent * 100), holdDays);
     res.json({ ok: true, id: info.lastInsertRowid });
   });
   admin.post('/codes', (req, res) => {
@@ -200,6 +209,16 @@ export function createPromotionAdminRouter() {
       setPromotionPartnerActive(req.params.id, req.body.is_active);
       res.json({ ok: true });
     } catch (err) { res.status(err.status || 400).json({ error: err.message }); }
+  });
+  admin.patch('/partners/:id/terms', (req, res) => {
+    const commissionPercent = Number(req.body?.commission_percent);
+    const holdDays = Number(req.body?.settlement_hold_days);
+    if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 50) return res.status(400).json({ error: '佣金比例须为 0-50%' });
+    if (!Number.isInteger(holdDays) || holdDays < 0 || holdDays > 90) return res.status(400).json({ error: '结算冻结期须为 0-90 天整数' });
+    const result = db.prepare("UPDATE promotion_partners SET commission_bps=?, settlement_hold_days=?, updated_at=strftime('%s','now') WHERE id=?")
+      .run(Math.round(commissionPercent * 100), holdDays, req.params.id);
+    if (!result.changes) return res.status(404).json({ error: '推广方不存在' });
+    res.json({ ok: true });
   });
   const verifyDestructiveRequest = async (req, res, expected) => {
     if (String(req.body?.confirmation || '') !== expected) {

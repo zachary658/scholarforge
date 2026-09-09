@@ -11,7 +11,7 @@ import {
 const pipeline = [
   { step: 1, title: '选题立意', desc: '工作区记录题目、学科、写作要求', icon: Pen, to: '/app/projects' },
   { step: 2, title: '大纲生成', desc: '免费不限次，3 级结构化大纲', icon: Layers, free: true, to: '/app/writing?type=outline' },
-  { step: 3, title: '正文撰写', desc: '段落续写 / 全文生成 / 文献综述', icon: FileWord, to: '/app/writing' },
+  { step: 3, title: '研究初稿', desc: '段落辅助 / 章节初稿 / 文献综述', icon: FileWord, to: '/app/writing' },
   { step: 4, title: '重复表达优化', desc: '优化重复表达，提升表达多样性', icon: Refresh, to: '/app/rewrite' },
   { step: 5, title: '表达自然度优化', desc: '识别并优化机械化表达', icon: Shield, to: '/app/ai-reduce' },
   { step: 6, title: '格式导出', desc: '按高校模板一键导出 Word', icon: FileText, to: '/app/templates' },
@@ -101,7 +101,7 @@ export default function Landing() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-sky-300 bg-clip-text text-transparent">真实文献可溯源</span>
               </h1>
               <p className="animate-fade-up mt-6 max-w-md text-lg leading-relaxed text-slate-400" style={{ animationDelay: '0.16s' }}>
-                集成 AI 论文写作、开题报告、文献综述、答辩PPT、重复表达优化、表达自然度优化于一体。真实参考文献可溯源，写作内容一键导出 Word。
+                集成真实文献检索、研究提纲、章节初稿、引用核验和格式导出。每条参考文献均可回溯来源，导出的 Word 保留 AI 辅助标识，便于规范使用。
               </p>
 
               {/* 核心卖点标签 */}
@@ -169,7 +169,7 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl px-6 py-20">
           <div className="mx-auto max-w-2xl text-center">
             <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">Workflow</div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">AI 写作全流程闭环</h2>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">AI 研究辅助全流程</h2>
             <p className="mt-3 text-slate-500">从选题立意到格式导出，6 步搞定一篇论文，点击任意步骤直达对应功能</p>
           </div>
           <div className="mt-12 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
@@ -208,7 +208,7 @@ export default function Landing() {
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
               <BookOpen className="h-3.5 w-3.5" />论文辅导
             </div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">资深导师一对一，全程辅导至定稿</h2>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">资深导师一对一，按阶段指导与反馈</h2>
             <p className="mt-3 text-slate-500">选题把关、大纲搭建、逐章修改、格式规范与答辩辅导，进度和成果全程在线可追踪</p>
           </div>
 
@@ -287,7 +287,7 @@ export default function Landing() {
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-600">
               <Shield className="h-3.5 w-3.5" />专业服务
             </div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">专利申请与期刊发表，一站式办理</h2>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">专利与期刊服务，过程透明可跟踪</h2>
             <p className="mt-3 text-slate-500">AI 辅助撰写专业文件 + 专业人员对接办理，提交需求后客服报价，审批通过在线支付</p>
           </div>
 
@@ -354,7 +354,7 @@ export default function Landing() {
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-600">
               <Cpu className="h-3.5 w-3.5" />作品设计辅导
             </div>
-            <h2 className="text-3xl font-bold tracking-tight text-ink">毕业设计作品，专业导师全程指导</h2>
+            <h2 className="text-3xl font-bold tracking-tight text-ink">毕业设计项目，专业导师分阶段指导</h2>
             <p className="mt-3 text-slate-500">覆盖建筑图纸、机械图纸、仿真模拟、计算机程序、PLC设计等多领域，项目进度与成果统一在线交付</p>
           </div>
 

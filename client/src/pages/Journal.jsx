@@ -8,9 +8,9 @@ export default function Journal() {
   return (
     <DocumentGenerator
       config={{
-        title: '期刊论文撰写',
-        subtitle: '撰写符合期刊发表规范的完整学术论文，含中英文摘要',
-        submitLabel: '撰写期刊论文',
+        title: '期刊投稿辅助',
+        subtitle: '基于你的研究材料生成投稿初稿与结构建议，含中英文摘要',
+        submitLabel: '生成投稿初稿',
         apiCall: (payload) => api.journal(payload),
         validate: (form) => (!form.topic.trim() ? '请填写论文题目' : !form.field ? '请选择学科领域' : null),
         fields: [
@@ -25,10 +25,10 @@ export default function Journal() {
         ],
         resultLabel: (form) => (form.topic ? `${form.topic} · 期刊论文` : '生成结果'),
         downloadName: (form) => form.topic || '期刊论文',
-        emptyTitle: '填写论文信息后撰写期刊论文',
-        emptyDesc: '符合期刊规范的完整论文，一键导出 Word',
-        docEmptyTitle: '期刊论文已生成 Word 文档',
-        docEmptyDesc: '点击右上角「下载 Word」获取完整论文',
+        emptyTitle: '填写研究信息后生成投稿初稿',
+        emptyDesc: '生成后请核验事实、引用，并按目标期刊规范人工修改',
+        docEmptyTitle: '投稿初稿已生成 Word 文档',
+        docEmptyDesc: '点击右上角下载带 AI 辅助标识的 Word 初稿',
       }}
     />
   );
