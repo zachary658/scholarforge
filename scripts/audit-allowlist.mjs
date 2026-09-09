@@ -22,12 +22,39 @@ import { resolve } from 'node:path';
 const allowlistPath = resolve(process.argv[2] || 'audit-allowlist.json');
 
 let allowlist;
+let allowlistConfig;
 try {
-  const raw = JSON.parse(readFileSync(allowlistPath, 'utf8'));
-  allowlist = new Set(raw.advisories || []);
+  allowlistConfig = JSON.parse(readFileSync(allowlistPath, 'utf8'));
+  allowlist = new Set(allowlistConfig.advisories || []);
 } catch (e) {
   console.error(`[audit] 无法读取允许列表 ${allowlistPath}: ${e.message}`);
   process.exit(2);
+}
+
+// 已接受风险必须持续满足原审查前提。例如 adm-zip 仅可用于内存读取，
+// 一旦有人加入落盘解压调用，不能继续沿用“触发路径不可达”的豁免结论。
+const guardViolations = [];
+for (const guard of allowlistConfig.codeGuards || []) {
+  for (const file of guard.files || []) {
+    let source;
+    try {
+      source = readFileSync(resolve(file), 'utf8');
+    } catch (e) {
+      console.error(`[audit] 无法读取风险守卫文件 ${file}: ${e.message}`);
+      process.exit(2);
+    }
+    for (const call of guard.forbiddenCalls || []) {
+      const escaped = String(call).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\s*\\(`).test(source)) {
+        guardViolations.push(`${guard.advisory}: ${file} 调用了 ${call}()`);
+      }
+    }
+  }
+}
+if (guardViolations.length) {
+  console.error('[audit] 已接受风险的触发路径已变为可达，CI 失败：');
+  for (const violation of guardViolations) console.error(`  - ${violation}`);
+  process.exit(1);
 }
 
 const res = spawnSync('npm', ['audit', '--omit=dev', '--json'], {
