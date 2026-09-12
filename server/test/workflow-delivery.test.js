@@ -23,14 +23,14 @@ test('完整论文按学历分层定价且预计成本利润率不低于500%', (
   const undergraduate = getFullPaperPricing({ degree: '本科' });
   const master = getFullPaperPricing({ degree: '硕士' });
   const doctorate = getFullPaperPricing({ degree: '博士' });
-  assert.equal(undergraduate.price, 59);
-  assert.equal(master.price, 159);
-  assert.equal(doctorate.price, 499);
+  assert.equal(undergraduate.price, 139);
+  assert.equal(master.price, 449);
+  assert.equal(doctorate.price, 1399);
   for (const pricing of [undergraduate, master, doctorate]) {
     assert.ok(pricing.estimatedProfitRate >= 500);
     assert.ok(pricing.price >= pricing.estimatedCost * 6 - 0.01);
   }
-  assert.ok(getFullPaperPricing({ degree: '本科', writing_requirements: '全文不少于100万字' }).price > 59, '超大字数项目必须触发动态成本保护价');
+  assert.ok(getFullPaperPricing({ degree: '本科', writing_requirements: '全文不少于100万字' }).price > 139, '超大字数项目必须触发动态成本保护价');
 });
 
 test('完整论文订单必须绑定用户自己的项目且金额由服务端学历定价决定', () => {
@@ -43,7 +43,7 @@ test('完整论文订单必须绑定用户自己的项目且金额由服务端�
     paymentMethod: 'mock',
     params: { project_id: p.id, degree: '博士' },
   });
-  assert.equal(order.amount, 59);
+  assert.equal(order.amount, 139);
   assert.equal(order.project_id, p.id);
   assert.match(order.item_name, /本科项目套餐/);
 });

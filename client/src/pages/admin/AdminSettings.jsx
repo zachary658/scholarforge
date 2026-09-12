@@ -21,9 +21,9 @@ const PAYMENT_MODES = [
 ];
 
 const FULL_PAPER_ADMIN_TIERS = [
-  { key: 'undergraduate', label: '本科', priceFallback: 59, costFallback: 8 },
-  { key: 'master', label: '硕士', priceFallback: 159, costFallback: 22 },
-  { key: 'doctorate', label: '博士', priceFallback: 499, costFallback: 70 },
+  { key: 'undergraduate', label: '本科', priceFallback: 139, costFallback: 8 },
+  { key: 'master', label: '硕士', priceFallback: 449, costFallback: 22 },
+  { key: 'doctorate', label: '博士', priceFallback: 1399, costFallback: 70 },
   { key: 'other', label: '其他', priceFallback: 99, costFallback: 14 },
 ];
 
@@ -42,9 +42,9 @@ const defaultSettings = {
   ai_input_cost_per_million: 1,
   ai_output_cost_per_million: 16,
   ai_profit_margin: 0.8,
-  full_paper_price_undergraduate: 59,
-  full_paper_price_master: 159,
-  full_paper_price_doctorate: 499,
+  full_paper_price_undergraduate: 139,
+  full_paper_price_master: 449,
+  full_paper_price_doctorate: 1399,
   full_paper_price_other: 99,
   full_paper_cost_reserve_undergraduate: 8,
   full_paper_cost_reserve_master: 22,
@@ -117,9 +117,9 @@ export default function AdminSettings() {
       next.ai_input_cost_per_million = s.ai_input_cost_per_million ?? 1;
       next.ai_output_cost_per_million = s.ai_output_cost_per_million ?? 16;
       next.ai_profit_margin = s.ai_profit_margin ?? 0.8;
-      next.full_paper_price_undergraduate = s.full_paper_price_undergraduate ?? 59;
-      next.full_paper_price_master = s.full_paper_price_master ?? 159;
-      next.full_paper_price_doctorate = s.full_paper_price_doctorate ?? 499;
+      next.full_paper_price_undergraduate = s.full_paper_price_undergraduate ?? 139;
+      next.full_paper_price_master = s.full_paper_price_master ?? 449;
+      next.full_paper_price_doctorate = s.full_paper_price_doctorate ?? 1399;
       next.full_paper_price_other = s.full_paper_price_other ?? 99;
       next.full_paper_cost_reserve_undergraduate = s.full_paper_cost_reserve_undergraduate ?? 8;
       next.full_paper_cost_reserve_master = s.full_paper_cost_reserve_master ?? 22;

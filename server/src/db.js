@@ -287,6 +287,9 @@ db.exec('DROP TABLE IF EXISTS points_log');
 db.exec('DROP TABLE IF EXISTS points_packages');
 
 addColumnIfMissing('orders', 'payment_channel', 'TEXT');
+// Acknowledgment belongs to this immutable generated artifact; user/project already live on this row.
+addColumnIfMissing('generated_docs', 'download_risk', 'TEXT');
+addColumnIfMissing('generated_docs', 'risk_acknowledged_at', 'INTEGER');
 addColumnIfMissing('orders', 'transaction_id', 'TEXT');
 addColumnIfMissing('orders', 'metadata', 'TEXT');
 addColumnIfMissing('orders', 'expires_at', 'INTEGER');
@@ -597,9 +600,9 @@ const settingsDefaults = {
   ai_output_cost_per_million: '16',
   ai_profit_margin: '0.8',
   // 完整论文分层项目套餐。成本利润率按“利润/成本”计算，服务端硬下限为 500%。
-  full_paper_price_undergraduate: '59',
-  full_paper_price_master: '159',
-  full_paper_price_doctorate: '499',
+  full_paper_price_undergraduate: '139',
+  full_paper_price_master: '449',
+  full_paper_price_doctorate: '1399',
   full_paper_price_other: '99',
   full_paper_cost_reserve_undergraduate: '8',
   full_paper_cost_reserve_master: '22',
@@ -648,7 +651,7 @@ const featuresSeed = [
   ['writing_outline', '大纲生成', 0, '次', 'writing', '生成论文结构大纲（免费不限次）', 1, 0],
   ['writing_paragraph', '段落续写', 2, '次', 'writing', '续写正文段落', 0, 1],
   ['writing_abstract', '摘要生成', 2, '次', 'writing', '提炼论文摘要', 0, 2],
-  ['writing_fulltext', '研究初稿项目', 59, '项目', 'writing', '基于真实文献生成可核验、需人工修改的研究初稿', 0, 3],
+  ['writing_fulltext', '研究初稿项目', 139, '项目', 'writing', '基于真实文献生成可核验、需人工修改的研究初稿', 0, 3],
   ['proposal', '开题报告撰写', 8, '次', 'writing', '生成结构化开题报告', 0, 4],
   ['polish', '学术润色', 2, '次', 'polish', '学术化语句润色', 0, 5],
   ['translate', '中英翻译', 2, '次', 'translate', '中英双向翻译', 0, 6],
@@ -666,6 +669,18 @@ const featuresSeed = [
   ['review_reply', '审稿意见回复', 19, '次', 'writing', '根据审稿意见生成逐条回复信', 0, 19],
 ];
 for (const f of featuresSeed) seedFeature.run(...f);
+
+// 一次性更新旧默认价；保留管理员自定义价格及历史订单金额。
+db.transaction(() => {
+  const key = 'migration_full_paper_pricing_20260912';
+  if (db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value === 'done') return;
+  const update = db.prepare('UPDATE settings SET value=? WHERE key=? AND CAST(value AS REAL)=?');
+  for (const [tier, oldPrice, newPrice] of [['undergraduate', 59, 139], ['master', 159, 449], ['doctorate', 499, 1399]]) {
+    update.run(String(newPrice), `full_paper_price_${tier}`, oldPrice);
+  }
+  db.prepare("UPDATE feature_prices SET price=139 WHERE feature_key='writing_fulltext' AND price=59").run();
+  db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').run(key, 'done');
+})();
 
 // 下架已废弃的功能（查重检测、AI率检测已移除，仅保留重复表达优化与表达自然度优化）
 db.prepare(`UPDATE feature_prices SET is_active = 0 WHERE feature_key IN ('plagiarism', 'ai_check')`).run();
