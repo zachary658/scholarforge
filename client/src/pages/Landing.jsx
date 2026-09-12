@@ -101,13 +101,13 @@ export default function Landing() {
                 <span className="bg-gradient-to-r from-indigo-300 via-violet-300 to-sky-300 bg-clip-text text-transparent">真实文献可溯源</span>
               </h1>
               <p className="animate-fade-up mt-6 max-w-md text-lg leading-relaxed text-slate-400" style={{ animationDelay: '0.16s' }}>
-                集成真实文献检索、研究提纲、章节初稿、引用核验和格式导出。每条参考文献均可回溯来源，导出的 Word 保留 AI 辅助标识，便于规范使用。
+                聚合 OpenAlex、Semantic Scholar、CrossRef、arXiv 四源文献，可选接入 PaperQA2 证据检索。从文献调研、来源核验到研究提纲和章节初稿，辅助你独立研究与修改；导出的 Word 保留 AI 辅助标识。
               </p>
 
               {/* 核心卖点标签 */}
               <div className="animate-fade-up mt-7 flex flex-wrap gap-3 text-xs" style={{ animationDelay: '0.24s' }}>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 font-medium text-emerald-300">
-                  <Check className="h-3.5 w-3.5" />大纲生成免费不限次
+                  <Check className="h-3.5 w-3.5" />四源文献聚合
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-400/20 bg-indigo-400/10 px-3 py-1 font-medium text-indigo-300">
                   <Check className="h-3.5 w-3.5" />Word一键导出
@@ -487,7 +487,7 @@ export default function Landing() {
           </div>
         </div>
         <div className="mx-auto max-w-6xl px-6 pb-8 text-center text-xs leading-relaxed text-slate-500">
-          免责声明：本平台由 AI 生成的所有内容（文字、文档、图表、公式等）仅供学习与参考，不构成任何学术成果或建议，严禁直接用于论文写作、作业提交、考试、投稿、查重等任何学术场景；因违规使用产生的一切后果由使用者自行承担。
+          免责声明：本平台由 AI 生成的所有内容（文字、文档、图表、公式等）仅供学习与参考，不构成任何学术成果或建议，严禁未经核验与独立修改直接用于学位论文提交、作业提交、考试、投稿等学术场景；因违规使用产生的一切后果由使用者自行承担。
         </div>
       </footer>
     </div>

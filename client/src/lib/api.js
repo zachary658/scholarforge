@@ -507,6 +507,12 @@ export const api = {
 
 // 触发浏览器下载某个已生成的 Word 文档
 export async function downloadDocFile(id, filename = '文档.docx') {
+  const review = await request(`/docs/${id}/download-risk`);
+  if (review.required && !review.acknowledgedAt) {
+    const accepted = await confirmDownloadRisk(review);
+    if (!accepted) throw new Error('已取消下载');
+    await request(`/docs/${id}/download-risk/acknowledge`, { method: 'POST', body: { acknowledged: true } });
+  }
   const blob = await api.downloadDoc(id);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -519,4 +525,36 @@ export async function downloadDocFile(id, filename = '文档.docx') {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, 1000);
+}
+
+function confirmDownloadRisk(review) {
+  return new Promise(resolve => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'rounded-xl p-6 max-w-lg shadow-xl';
+    const title = document.createElement('h2');
+    title.textContent = '下载前确认';
+    title.className = 'text-lg font-semibold mb-3';
+    const description = document.createElement('p');
+    const levels = { low: '低', medium: '中', high: '高', unknown: '暂无法评估' };
+    description.textContent = `文内重复风险：${levels[review.risk?.level] || '暂无法评估'}。${review.notice}`;
+    description.className = 'text-sm leading-6 mb-4';
+    title.id = 'download-risk-title';
+    description.id = 'download-risk-description';
+    dialog.setAttribute('aria-labelledby', title.id);
+    dialog.setAttribute('aria-describedby', description.id);
+    const finish = value => { dialog.close(); dialog.remove(); resolve(value); };
+    const cancel = document.createElement('button');
+    cancel.textContent = '取消';
+    cancel.className = 'btn-secondary mr-3';
+    cancel.onclick = () => finish(false);
+    const agree = document.createElement('button');
+    agree.textContent = '我已知悉';
+    agree.className = 'btn-primary';
+    agree.onclick = () => finish(true);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
+    dialog.append(title, description, cancel, agree);
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    cancel.focus();
+  });
 }

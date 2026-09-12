@@ -26,9 +26,9 @@ export function getFeatureCashPrice(featureKey) {
 // 基础售价用于产品分层；动态保护价会随模型单价、目标字数和材料量上浮，
 // 即使管理员把加价率配置得更低，也不会突破 500% 的服务端硬下限。
 const FULL_PAPER_TIERS = {
-  undergraduate: { label: '本科', defaultWords: 8000, basePrice: 59, costReserve: 8 },
-  master: { label: '硕士', defaultWords: 20000, basePrice: 159, costReserve: 22 },
-  doctorate: { label: '博士', defaultWords: 50000, basePrice: 499, costReserve: 70 },
+  undergraduate: { label: '本科', defaultWords: 8000, basePrice: 139, costReserve: 8 },
+  master: { label: '硕士', defaultWords: 20000, basePrice: 449, costReserve: 22 },
+  doctorate: { label: '博士', defaultWords: 50000, basePrice: 1399, costReserve: 70 },
   other: { label: '其他', defaultWords: 12000, basePrice: 99, costReserve: 14 },
 };
 
