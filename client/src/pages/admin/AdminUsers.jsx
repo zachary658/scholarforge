@@ -107,6 +107,11 @@ export default function AdminUsers() {
   };
 
   const toggleSupport = async (u) => {
+    if (!await confirm({
+      title: u.is_support ? '取消客服确认' : '设为客服确认',
+      message: u.is_support ? `确认取消「${u.name || u.email}」的客服权限？` : `确认将「${u.name || u.email}」设为客服？客服可查看需求、联系方式并执行报价与履约。`,
+      confirmText: u.is_support ? '取消客服' : '设为客服',
+    })) return;
     setError('');
     try {
       await api.adminUpdateUser(u.id, { is_support: !u.is_support });
@@ -141,6 +146,10 @@ export default function AdminUsers() {
   };
 
   const submitCreate = async () => {
+    if (!createForm.email.trim() || !createForm.name.trim() || !createForm.password) {
+      toast.warning('请填写邮箱、密码和姓名');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -160,7 +169,7 @@ export default function AdminUsers() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">用户管理</h1>
-          <p className="mt-1 text-sm text-slate-500">共 {total} 位用户</p>
+          <p className="mt-1 text-sm text-slate-500">共 {total} 位用户 · 管理员负责配置与监督，独立客服账号负责报价与履约。</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -255,6 +264,14 @@ export default function AdminUsers() {
                             {u.is_admin ? '取消管理员' : '设为管理员'}
                           </button>
                           <button
+                            onClick={() => toggleSupport(u)}
+                            disabled={isSelf || !!u.is_admin}
+                            title={u.is_admin ? '管理员只能监督；请为客服创建独立账号' : '管理客服工作台权限'}
+                            className="btn-ghost text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {u.is_support ? '取消客服' : '设为客服'}
+                          </button>
+                          <button
                             onClick={() => remove(u)}
                             disabled={isProtected || isSelf}
                             className="btn-ghost text-xs text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
@@ -331,7 +348,7 @@ export default function AdminUsers() {
                   className="input"
                   value={createForm.name}
                   onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-                  placeholder="可选"
+                  placeholder="必填：用户或员工姓名"
                 />
               </div>
               <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -339,9 +356,14 @@ export default function AdminUsers() {
                   type="checkbox"
                   className="h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent"
                   checked={createForm.is_admin}
-                  onChange={(e) => setCreateForm({ ...createForm, is_admin: e.target.checked })}
+                  onChange={(e) => setCreateForm({ ...createForm, is_admin: e.target.checked, is_support: false })}
                 />
                 设为管理员
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={createForm.is_support}
+                  onChange={(e) => setCreateForm({ ...createForm, is_support: e.target.checked, is_admin: false })} />
+                设为客服（报价与履约，不开放管理员配置权限）
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
