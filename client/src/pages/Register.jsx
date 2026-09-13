@@ -110,7 +110,7 @@ export default function Register() {
                 <Link to="/privacy" className="font-medium text-accent hover:underline">《隐私政策》</Link>
                 ：本平台由 AI 生成的文字、文档、图表等所有内容
                 <strong className="font-semibold text-ink">仅供学习参考</strong>，不构成学术成果或建议，
-                <strong className="font-semibold text-ink">不得直接用于</strong>论文写作、作业提交、考试、投稿、查重等
+                <strong className="font-semibold text-ink">不得直接用于</strong>学位论文提交、作业提交、考试、投稿等
                 <strong className="font-semibold text-ink">任何学术场景</strong>；因违规使用产生的一切后果由本人自行承担。
               </span>
             </label>

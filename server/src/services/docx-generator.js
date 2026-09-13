@@ -33,6 +33,7 @@ import {
 import { latexToOMML } from './latex-omml.js';
 import { createRequire } from 'module';
 import fs from 'fs';
+import { estimateDownloadRisk, requiresDownloadAcknowledgment } from './download-risk.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import db from '../db.js';
@@ -561,12 +562,16 @@ export async function generateDocx({
     `INSERT INTO generated_docs (user_id, project_id, title, feature, file_path, order_id) VALUES (?, ?, ?, ?, ?, ?)`
   ).run(userId, projectId || null, title || '未命名文档', feature, fileName, orderId || null);
 
+  const risk = requiresDownloadAcknowledgment({ feature }) ? estimateDownloadRisk(content) : null;
+  if (risk) db.prepare('UPDATE generated_docs SET download_risk = ? WHERE id = ?').run(JSON.stringify(risk), info.lastInsertRowid);
+
   return {
     id: info.lastInsertRowid,
     filePath,
     fileName,
     downloadUrl: `/api/docs/download/${info.lastInsertRowid}`,
     warnings,
+    risk,
     contentId,
   };
 }

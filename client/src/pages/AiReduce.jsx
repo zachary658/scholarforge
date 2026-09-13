@@ -150,7 +150,7 @@ export default function AiReduce() {
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <Shield className="h-8 w-8 text-slate-300" />
-                <p className="mt-3 text-sm text-slate-400">粘贴文本后点击「一键降AI」</p>
+                <p className="mt-3 text-sm text-slate-400">粘贴文本后点击「调整文本风格」</p>
                 <p className="mt-1 text-xs text-slate-400">结果将输出改写后的自然、人类化文本</p>
               </div>
             )}
@@ -170,9 +170,9 @@ export default function AiReduce() {
           </button>
           <button onClick={() => run()} disabled={tool.loading} className="btn-primary px-6 py-2.5">
             {tool.loading ? (
-              <><Refresh className="h-4 w-4 animate-spin" /> 降AI中…</>
+              <><Refresh className="h-4 w-4 animate-spin" /> 调整中…</>
             ) : (
-              <><Sparkle className="h-4 w-4" /> {mode === 'versions' ? '生成多版本' : '一键降AI'}</>
+              <><Sparkle className="h-4 w-4" /> {mode === 'versions' ? '生成多版本' : '调整文本风格'}</>
             )}
           </button>
         </div>

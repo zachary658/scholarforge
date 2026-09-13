@@ -40,7 +40,7 @@ export default function WorkModeGate() {
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600"><Pen className="h-5 w-5" /></div>
           <div>
             <div className="font-semibold text-ink">使用其他工具</div>
-            <div className="mt-1 text-sm leading-6 text-slate-500">进入工作台，自主选择开题报告、文献综述、润色翻译、查重优化等功能。</div>
+            <div className="mt-1 text-sm leading-6 text-slate-500">进入工作台，自主选择开题报告、文献综述、润色翻译、表达优化等功能。</div>
           </div>
         </button>
         <button onClick={() => choose('coaching')} className="flex w-full items-start gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-accent/40">

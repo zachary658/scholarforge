@@ -604,7 +604,7 @@ router.post('/writing', authRequired, async (req, res) => {
           references: sourceRefs || [],
           field,
           userId: req.user.id,
-          logUsage,
+          logUsage: (entry) => logUsage({ ...entry, orderId: result.orderId || null }),
         });
         review = chain.report || null;
         reviewChain = {

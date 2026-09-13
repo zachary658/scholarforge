@@ -6,6 +6,7 @@ import fs from 'fs';
 import { authRequired } from '../middleware.js';
 import db from '../db.js';
 import { getSetting } from '../config-store.js';
+import { downloadRisk, requiresDownloadAcknowledgment } from '../services/download-risk.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(__dirname, '..', '..', 'uploads', 'docs');
@@ -48,10 +49,27 @@ router.get('/', authRequired, (req, res) => {
   });
 });
 
+router.get('/:id/download-risk', authRequired, (req, res) => {
+  const doc = db.prepare('SELECT * FROM generated_docs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!doc) return res.status(404).json({ error: '文档不存在' });
+  res.json(downloadRisk(doc));
+});
+
+router.post('/:id/download-risk/acknowledge', authRequired, (req, res) => {
+  const doc = db.prepare('SELECT * FROM generated_docs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!doc) return res.status(404).json({ error: '文档不存在' });
+  if (req.body?.acknowledged !== true) return res.status(400).json({ error: '请先确认风险提示' });
+  if (requiresDownloadAcknowledgment(doc)) {
+    db.prepare("UPDATE generated_docs SET risk_acknowledged_at = COALESCE(risk_acknowledged_at, strftime('%s','now')) WHERE id = ? AND user_id = ?").run(doc.id, req.user.id);
+  }
+  res.json(downloadRisk(db.prepare('SELECT * FROM generated_docs WHERE id = ?').get(doc.id)));
+});
+
 // 下载文档
 router.get('/download/:id', authRequired, (req, res) => {
   const doc = db.prepare('SELECT * FROM generated_docs WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!doc) return res.status(404).json({ error: '文档不存在' });
+  if (requiresDownloadAcknowledgment(doc) && !doc.risk_acknowledged_at) return res.status(403).json({ error: '下载前请确认生成内容风险提示', code: 'DOWNLOAD_ACK_REQUIRED', ...downloadRisk(doc) });
   const filePath = safeFilePath(doc.file_path);
   if (!filePath) return res.status(400).json({ error: '文件路径非法' });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件已被清理' });
