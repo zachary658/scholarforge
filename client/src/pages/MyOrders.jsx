@@ -217,7 +217,9 @@ export default function MyOrders() {
                     <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(o.paid_at || o.created_at)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex flex-col items-end gap-2">
-                      {o.status === 'pending' || o.status === 'quoted' ? (
+                      {o.status === 'quoted' && o.type === 'course' && o.service_project_id ? (
+                        <button onClick={() => navigate(`/app/service-projects/${o.service_project_id}`)} className="btn-primary text-xs">查看分期并付款</button>
+                      ) : o.status === 'pending' || o.status === 'quoted' ? (
                         <div className="flex items-center justify-end gap-1.5">
                           <select
                             className="input w-24 py-1.5 text-xs"
@@ -272,3 +274,4 @@ export default function MyOrders() {
     </div>
   );
 }
+
