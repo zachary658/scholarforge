@@ -71,6 +71,7 @@ function saveAttachment(req, res, project, role) {
   const bytes = fs.readFileSync(req.file.path);
   const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
   let milestoneId = null;
+  const plan = role === 'deliverable' ? summarizeMilestones(project.id) : null;
   if (role === 'deliverable' && req.body?.milestone_id) {
     const milestone = db.prepare('SELECT id FROM service_payment_milestones WHERE id=? AND service_project_id=?').get(req.body.milestone_id, project.id);
     if (!milestone) {
@@ -79,11 +80,22 @@ function saveAttachment(req, res, project, role) {
     }
     milestoneId = milestone.id;
   }
+  if (role === 'deliverable' && plan?.milestones.length && !milestoneId) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: '请选择该文件对应的付款阶段' });
+  }
+  const versionLabel = String(req.body?.version_label || '').trim().slice(0, 80);
+  const description = String(req.body?.description || '').trim().slice(0, 500);
+  const isPreview = role === 'deliverable' && String(req.body?.is_preview || '') === 'true' ? 1 : 0;
+  if (role === 'deliverable' && !versionLabel) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: '请填写版本名称，例如“方案 V1”' });
+  }
   const info = db.prepare(
     `INSERT INTO service_project_attachments
-     (service_project_id, uploaded_by, role, original_name, stored_name, mime_type, size, sha256, milestone_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(project.id, req.user.id, role, String(req.file.originalname).slice(0, 240), req.file.filename, req.file.mimetype || 'application/octet-stream', req.file.size, sha256, milestoneId);
+     (service_project_id, uploaded_by, role, original_name, stored_name, mime_type, size, sha256, milestone_id, version_label, description, is_preview)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(project.id, req.user.id, role, String(req.file.originalname).slice(0, 240), req.file.filename, req.file.mimetype || 'application/octet-stream', req.file.size, sha256, milestoneId, versionLabel, description, isPreview);
   res.json({ ok: true, id: info.lastInsertRowid });
 }
 
@@ -134,7 +146,7 @@ router.get('/:id/attachments/:attachmentId', (req, res) => {
   const project = getServiceProject(req.params.id, req.user.id);
   if (!project) return res.status(404).json({ error: '服务项目不存在' });
   const file = db.prepare('SELECT * FROM service_project_attachments WHERE id=? AND service_project_id=? AND deleted_at IS NULL').get(req.params.attachmentId, project.id);
-  if (file?.role === 'deliverable') {
+  if (file?.role === 'deliverable' && !file.is_preview) {
     const plan = summarizeMilestones(project.id);
     const required = file.milestone_id
       ? plan.milestones.find((item) => item.id === file.milestone_id)
