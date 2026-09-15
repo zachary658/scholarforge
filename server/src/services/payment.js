@@ -13,6 +13,7 @@ import { assertTransition, StateTransitionError, ORDER_STATUS, transitionStatus,
 import { AlipaySdk } from 'alipay-sdk';
 import { Wechatpay, Aes, Rsa } from 'wechatpay-axios-plugin';
 import { activatePaidServiceProject, ensureServiceProject, linkServiceOrder, resolvePromotion } from './service-project-service.js';
+import { markMilestonePaid, summarizeMilestones } from './service-milestones.js';
 
 function requireVerifiedEmailForPayment(userId) {
   if (process.env.NODE_ENV !== 'production') return;
@@ -353,9 +354,15 @@ export function initiateOrderPayment(orderNo, paymentMethod) {
   const order = getOrder(orderNo);
   if (!order) throw new Error('订单不存在');
   requireVerifiedEmailForPayment(order.user_id);
-  if (!['feature', 'course', 'change_order'].includes(order.type)) throw new Error('该订单不支持此支付入口');
+  if (!['feature', 'course', 'change_order', 'service_milestone'].includes(order.type)) throw new Error('该订单不支持此支付入口');
   if (order.status !== 'quoted') throw new Error(`订单状态 ${order.status}，不能支付`);
   if (order.quoted_price == null || order.quoted_price <= 0) throw new Error('订单尚未报价');
+  if (order.type === 'course') {
+    const project = db.prepare('SELECT id FROM service_projects WHERE order_id=?').get(order.id);
+    if (project && summarizeMilestones(project.id).milestones.length) {
+      throw new Error('该服务已采用分阶段付款，请进入“服务进度”支付当前阶段');
+    }
+  }
 
   const useChannel = resolveChannel(paymentMethod);
   // 状态仍是 quoted（此处仅回填支付渠道与金额，不改变状态）
@@ -369,6 +376,35 @@ export function initiateOrderPayment(orderNo, paymentMethod) {
   const updated = getOrder(orderNo);
   const payParams = buildPaymentParams(updated, useChannel);
   return { order: updated, payParams };
+}
+
+export function createServiceMilestonePayment({ userId, serviceProjectId, milestoneId, paymentMethod = null }) {
+  requireVerifiedEmailForPayment(userId);
+  const project = db.prepare('SELECT * FROM service_projects WHERE id=? AND user_id=?').get(serviceProjectId, userId);
+  if (!project) throw Object.assign(new Error('服务项目不存在'), { status: 404 });
+  const milestone = db.prepare('SELECT * FROM service_payment_milestones WHERE id=? AND service_project_id=?').get(milestoneId, project.id);
+  if (!milestone) throw Object.assign(new Error('付款阶段不存在'), { status: 404 });
+  const plan = summarizeMilestones(project.id);
+  if (milestone.status === 'paid') throw new Error('该阶段已付款');
+  if (plan.next?.id !== milestone.id) throw new Error('请按顺序完成前一阶段付款');
+  let order = milestone.order_id ? db.prepare('SELECT * FROM orders WHERE id=?').get(milestone.order_id) : null;
+  if (order?.status === 'cancelled' || (order?.expires_at && order.expires_at <= now())) order = null;
+  if (!order) {
+    const orderNo = genOrderNo();
+    const amount = milestone.amount_cents / 100;
+    const info = db.prepare(`INSERT INTO orders
+      (order_no,user_id,type,target,target_name,amount,quoted_price,status,item_name,quantity,metadata,expires_at)
+      VALUES (?,?,?,?,?,?,?,'quoted',?,1,?,?)`).run(
+      orderNo, userId, 'service_milestone', String(milestone.id),
+      `${project.project_no} · ${milestone.title}`, amount, amount, milestone.title,
+      JSON.stringify({ service_project_id: project.id, milestone_id: milestone.id, sequence: milestone.sequence }),
+      now() + getPaymentConfig().orderExpireSeconds,
+    );
+    order = db.prepare('SELECT * FROM orders WHERE id=?').get(info.lastInsertRowid);
+    db.prepare("UPDATE service_payment_milestones SET order_id=?,status='payment_pending',updated_at=? WHERE id=?")
+      .run(order.id, now(), milestone.id);
+  }
+  return initiateOrderPayment(order.order_no, paymentMethod);
 }
 
 function getOrder(orderNo) {
@@ -498,6 +534,31 @@ export async function markOrderPaid({ orderNo, transactionId = null, channel = n
         if (!change || change.user_id !== order.user_id || change.payment_order_id !== order.id) throw new Error('变更单归属异常，支付已取消');
         if (change.status !== 'payment_pending' || Math.round(Number(order.amount) * 100) !== change.amount_cents) throw new Error('变更单金额或状态已变化，支付已取消');
         db.prepare("UPDATE service_change_orders SET status='in_progress',updated_at=? WHERE id=?").run(now(), change.id);
+      }
+      if (order.type === 'service_milestone') {
+        const meta = JSON.parse(order.metadata || '{}');
+        const project = db.prepare('SELECT * FROM service_projects WHERE id=? AND user_id=?').get(meta.service_project_id, order.user_id);
+        if (!project) throw new Error('服务项目归属异常，支付已取消');
+        const plan = markMilestonePaid(meta.milestone_id, order.id, now());
+        if (!plan.any_paid) throw new Error('阶段付款状态异常');
+        if (project.status === 'awaiting_payment') {
+          activatePaidServiceProject({ sourceType: project.source_type, sourceId: project.source_id, orderId: order.id });
+        }
+        if (project.service_type === 'thesis_coaching' && meta.sequence === 1) {
+          const parent = project.order_id ? db.prepare('SELECT metadata FROM orders WHERE id=?').get(project.order_id) : null;
+          let parentMeta = {}; try { parentMeta = JSON.parse(parent?.metadata || '{}'); } catch {}
+          if (parentMeta.course_id && !db.prepare('SELECT id FROM user_courses WHERE user_id=? AND course_id=?').get(order.user_id, parentMeta.course_id)) {
+            grantCourse(order.user_id, parentMeta.course_id, parentMeta.validity_days, order.id, parentMeta.requirements ? JSON.stringify(parentMeta.requirements) : null);
+          }
+        }
+        if (project.service_type === 'graduation_project' && meta.sequence === 1) {
+          db.prepare("UPDATE graduation_project_orders SET status='paid',order_id=? WHERE id=? AND user_id=? AND status='pending'")
+            .run(order.id, project.source_id, order.user_id);
+        }
+        const refreshed = db.prepare('SELECT * FROM service_projects WHERE id=?').get(project.id);
+        const nextText = plan.all_paid ? '全部阶段已付款，最终成果已解锁' : `下一付款阶段：${plan.next?.title || '待确认'}`;
+        db.prepare("UPDATE service_projects SET stage=?,next_action=?,updated_at=?,version=version+1 WHERE id=?")
+          .run(plan.all_paid ? '全部款项已完成' : refreshed.stage, nextText, now(), project.id);
       }
     },
   });
@@ -708,3 +769,4 @@ export function decryptWechatResource(resource, apiV3Key) {
     throw new Error('微信回调解密失败：' + err.message);
   }
 }
+
