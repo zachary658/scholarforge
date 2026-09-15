@@ -5,6 +5,7 @@ import db from '../db.js';
 import { closePendingGraduationOrders, closePendingServiceOrders } from '../services/payment.js';
 import { calculateServiceQuoteFloor } from '../services/service-pricing.js';
 import { transitionStatus } from '../services/order-state.js';
+import { ensureDefaultMilestones } from '../services/service-milestones.js';
 
 const router = Router();
 
@@ -69,6 +70,9 @@ router.post('/course-quote-orders/:id/quote', (req, res) => {
         quoted_by=?,quote_sent_at=strftime('%s','now'),quote_confirmed_at=NULL,updated_at=strftime('%s','now') WHERE order_id=?`)
         .run(quote.floor.disciplineCategory, quote.floor.hours, quote.scope, quote.exclusions,
           Math.round(quote.floor.laborCost * 100), JSON.stringify(quote.floor), req.user.id, order.id);
+      const serviceProject = db.prepare('SELECT id FROM service_projects WHERE order_id=?').get(order.id);
+      if (!serviceProject) throw new Error('服务项目不存在，无法生成付款计划');
+      ensureDefaultMilestones(serviceProject.id, quote.price);
     })();
     res.json({ ok:true, order_no:order.order_no, quoted_price:quote.price });
   } catch (err) {
@@ -261,6 +265,10 @@ router.post('/graduation-orders/:id/quote', (req, res) => {
     .run(quote.price, quote.floor.disciplineCategory, quote.floor.hours, quote.scope, quote.exclusions, JSON.stringify(quote.floor), req.user.id, row.id);
   // 报价变更：作废用户已创建的待支付订单，防止按旧价成交
   closePendingGraduationOrders(row.id);
+  const serviceProject = db.prepare("SELECT id FROM service_projects WHERE source_type='graduation_project_order' AND source_id=?").get(row.id);
+  if (!serviceProject) return res.status(409).json({ error: '服务项目不存在，无法生成付款计划' });
+  ensureDefaultMilestones(serviceProject.id, quote.price);
+  db.prepare("UPDATE service_projects SET status='awaiting_payment',stage='待用户确认报价',next_action='请用户完成第一阶段付款',updated_at=strftime('%s','now'),version=version+1 WHERE id=? AND status IN ('submitted','evaluating','awaiting_quote','awaiting_payment')").run(serviceProject.id);
   res.json({ ok: true, id: row.id, quoted_price: quote.price, quote_status: 'awaiting_customer', minimum_price: quote.floor.minimumPrice });
 });
 
@@ -340,3 +348,4 @@ router.put('/publication-orders/:id/contact-status', (req, res) => updateContact
 router.post('/publication-orders/:id/quote', (req, res) => quoteServiceOrder(req, res, 'publication_orders'));
 
 export default router;
+
