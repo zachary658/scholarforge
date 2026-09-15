@@ -13,6 +13,8 @@ import {
   deletePromotionCode, deletePromotionPartner, promotionPartnerStats, promotionStats,
   resolvePromotion, setPromotionPartnerActive, updateServiceProject,
 } from '../services/service-project-service.js';
+import { createServiceMilestonePayment } from '../services/payment.js';
+import { summarizeMilestones } from '../services/service-milestones.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const attachmentDir = join(__dirname, '..', '..', 'uploads', 'service-projects');
@@ -68,11 +70,20 @@ function saveAttachment(req, res, project, role) {
   }
   const bytes = fs.readFileSync(req.file.path);
   const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  let milestoneId = null;
+  if (role === 'deliverable' && req.body?.milestone_id) {
+    const milestone = db.prepare('SELECT id FROM service_payment_milestones WHERE id=? AND service_project_id=?').get(req.body.milestone_id, project.id);
+    if (!milestone) {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(400).json({ error: '交付阶段不存在' });
+    }
+    milestoneId = milestone.id;
+  }
   const info = db.prepare(
     `INSERT INTO service_project_attachments
-     (service_project_id, uploaded_by, role, original_name, stored_name, mime_type, size, sha256)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(project.id, req.user.id, role, String(req.file.originalname).slice(0, 240), req.file.filename, req.file.mimetype || 'application/octet-stream', req.file.size, sha256);
+     (service_project_id, uploaded_by, role, original_name, stored_name, mime_type, size, sha256, milestone_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(project.id, req.user.id, role, String(req.file.originalname).slice(0, 240), req.file.filename, req.file.mimetype || 'application/octet-stream', req.file.size, sha256, milestoneId);
   res.json({ ok: true, id: info.lastInsertRowid });
 }
 
@@ -97,6 +108,19 @@ router.post('/:id/submissions', (req, res) => {
   } catch (err) { res.status(err.status || 400).json({ error: err.message }); }
 });
 
+router.post('/:id/milestones/:milestoneId/pay', (req, res) => {
+  const project = getServiceProject(req.params.id, req.user.id);
+  if (!project) return res.status(404).json({ error: '服务项目不存在' });
+  try {
+    res.json(createServiceMilestonePayment({
+      userId: req.user.id,
+      serviceProjectId: Number(project.id),
+      milestoneId: Number(req.params.milestoneId),
+      paymentMethod: req.body?.payment_method || null,
+    }));
+  } catch (err) { res.status(err.status || 400).json({ error: err.message }); }
+});
+
 router.post('/:id/attachments', upload.single('file'), (req, res) => {
   const project = getServiceProject(req.params.id, req.user.id);
   if (!project) {
@@ -110,6 +134,13 @@ router.get('/:id/attachments/:attachmentId', (req, res) => {
   const project = getServiceProject(req.params.id, req.user.id);
   if (!project) return res.status(404).json({ error: '服务项目不存在' });
   const file = db.prepare('SELECT * FROM service_project_attachments WHERE id=? AND service_project_id=? AND deleted_at IS NULL').get(req.params.attachmentId, project.id);
+  if (file?.role === 'deliverable') {
+    const plan = summarizeMilestones(project.id);
+    const required = file.milestone_id
+      ? plan.milestones.find((item) => item.id === file.milestone_id)
+      : plan.milestones.at(-1);
+    if (required && required.status !== 'paid') return res.status(402).json({ error: `完成“${required.title}”付款后可下载该成果` });
+  }
   const path = safeAttachmentPath(file?.stored_name);
   if (!file || !path || !fs.existsSync(path)) return res.status(404).json({ error: '附件不存在' });
   res.download(path, file.original_name);
@@ -255,3 +286,4 @@ export function createPromotionAdminRouter() {
 }
 
 export default router;
+
