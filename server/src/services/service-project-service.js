@@ -157,11 +157,11 @@ export function getServiceProject(id, userId = null) {
      WHERE service_project_id = ? ORDER BY id DESC`
   ).all(project.id);
   const attachments = db.prepare(
-    `SELECT id, role, original_name, mime_type, size, milestone_id, created_at FROM service_project_attachments
+    `SELECT id, role, original_name, mime_type, size, milestone_id, version_label, description, is_preview, created_at FROM service_project_attachments
      WHERE service_project_id = ? AND deleted_at IS NULL ORDER BY id DESC`
   ).all(project.id);
   const paymentPlan = summarizeMilestones(project.id);
-  return { ...project, internal_note: undefined, updates, submissions, attachments, payment_plan: paymentPlan };
+  return { ...project, internal_note: undefined, updates, submissions, attachments: attachments.map((item) => ({ ...item, is_preview: !!item.is_preview })), payment_plan: paymentPlan };
 }
 
 export function listServiceProjects({ userId = null, status = '', serviceType = '', q = '' } = {}) {
