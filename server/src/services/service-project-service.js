@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import db from '../db.js';
 import { datePrefix, now } from '../utils.js';
+import { summarizeMilestones } from './service-milestones.js';
 
 export const SERVICE_STATUSES = [
   'submitted', 'evaluating', 'awaiting_quote', 'awaiting_payment', 'paid',
@@ -156,10 +157,11 @@ export function getServiceProject(id, userId = null) {
      WHERE service_project_id = ? ORDER BY id DESC`
   ).all(project.id);
   const attachments = db.prepare(
-    `SELECT id, role, original_name, mime_type, size, created_at FROM service_project_attachments
+    `SELECT id, role, original_name, mime_type, size, milestone_id, created_at FROM service_project_attachments
      WHERE service_project_id = ? AND deleted_at IS NULL ORDER BY id DESC`
   ).all(project.id);
-  return { ...project, internal_note: undefined, updates, submissions, attachments };
+  const paymentPlan = summarizeMilestones(project.id);
+  return { ...project, internal_note: undefined, updates, submissions, attachments, payment_plan: paymentPlan };
 }
 
 export function listServiceProjects({ userId = null, status = '', serviceType = '', q = '' } = {}) {
@@ -196,6 +198,12 @@ export function updateServiceProject(id, options) {
   if (!SERVICE_STATUSES.includes(target)) { const err = new Error('无效的项目状态'); err.status = 400; throw err; }
   if (target !== current.status && !TRANSITIONS[current.status]?.includes(target)) {
     const err = new Error(`不能从 ${current.status} 变更为 ${target}`); err.status = 409; throw err;
+  }
+  if (['pending_acceptance', 'completed'].includes(target)) {
+    const plan = summarizeMilestones(current.id);
+    if (plan.milestones.length && !plan.all_paid) {
+      const err = new Error('尾款尚未支付，不能进入最终验收或完成状态'); err.status = 409; throw err;
+    }
   }
   const defaults = DEFAULTS[target];
   const requestedProgress = options.progress == null ? null : Number(options.progress);
@@ -253,6 +261,10 @@ export function addSubmission(project, userId, kind, content, idempotencyKey = n
   if (!['supplement', 'revision_request', 'acceptance'].includes(kind)) throw new Error('无效的提交类型');
   const text = String(content || '').trim().slice(0, 5000);
   if (kind !== 'acceptance' && !text) { const err = new Error('请填写内容'); err.status = 400; throw err; }
+  if (kind === 'acceptance') {
+    const plan = summarizeMilestones(project.id);
+    if (plan.milestones.length && !plan.all_paid) { const err = new Error('请先完成尾款支付，再确认最终验收'); err.status = 409; throw err; }
+  }
   const transaction = db.transaction(() => {
     const info = db.prepare(
       `INSERT OR IGNORE INTO service_project_submissions
@@ -327,3 +339,4 @@ export function deletePromotionPartner(id) {
   remove();
   return true;
 }
+
