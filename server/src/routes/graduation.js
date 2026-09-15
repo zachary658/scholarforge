@@ -118,6 +118,11 @@ router.post('/orders/:id/pay', authRequired, (req, res) => {
   ).get(req.params.id);
   if (!gpOrder) return res.status(404).json({ error: '订单不存在' });
   if (gpOrder.user_id !== req.user.id) return res.status(403).json({ error: '无权操作该订单' });
+  const serviceProject = db.prepare("SELECT id FROM service_projects WHERE source_type='graduation_project_order' AND source_id=?").get(gpOrder.id);
+  if (serviceProject) {
+    const milestone = db.prepare('SELECT id FROM service_payment_milestones WHERE service_project_id=? LIMIT 1').get(serviceProject.id);
+    if (milestone) return res.status(409).json({ error: '该服务已采用分阶段付款，请进入“服务进度”支付当前阶段' });
+  }
   try {
     const result = createOrder({ userId: req.user.id, type: 'graduation', target: String(gpOrder.id) });
     res.json(result); // { order, payParams }
@@ -127,3 +132,4 @@ router.post('/orders/:id/pay', authRequired, (req, res) => {
 });
 
 export default router;
+
