@@ -288,7 +288,7 @@ export const api = {
   staffListServiceProjects: (scope, params = {}) => request(`/${scope}/service-projects?${new URLSearchParams(params).toString()}`),
   staffServiceProjectDetail: (scope, id) => request(`/${scope}/service-projects/${id}`),
   staffUpdateServiceProject: (scope, id, payload) => request(`/${scope}/service-projects/${id}`, { method: 'PUT', body: payload }),
-  staffUploadDeliverable: (scope, id, file) => upload(`/${scope}/service-projects/${id}/attachments`, file),
+  staffUploadDeliverable: (scope, id, file, fields = {}) => upload(`/${scope}/service-projects/${id}/attachments`, file, fields),
   adminPromotion: () => request('/admin/promotion'),
   adminOperationalMetrics: (hours = 24) => request(`/admin/operational-metrics?hours=${hours}`),
   adminCommercialOverview: (days = 30) => request(`/admin/commercial-overview?days=${days}`),
