@@ -18,7 +18,7 @@ import { resolveWritingReferences } from './reference-verification.js';
 import { hasReferenceProof } from './reference-proof.js';
 import { runAI } from '../ai-service.js';
 import { getRoleModel } from './orchestrator.js';
-import { isForeignReference, supplementVerifiedReferences } from './reference-policy.js';
+import { supplementVerifiedReferences } from './reference-policy.js';
 import { parseReviewVerdict } from './review-chain.js';
 
 export const WORKFLOW_STATES = [
@@ -122,7 +122,7 @@ export async function confirmLiterature(projectId, userId, references) {
   const verified = await resolveWritingReferences(candidate);
   const supplement = await supplementVerifiedReferences({ ...p, sources: { ...sources, references: verified } });
   if (!supplement.complete) {
-    const e = new Error(`真实文献尚未达到生成标准（需≥10篇且至少3篇外文；当前 ${supplement.total} 篇、外文 ${supplement.foreign} 篇）。请重试检索，不得补造参考文献。`);
+    const e = new Error(`真实文献尚未达到生成标准（需≥10篇可回查文献；当前 ${supplement.total} 篇，其中外文 ${supplement.foreign} 篇）。外文文献建议至少3篇，但不作为进入下一步的条件。请重试检索，不得补造参考文献。`);
     e.code = 'LITERATURE_INSUFFICIENT';
     e.details = { total: supplement.total, foreign: supplement.foreign, errors: supplement.errors };
     throw e;
@@ -177,9 +177,8 @@ export function confirmOutlineValidated(projectId, userId) {
   const v = validateThesisOutline(p.outline || [], { fix: false });
   const confirmedReferences = p.sources?.references || [];
   if (p.workflow_mode === 'full' && (confirmedReferences.length < 10
-    || confirmedReferences.filter(isForeignReference).length < 3
     || !confirmedReferences.every(hasReferenceProof))) {
-    throw new Error('请先确认不少于10篇、其中至少3篇外文的可回查真实文献');
+    throw new Error('请先确认不少于10篇可回查真实文献；外文文献建议至少3篇，但不作为进入下一步的条件');
   }
   if (!v.valid) {
     const e = new Error('大纲未通过论文结构校验，无法进入正文生成。');
@@ -629,3 +628,4 @@ export function buildExpertContext(projectId, userId) {
     completion: `${done}/${chapters.length}`,
   };
 }
+
