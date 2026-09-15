@@ -90,7 +90,12 @@ router.get('/', authRequired, (req, res) => {
   const latestByOrder = new Map();
   for (const item of afterSales) if (!latestByOrder.has(item.order_id)) latestByOrder.set(item.order_id, item);
   res.json({
-    orders: orders.map((order) => ({ ...sanitizeOrder(order), after_sales: latestByOrder.get(order.id) || null })),
+    orders: orders.map((order) => {
+      const serviceProject = order.type === 'course'
+        ? db.prepare('SELECT id FROM service_projects WHERE order_id=?').get(order.id)
+        : null;
+      return { ...sanitizeOrder(order), service_project_id: serviceProject?.id || null, after_sales: latestByOrder.get(order.id) || null };
+    }),
     total, page, size, pages: Math.ceil(total / size),
   });
 });
@@ -134,3 +139,4 @@ function sanitizeOrder(o) {
 }
 
 export default router;
+
