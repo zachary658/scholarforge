@@ -492,6 +492,29 @@ const MIGRATIONS = [
       addColumnIfMissing(db, 'service_projects', 'quote_confirmed_at', 'INTEGER');
     },
   },
+  {
+    version: '018_service_payment_milestones',
+    name: '人工服务分阶段付款与交付解锁',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS service_payment_milestones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        service_project_id INTEGER NOT NULL REFERENCES service_projects(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','payment_pending','paid','cancelled','refunded')),
+        order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+        paid_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(service_project_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS idx_service_milestones_project ON service_payment_milestones(service_project_id, sequence);
+      CREATE INDEX IF NOT EXISTS idx_service_milestones_order ON service_payment_milestones(order_id) WHERE order_id IS NOT NULL;`);
+      addColumnIfMissing(db, 'service_project_attachments', 'milestone_id', 'INTEGER REFERENCES service_payment_milestones(id) ON DELETE SET NULL');
+    },
+  },
 ];
 
 export function runMigrations(db) {
@@ -513,3 +536,4 @@ export function runMigrations(db) {
     logger.info('migration', `已应用迁移 ${m.version} ${m.name}`);
   }
 }
+
