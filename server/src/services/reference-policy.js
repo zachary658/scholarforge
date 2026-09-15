@@ -73,7 +73,10 @@ export async function supplementVerifiedReferences(project, {
     added: combined.length - selected.length,
     total: combined.length,
     foreign: combined.filter(isForeignReference).length,
-    complete: combined.length >= minTotal && combined.filter(isForeignReference).length >= minForeign,
+    // 外文文献是推荐项而不是流程门槛。仍优先补充外文文献并返回数量，
+    // 但某些中文课题确实没有合适的外文来源，不能因此阻断后续写作。
+    complete: combined.length >= minTotal,
     errors,
   };
 }
+
