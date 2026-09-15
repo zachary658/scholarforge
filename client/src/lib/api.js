@@ -277,6 +277,7 @@ export const api = {
   // ===== 人工服务项目、进度与交付 =====
   listServiceProjects: () => request('/service-projects'),
   serviceProjectDetail: (id) => request(`/service-projects/${id}`),
+  payServiceMilestone: (id, milestoneId, payload) => request(`/service-projects/${id}/milestones/${milestoneId}/pay`, { method: 'POST', body: payload }),
   submitServiceProjectAction: (id, payload) => request(`/service-projects/${id}/submissions`, { method: 'POST', body: payload }),
   uploadServiceAttachment: (id, file) => upload(`/service-projects/${id}/attachments`, file),
   downloadServiceAttachment: (id, attachmentId, filename) => download(`/service-projects/${id}/attachments/${attachmentId}`, filename),
@@ -558,3 +559,4 @@ function confirmDownloadRisk(review) {
     cancel.focus();
   });
 }
+
