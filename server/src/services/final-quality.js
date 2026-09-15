@@ -161,10 +161,10 @@ export function inspectPaper(project) {
   const foreignReferences = references.filter(isForeignReference);
   checks.push(check(
     'foreign_references',
-    foreignReferences.length >= 3 ? 'pass' : 'fail',
-    foreignReferences.length >= 3 ? `已包含 ${foreignReferences.length} 篇外文文献。` : `当前仅有 ${foreignReferences.length} 篇外文文献，交付要求至少 3 篇。`,
+    foreignReferences.length >= 3 ? 'pass' : 'warn',
+    foreignReferences.length >= 3 ? `已包含 ${foreignReferences.length} 篇外文文献。` : `当前有 ${foreignReferences.length} 篇外文文献，建议补充至至少 3 篇，但不影响继续或交付。`,
     foreignReferences.length >= 3 ? [] : [{ scope: 'references', excerpt: `还需补充 ${3 - foreignReferences.length} 篇与主题相关的外文文献。` }],
-    '系统会优先从公开学术数据库补充可核验的外文文献。',
+    '如课题适合，系统会优先从公开学术数据库补充可核验的外文文献。',
   ));
 
   const targetWords = resolveTargetWordCount(project);
@@ -356,3 +356,4 @@ export function inspectPaper(project) {
     contentVersion: contentVersion(project),
   };
 }
+
