@@ -515,6 +515,15 @@ const MIGRATIONS = [
       addColumnIfMissing(db, 'service_project_attachments', 'milestone_id', 'INTEGER REFERENCES service_payment_milestones(id) ON DELETE SET NULL');
     },
   },
+  {
+    version: '019_milestone_deliverable_versions',
+    name: '阶段交付文件版本、说明与预览标记',
+    up(db) {
+      addColumnIfMissing(db, 'service_project_attachments', 'version_label', "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(db, 'service_project_attachments', 'description', "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(db, 'service_project_attachments', 'is_preview', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 export function runMigrations(db) {
