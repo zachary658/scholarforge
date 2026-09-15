@@ -749,7 +749,7 @@ export default function PaperWorkflow() {
               <h3 className="font-semibold text-ink">全文一致性检查</h3>
               <button disabled={fixingCheck || checkingFinal || actionBusy} onClick={runCheck} className="btn-secondary text-sm"><Shield className="h-4 w-4" /> {checkingFinal ? '正在补全文献并检查…' : '重新检查'}</button>
             </div>
-            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验全文字数、章节结构、跨章逻辑、引用与占位符；文献会自动补足至不少于 10 篇且至少 3 篇外文，并全部保留真实来源核验信息。</p>}
+            {!finalCheck && <p className="mt-3 text-sm text-slate-400">点击「运行检查」校验全文字数、章节结构、跨章逻辑、引用与占位符；文献会自动补足至不少于 10 篇，并尽量补充至少 3 篇外文文献。外文文献不足只会提示建议，不会阻止继续或交付。</p>}
             {finalCheck && (
               <div className="mt-3">
                 <div className={`rounded-lg border p-4 ${finalCheck.passed ? 'border-green-200 bg-green-50/50' : 'border-red-200 bg-red-50/50'}`}>
@@ -884,3 +884,4 @@ function StepNav({ stepIdx, state, project }) {
     </div>
   );
 }
+
